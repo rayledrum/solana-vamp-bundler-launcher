@@ -3,98 +3,95 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Svarog // Solana Vamp Launcher & Jito Bundler Desk</title>
+  <title>Svarog // Institutional Solana Memecoin Bundler & Trading Terminal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"></script>
 </head>
-<body class="bg-surface-950 text-slate-100 font-sans min-h-screen flex flex-col selection:bg-cyan-500 selection:text-black">
+<body class="bg-[#0a0d14] text-slate-100 font-sans min-h-screen flex flex-col selection:bg-cyan-500 selection:text-black">
 
-  <!-- Top Header / Navigation Bar -->
-  <header class="border-b border-surface-800 bg-surface-900/90 backdrop-blur sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+  <!-- Top Institutional Navigation Header -->
+  <header class="border-b border-[#192235] bg-[#0d121c]/95 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-[1720px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
       
-      <!-- Brand & Title -->
+      <!-- Brand & Ticker -->
       <div class="flex items-center space-x-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-600 to-emerald-500 p-0.5 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-          <div class="w-full h-full bg-surface-950 rounded-[10px] flex items-center justify-center">
-            <i data-lucide="zap" class="w-5 h-5 text-cyan-400"></i>
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 via-indigo-600 to-emerald-500 p-0.5 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <div class="w-full h-full bg-[#0a0d14] rounded-[6px] flex items-center justify-center">
+            <i data-lucide="activity" class="w-4 h-4 text-cyan-400"></i>
           </div>
         </div>
-        <div>
-          <div class="flex items-center space-x-2">
-            <span class="font-extrabold text-lg tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-emerald-400 bg-clip-text text-transparent">SVAROG // DESK</span>
-            <span class="text-xs px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono font-medium">SOLANA</span>
-          </div>
-          <p class="text-[11px] text-slate-400">Pump.fun Bundler • Manual Trading Controls • Vamp Cloner</p>
+        <div class="flex items-center space-x-2">
+          <span class="font-extrabold text-sm tracking-tight bg-gradient-to-r from-cyan-400 via-sky-300 to-emerald-400 bg-clip-text text-transparent">SVAROG TERMINAL</span>
+          <span class="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono font-semibold">SOLANA</span>
         </div>
       </div>
 
-      <!-- Center: Track Active Token Input -->
-      <div class="hidden lg:flex items-center space-x-2 bg-surface-950 px-3 py-1.5 rounded-xl border border-surface-800 w-80">
-        <i data-lucide="crosshair" class="w-4 h-4 text-slate-500"></i>
-        <input id="navTrackCaInput" type="text" placeholder="Active Token CA..." class="bg-transparent border-none outline-none text-xs font-mono w-full text-slate-300">
-        <button onclick="setTrackedTokenFromNav()" class="text-[11px] font-bold text-cyan-400 hover:text-cyan-300">Track</button>
+      <!-- Center: CA Search & Quick Track -->
+      <div class="flex items-center space-x-2 bg-[#090d16] px-3 py-1 rounded-lg border border-[#192235] w-72 sm:w-96">
+        <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500"></i>
+        <input id="navTrackCaInput" type="text" placeholder="Track Token CA / Mint Address..." class="bg-transparent border-none outline-none text-xs font-mono w-full text-slate-200">
+        <button onclick="setTrackedTokenFromNav()" class="text-[10px] font-bold text-cyan-400 hover:text-cyan-300 px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/60">TRACK</button>
       </div>
 
-      <!-- Right: Network & Mode Status Controls -->
+      <!-- Right Telemetry & Controls -->
       <div class="flex items-center space-x-3">
         
-        <!-- Helius Connection Pill -->
-        <div class="hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-surface-800/80 border border-surface-700 text-xs font-mono">
+        <!-- Helius Slot Badge -->
+        <div class="hidden sm:flex items-center space-x-2 px-2.5 py-1 rounded-md bg-[#131a29] border border-[#1e2a42] text-[11px] font-mono">
           <span class="relative flex h-2 w-2">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
           </span>
-          <span class="text-slate-300">Helius</span>
-          <span id="slotDisplay" class="text-emerald-400 font-semibold">Slot: ---</span>
+          <span class="text-slate-400">Helius RPC</span>
+          <span id="slotDisplay" class="text-emerald-400 font-bold">Slot: ---</span>
         </div>
 
-        <!-- Mode Toggle Pill (Simulation vs Live) -->
-        <div class="flex items-center bg-surface-800 p-1 rounded-xl border border-surface-700">
-          <button id="modeSimBtn" onclick="toggleSimulation(true)" class="px-2.5 py-1 text-xs font-semibold rounded-lg transition-all bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+        <!-- Mode Toggle Pill -->
+        <div class="flex items-center bg-[#131a29] p-0.5 rounded-lg border border-[#1e2a42]">
+          <button id="modeSimBtn" onclick="toggleSimulation(true)" class="px-2 py-0.5 text-[11px] font-semibold rounded transition-all bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
             SIMULATION
           </button>
-          <button id="modeLiveBtn" onclick="toggleSimulation(false)" class="px-2.5 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-rose-400 transition-all">
+          <button id="modeLiveBtn" onclick="toggleSimulation(false)" class="px-2 py-0.5 text-[11px] font-semibold rounded text-slate-400 hover:text-rose-400 transition-all">
             LIVE MAINNET
           </button>
         </div>
 
         <!-- Master Dev Wallet Balance Pill -->
-        <div class="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-surface-800 border border-surface-700 text-xs">
-          <i data-lucide="wallet" class="w-4 h-4 text-cyan-400"></i>
+        <div class="flex items-center space-x-2 px-2.5 py-1 rounded-lg bg-[#131a29] border border-[#1e2a42] text-xs">
+          <i data-lucide="wallet" class="w-3.5 h-3.5 text-amber-400"></i>
           <div>
-            <span class="text-slate-400 text-[10px] block leading-none">DEV BAL</span>
-            <span id="headerDevBalance" class="font-mono font-bold text-slate-200">0.00 SOL</span>
+            <span class="text-slate-400 text-[9px] block leading-none">DEV BALANCE</span>
+            <span id="headerDevBalance" class="font-mono font-bold text-slate-200 text-xs">0.00 SOL</span>
           </div>
         </div>
 
       </div>
     </div>
 
-    <!-- Navigation Tabs -->
-    <div class="border-t border-surface-800/60 bg-surface-950/60 px-4 sm:px-6 lg:px-8">
-      <div class="max-w-7xl mx-auto flex space-x-2 sm:space-x-4 overflow-x-auto py-2 text-xs font-medium">
-        <button onclick="switchTab('trading')" id="tabBtn-trading" class="tab-btn active flex items-center space-x-2 px-3 py-1.5 rounded-lg text-cyan-400 bg-surface-800/60 border border-cyan-500/30">
-          <i data-lucide="activity" class="w-4 h-4"></i>
-          <span>Trading & PnL Controls</span>
+    <!-- Navigation Ribbon -->
+    <div class="border-t border-[#192235]/60 bg-[#0a0d14]/70 px-4 sm:px-6">
+      <div class="max-w-[1720px] mx-auto flex space-x-2 sm:space-x-3 overflow-x-auto py-1.5 text-xs font-semibold">
+        <button onclick="switchTab('trading')" id="tabBtn-trading" class="tab-btn active flex items-center space-x-1.5 px-3 py-1 rounded-md text-cyan-400 bg-[#161f31] border border-cyan-500/35">
+          <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i>
+          <span>Trading Workstation</span>
         </button>
-        <button onclick="switchTab('launchpad')" id="tabBtn-launchpad" class="tab-btn flex items-center space-x-2 px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">
-          <i data-lucide="rocket" class="w-4 h-4"></i>
+        <button onclick="switchTab('launchpad')" id="tabBtn-launchpad" class="tab-btn flex items-center space-x-1.5 px-3 py-1 rounded-md text-slate-400 hover:text-slate-200">
+          <i data-lucide="rocket" class="w-3.5 h-3.5"></i>
           <span>Launchpad & Bundler</span>
         </button>
-        <button onclick="switchTab('vamp')" id="tabBtn-vamp" class="tab-btn flex items-center space-x-2 px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">
-          <i data-lucide="skull" class="w-4 h-4"></i>
+        <button onclick="switchTab('vamp')" id="tabBtn-vamp" class="tab-btn flex items-center space-x-1.5 px-3 py-1 rounded-md text-slate-400 hover:text-slate-200">
+          <i data-lucide="skull" class="w-3.5 h-3.5"></i>
           <span>Vamp Cloner</span>
         </button>
-        <button onclick="switchTab('wallets')" id="tabBtn-wallets" class="tab-btn flex items-center space-x-2 px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">
-          <i data-lucide="users" class="w-4 h-4"></i>
+        <button onclick="switchTab('wallets')" id="tabBtn-wallets" class="tab-btn flex items-center space-x-1.5 px-3 py-1 rounded-md text-slate-400 hover:text-slate-200">
+          <i data-lucide="users" class="w-3.5 h-3.5"></i>
           <span>Wallets & Funding</span>
         </button>
-        <button onclick="switchTab('bumper')" id="tabBtn-bumper" class="tab-btn flex items-center space-x-2 px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200">
-          <i data-lucide="trending-up" class="w-4 h-4"></i>
+        <button onclick="switchTab('bumper')" id="tabBtn-bumper" class="tab-btn flex items-center space-x-1.5 px-3 py-1 rounded-md text-slate-400 hover:text-slate-200">
+          <i data-lucide="trending-up" class="w-3.5 h-3.5"></i>
           <span>Volume Bump Bot</span>
         </button>
       </div>
@@ -102,658 +99,639 @@
   </header>
 
   <!-- Notification Banner -->
-  <div id="simBanner" class="bg-cyan-950/60 border-b border-cyan-800/50 px-4 py-2 text-center text-xs text-cyan-300 flex items-center justify-center space-x-2">
-    <i data-lucide="shield-check" class="w-4 h-4 text-cyan-400"></i>
+  <div id="simBanner" class="bg-cyan-950/40 border-b border-cyan-800/40 px-4 py-1 text-center text-xs text-cyan-300 flex items-center justify-center space-x-2">
+    <i data-lucide="shield-check" class="w-3.5 h-3.5 text-cyan-400"></i>
     <span><strong>Simulation Mode Active:</strong> Safe sandbox enabled. Balances and atomic bundles are simulated with real Helius block data without risking real SOL. Switch to LIVE anytime.</span>
   </div>
 
   <!-- Main Content Container -->
-  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+  <main class="flex-1 max-w-[1720px] w-full mx-auto p-3 sm:p-4 lg:p-5 space-y-4">
 
-    <!-- ==================== TAB 1: TRADING & PNL CONTROLS (SVAROG STYLE) ==================== -->
-    <div id="tabContent-trading" class="tab-pane space-y-6">
+    <!-- ==================== TAB 1: MODERN TRADING WORKSTATION (BENTO GRID) ==================== -->
+    <div id="tabContent-trading" class="tab-pane space-y-4">
       
-      <!-- Top Market & Aggregate PnL Metric Cards -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- TOP ROW: BENTO METRIC CARDS & HERO CANDLESTICK CHART -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-3.5">
         
-        <!-- Giant PnL Card -->
-        <div class="card p-5 space-y-2 border-l-4 border-l-emerald-500 bg-surface-900/90">
-          <div class="flex justify-between items-center text-xs text-slate-400">
-            <span class="uppercase tracking-wider font-semibold">Total Unrealized PnL</span>
+        <!-- CARD 1: MARKET OVERVIEW & PNL (2 Cols on LG) -->
+        <div class="lg:col-span-3 bento-card p-4 justify-between">
+          <div class="flex justify-between items-center text-xs text-slate-400 pb-2 border-b border-[#192235]">
+            <span class="font-bold uppercase tracking-wider text-slate-300">Market Overview</span>
             <span id="deskPnlStatusBadge" class="badge-pnl-green">▲ IN PROFIT</span>
           </div>
-          <div id="deskPnlDisplay" class="text-2xl font-mono font-extrabold text-emerald-400">+0.00 SOL (+0.00%)</div>
-          <div class="flex justify-between text-[11px] font-mono text-slate-400 pt-1 border-t border-surface-800">
-            <span>Invested: <strong id="deskInvestedDisplay" class="text-slate-200">0.00 SOL</strong></span>
-            <span>Est Value: <strong id="deskSolValueDisplay" class="text-cyan-400">0.00 SOL</strong></span>
+
+          <div class="py-2 space-y-1">
+            <span class="text-[11px] text-slate-400 uppercase tracking-wider">Unrealized PnL</span>
+            <div id="deskPnlDisplay" class="text-2xl font-mono font-extrabold text-emerald-400">+0.00 SOL (+0.00%)</div>
+            <div class="flex justify-between text-xs font-mono text-slate-400 pt-1">
+              <span>Invested: <strong id="deskInvestedDisplay" class="text-slate-200">0.00 SOL</strong></span>
+              <span>Value: <strong id="deskSolValueDisplay" class="text-cyan-400">0.00 SOL</strong></span>
+            </div>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="pt-2 border-t border-[#192235]">
+            <div class="flex justify-between text-[11px] text-slate-400 mb-1">
+              <span>Token MCap</span>
+              <span id="deskMcapDisplay" class="font-bold text-slate-200 font-mono">$0.00</span>
+            </div>
+            <canvas id="sparklineCanvas" width="260" height="42" class="w-full h-10 rounded bg-[#090d16]"></canvas>
           </div>
         </div>
 
-        <!-- Token Market Cap Card -->
-        <div class="card p-5 space-y-2 bg-surface-900/90">
-          <div class="flex justify-between items-center text-xs text-slate-400">
-            <span class="uppercase tracking-wider font-semibold">Market Cap</span>
-            <span id="deskDexBadge" class="text-[10px] px-1.5 py-0.5 rounded bg-surface-800 text-cyan-400 font-mono">PUMP.FUN</span>
+        <!-- CARD 2: MARKET SENTIMENT / BONDING CURVE SPEEDOMETER (2 Cols on LG) -->
+        <div class="lg:col-span-2 bento-card p-4 items-center justify-between">
+          <div class="w-full flex justify-between items-center text-xs text-slate-400 pb-2 border-b border-[#192235]">
+            <span class="font-bold uppercase tracking-wider text-slate-300">Curve Sentiment</span>
+            <span id="curveSentimentPill" class="text-[10px] font-bold text-emerald-400 font-mono">BULLISH</span>
           </div>
-          <div id="deskMcapDisplay" class="text-2xl font-mono font-extrabold text-slate-100">$0.00</div>
-          <div class="text-[11px] font-mono text-cyan-400" id="deskPriceDisplay">Price: $0.000000</div>
+
+          <!-- Radial Gauge Canvas (Matching reference image) -->
+          <div class="relative flex items-center justify-center my-1">
+            <canvas id="gaugeCanvas" width="160" height="110" class="w-40 h-28"></canvas>
+            <div class="absolute bottom-2 text-center">
+              <span id="gaugeValueText" class="text-lg font-mono font-extrabold text-emerald-400">0%</span>
+              <span class="text-[9px] uppercase tracking-wider block text-slate-400">Graduation</span>
+            </div>
+          </div>
+
+          <div class="w-full text-center text-[10px] font-mono text-slate-400 pt-1 border-t border-[#192235]">
+            Target: <span class="text-slate-200 font-bold">85 SOL (Raydium)</span>
+          </div>
         </div>
 
-        <!-- Token Holdings & Supply Card -->
-        <div class="card p-5 space-y-2 bg-surface-900/90">
-          <div class="flex justify-between items-center text-xs text-slate-400">
-            <span class="uppercase tracking-wider font-semibold">Bundle Holding</span>
-            <span class="text-[10px] text-slate-400 font-mono">7 Wallets</span>
+        <!-- CARD 3: HERO LIVE CANDLESTICK & VOLUME CHART (5 Cols on LG) -->
+        <div class="lg:col-span-5 bento-card">
+          <div class="bento-header">
+            <div class="flex items-center space-x-3">
+              <span class="font-mono font-bold text-xs text-slate-200 flex items-center space-x-1">
+                <span id="chartSymbolDisplay" class="text-cyan-400">TOKEN</span><span>/SOL</span>
+              </span>
+              <span id="chartPriceDisplay" class="font-mono text-xs font-bold text-emerald-400">0.000034 SOL</span>
+              <span id="chartChangeDisplay" class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 font-mono font-bold">+12.4%</span>
+            </div>
+
+            <!-- Timeframe Selectors (1s, 5s, 15s, 30s, 1m, 5m) -->
+            <div class="flex items-center space-x-1 text-[11px] font-mono">
+              <button onclick="setChartTimeframe('1s')" id="tfBtn-1s" class="chart-tf-btn px-1.5 py-0.5 rounded text-slate-400 hover:text-slate-200">1s</button>
+              <button onclick="setChartTimeframe('5s')" id="tfBtn-5s" class="chart-tf-btn active px-1.5 py-0.5 rounded text-cyan-400 bg-[#1e2a42]">5s</button>
+              <button onclick="setChartTimeframe('15s')" id="tfBtn-15s" class="chart-tf-btn px-1.5 py-0.5 rounded text-slate-400 hover:text-slate-200">15s</button>
+              <button onclick="setChartTimeframe('30s')" id="tfBtn-30s" class="chart-tf-btn px-1.5 py-0.5 rounded text-slate-400 hover:text-slate-200">30s</button>
+              <button onclick="setChartTimeframe('1m')" id="tfBtn-1m" class="chart-tf-btn px-1.5 py-0.5 rounded text-slate-400 hover:text-slate-200">1m</button>
+              <button onclick="setChartTimeframe('5m')" id="tfBtn-5m" class="chart-tf-btn px-1.5 py-0.5 rounded text-slate-400 hover:text-slate-200">5m</button>
+            </div>
           </div>
-          <div id="deskTotalTokensDisplay" class="text-2xl font-mono font-extrabold text-slate-100">0</div>
-          <div class="text-[11px] font-mono text-slate-400" id="deskTokensPctDisplay">0.00% of 1B Total Supply</div>
+
+          <!-- Candlestick & Volume Canvas -->
+          <div class="p-2 relative flex-1 bg-[#090d16]">
+            <canvas id="candlestickCanvas" class="w-full h-44 rounded"></canvas>
+            <div class="absolute bottom-3 left-4 text-[10px] font-mono text-slate-500 space-x-3 pointer-events-none">
+              <span>VOL <strong id="chartVolDisplay" class="text-slate-300">24.5 SOL</strong></span>
+              <span>RSI (14) <strong class="text-cyan-400">58.2</strong></span>
+              <span>MA (20) <strong class="text-amber-400">0.000032</strong></span>
+            </div>
+          </div>
         </div>
 
-        <!-- Active Token Info Card -->
-        <div class="card p-5 space-y-2 bg-surface-900/90">
-          <div class="flex justify-between items-center text-xs text-slate-400">
-            <span class="uppercase tracking-wider font-semibold">Active Token Mint</span>
-            <button onclick="copyActiveMintAddress()" class="text-slate-500 hover:text-cyan-400" title="Copy Mint">
-              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
-            </button>
+        <!-- CARD 4: PERFORMANCE WATCHLIST / TRENDING (2 Cols on LG) -->
+        <div class="lg:col-span-2 bento-card p-3 justify-between">
+          <div class="flex justify-between items-center text-xs text-slate-400 pb-2 border-b border-[#192235]">
+            <span class="font-bold uppercase tracking-wider text-slate-300">Solana Metas</span>
+            <span class="text-[10px] text-cyan-400 font-mono">24H</span>
           </div>
-          <div id="deskActiveTokenMintDisplay" class="text-xs font-mono font-bold text-slate-200 truncate">None Loaded</div>
-          <div class="flex items-center space-x-1.5 text-[11px] text-slate-400">
-            <i data-lucide="external-link" class="w-3 h-3 text-cyan-400"></i>
-            <a id="deskPumpLink" href="https://pump.fun" target="_blank" class="hover:underline text-cyan-400">Open on Pump.fun</a>
+
+          <div class="space-y-2 py-1 text-xs font-mono">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-1.5">
+                <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                <span class="font-bold text-slate-200">SOL</span>
+              </div>
+              <span class="text-emerald-400 font-bold">+4.35%</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-1.5">
+                <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span class="font-bold text-slate-200">BONK</span>
+              </div>
+              <span class="text-emerald-400 font-bold">+18.2%</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span class="font-bold text-slate-200">PEPE</span>
+              </div>
+              <span class="text-rose-400 font-bold">-2.10%</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-1.5">
+                <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+                <span class="font-bold text-slate-200">VAMP</span>
+              </div>
+              <span class="text-emerald-400 font-bold">+74.8%</span>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-[#192235] text-[10px] text-slate-400 flex justify-between items-center">
+            <span>Active CA</span>
+            <a id="deskPumpLink" href="https://pump.fun" target="_blank" class="text-cyan-400 hover:underline">Pump.fun ↗</a>
           </div>
         </div>
 
       </div>
 
-      <!-- Bonding Curve Progress Bar -->
-      <div class="card p-5 space-y-3 bg-surface-900/90">
-        <div class="flex justify-between items-center text-xs">
-          <span class="font-bold text-slate-200 flex items-center space-x-1.5">
-            <i data-lucide="target" class="w-4 h-4 text-emerald-400"></i>
-            <span>Pump.fun Bonding Curve Graduation Progress</span>
-          </span>
-          <span id="curveProgressText" class="font-mono font-bold text-emerald-400">0.00% / 100% (Raydium Migration @ 85 SOL)</span>
-        </div>
-        <div class="w-full bg-surface-950 rounded-full h-3.5 border border-surface-800 overflow-hidden p-0.5">
-          <div id="curveProgressBar" class="bg-gradient-to-r from-emerald-500 via-cyan-400 to-indigo-500 h-full rounded-full transition-all duration-500 shadow-lg shadow-emerald-500/20" style="width: 0%"></div>
-        </div>
-      </div>
-
-      <!-- DUAL MANUAL TRADING CONSOLE (BUY GREEN / SELL RED) -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- MIDDLE ROW: MANUAL TRADING CONSOLE & MULTI-WALLET MATRIX -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
         
-        <!-- LEFT: GREEN BUY CONSOLE (UP) -->
-        <div class="card p-6 space-y-5 border-t-4 border-t-emerald-500 bg-surface-900/90">
-          <div class="flex items-center justify-between pb-3 border-b border-surface-800">
-            <h3 class="text-base font-bold text-emerald-400 flex items-center space-x-2">
-              <i data-lucide="arrow-up-circle" class="w-5 h-5 text-emerald-400"></i>
-              <span>Manual Buy Console (Green / Up)</span>
-            </h3>
-            <span class="text-xs px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">BUY FLOW</span>
-          </div>
-
-          <!-- Quick Buy Amount Presets -->
-          <div>
-            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Quick Buy Size Presets</label>
-            <div class="grid grid-cols-5 gap-2">
-              <button type="button" onclick="setManualBuyAmount(0.05)" class="btn-quick-buy">+0.05</button>
-              <button type="button" onclick="setManualBuyAmount(0.1)" class="btn-quick-buy">+0.10</button>
-              <button type="button" onclick="setManualBuyAmount(0.25)" class="btn-quick-buy">+0.25</button>
-              <button type="button" onclick="setManualBuyAmount(0.5)" class="btn-quick-buy">+0.50</button>
-              <button type="button" onclick="setManualBuyAmount(1.0)" class="btn-quick-buy">+1.00</button>
+        <!-- LEFT: DUAL MANUAL TRADING CONSOLE (5 Cols on LG) -->
+        <div class="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          
+          <!-- GREEN MANUAL BUY PANEL (UP) -->
+          <div class="bento-card p-4 space-y-3.5 border-t-2 border-t-emerald-500">
+            <div class="flex items-center justify-between pb-2 border-b border-[#192235]">
+              <h3 class="text-xs font-bold text-emerald-400 flex items-center space-x-1.5 uppercase tracking-wider">
+                <i data-lucide="arrow-up-circle" class="w-4 h-4 text-emerald-400"></i>
+                <span>Manual Buy (Up)</span>
+              </h3>
+              <span class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 font-mono font-bold">GREEN BUY</span>
             </div>
-          </div>
 
-          <!-- Buy Input & Target Selection -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- Quick Presets -->
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">SOL Per Wallet</label>
-              <div class="relative">
-                <input id="manualBuySolInput" type="number" step="0.05" min="0.01" value="0.1" class="input-field font-mono font-bold text-emerald-400 text-lg">
-                <span class="absolute right-3 top-3 text-sm text-slate-400 font-bold">SOL</span>
+              <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">Quick Size Presets</span>
+              <div class="grid grid-cols-5 gap-1">
+                <button type="button" onclick="setManualBuyAmount(0.05)" class="btn-quick-buy">+0.05</button>
+                <button type="button" onclick="setManualBuyAmount(0.1)" class="btn-quick-buy">+0.10</button>
+                <button type="button" onclick="setManualBuyAmount(0.25)" class="btn-quick-buy">+0.25</button>
+                <button type="button" onclick="setManualBuyAmount(0.5)" class="btn-quick-buy">+0.50</button>
+                <button type="button" onclick="setManualBuyAmount(1.0)" class="btn-quick-buy">+1.00</button>
               </div>
             </div>
+
+            <!-- Inputs -->
+            <div class="space-y-2">
+              <div>
+                <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">SOL Per Wallet</label>
+                <div class="relative">
+                  <input id="manualBuySolInput" type="number" step="0.05" min="0.01" value="0.1" class="input-field font-mono font-bold text-emerald-400">
+                  <span class="absolute right-2.5 top-2.5 text-xs text-slate-500 font-bold">SOL</span>
+                </div>
+              </div>
+              <div>
+                <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Target Wallets</label>
+                <select id="manualBuyTargetSelect" class="input-field text-xs py-2 font-semibold">
+                  <option value="all">All Sub-Wallets</option>
+                  <option value="dev">Master Dev Wallet Only</option>
+                  <option value="selected">Selected Checkboxes</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Big Green Buy Button -->
+            <button id="btnManualBuy" onclick="executeManualBuy()" class="btn-buy-green w-full py-3 text-xs font-extrabold flex items-center justify-center space-x-1.5 uppercase tracking-wider">
+              <i data-lucide="arrow-up" class="w-4 h-4"></i>
+              <span>▲ BUY TOKENS (GREEN UP)</span>
+            </button>
+          </div>
+
+          <!-- RED MANUAL SELL PANEL (DOWN) -->
+          <div class="bento-card p-4 space-y-3.5 border-t-2 border-t-rose-500">
+            <div class="flex items-center justify-between pb-2 border-b border-[#192235]">
+              <h3 class="text-xs font-bold text-rose-400 flex items-center space-x-1.5 uppercase tracking-wider">
+                <i data-lucide="arrow-down-circle" class="w-4 h-4 text-rose-400"></i>
+                <span>Manual Sell (Down)</span>
+              </h3>
+              <span class="text-[10px] px-1.5 py-0.2 rounded bg-rose-950 text-rose-300 font-mono font-bold">RED SELL</span>
+            </div>
+
+            <!-- Quick Presets -->
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Target Wallets</label>
-              <select id="manualBuyTargetSelect" class="input-field text-xs py-2.5 font-semibold">
-                <option value="all">All Sub-Wallets</option>
-                <option value="dev">Master Dev Wallet Only</option>
-                <option value="selected">Selected Checkboxes</option>
-              </select>
+              <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">Quick Percentage Presets</span>
+              <div class="grid grid-cols-5 gap-1">
+                <button type="button" onclick="setManualSellPct(10)" class="btn-quick-sell">10%</button>
+                <button type="button" onclick="setManualSellPct(25)" class="btn-quick-sell">25%</button>
+                <button type="button" onclick="setManualSellPct(50)" class="btn-quick-sell">50%</button>
+                <button type="button" onclick="setManualSellPct(75)" class="btn-quick-sell">75%</button>
+                <button type="button" onclick="setManualSellPct(100)" class="btn-quick-sell">100%</button>
+              </div>
+            </div>
+
+            <!-- Inputs -->
+            <div class="space-y-2">
+              <div>
+                <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Sell Percentage</label>
+                <div class="relative">
+                  <input id="manualSellPctInput" type="number" step="5" min="1" max="100" value="50" class="input-field font-mono font-bold text-rose-400">
+                  <span class="absolute right-2.5 top-2.5 text-xs text-slate-500 font-bold">%</span>
+                </div>
+              </div>
+              <div>
+                <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Target Wallets</label>
+                <select id="manualSellTargetSelect" class="input-field text-xs py-2 font-semibold">
+                  <option value="all">All Sub-Wallets</option>
+                  <option value="dev">Master Dev Wallet Only</option>
+                  <option value="selected">Selected Checkboxes</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Big Red Sell Button -->
+            <button id="btnManualSell" onclick="executeManualSell()" class="btn-sell-red w-full py-3 text-xs font-extrabold flex items-center justify-center space-x-1.5 uppercase tracking-wider">
+              <i data-lucide="arrow-down" class="w-4 h-4"></i>
+              <span>▼ SELL TOKENS (RED DOWN)</span>
+            </button>
+
+            <!-- Cascade & Panic Dump -->
+            <div class="grid grid-cols-2 gap-1.5">
+              <button onclick="executeCascadeExit()" class="btn-secondary py-1.5 text-[10px] font-bold text-amber-400 hover:text-amber-300 flex items-center justify-center space-x-1">
+                <i data-lucide="waves" class="w-3 h-3"></i>
+                <span>Cascade</span>
+              </button>
+              <button onclick="executePanicDumpAll()" class="btn-secondary py-1.5 text-[10px] font-bold text-rose-400 hover:text-rose-300 flex items-center justify-center space-x-1">
+                <i data-lucide="alert-octagon" class="w-3 h-3"></i>
+                <span>Panic Dump</span>
+              </button>
             </div>
           </div>
 
-          <!-- Big Buy Button (Green) -->
-          <button id="btnManualBuy" onclick="executeManualBuy()" class="btn-buy-green w-full py-4 text-sm font-extrabold flex items-center justify-center space-x-2 uppercase tracking-wider">
-            <i data-lucide="arrow-up" class="w-5 h-5"></i>
-            <span>▲ BUY TOKENS (GREEN UP)</span>
-          </button>
-
-          <p class="text-[11px] text-slate-400 text-center">Buys directly on Pump.fun bonding curve. In simulation mode, mock balances are credited.</p>
         </div>
 
-        <!-- RIGHT: RED SELL CONSOLE (DOWN) -->
-        <div class="card p-6 space-y-5 border-t-4 border-t-rose-500 bg-surface-900/90">
-          <div class="flex items-center justify-between pb-3 border-b border-surface-800">
-            <h3 class="text-base font-bold text-rose-400 flex items-center space-x-2">
-              <i data-lucide="arrow-down-circle" class="w-5 h-5 text-rose-400"></i>
-              <span>Manual Sell Console (Red / Down)</span>
-            </h3>
-            <span class="text-xs px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 font-mono">EXIT FLOW</span>
-          </div>
-
-          <!-- Quick Sell Percentage Presets -->
-          <div>
-            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Quick Sell Percentage Presets</label>
-            <div class="grid grid-cols-5 gap-2">
-              <button type="button" onclick="setManualSellPct(10)" class="btn-quick-sell">10%</button>
-              <button type="button" onclick="setManualSellPct(25)" class="btn-quick-sell">25%</button>
-              <button type="button" onclick="setManualSellPct(50)" class="btn-quick-sell">50%</button>
-              <button type="button" onclick="setManualSellPct(75)" class="btn-quick-sell">75%</button>
-              <button type="button" onclick="setManualSellPct(100)" class="btn-quick-sell">100%</button>
+        <!-- RIGHT: MULTI-WALLET POSITION & PNL TABLE (7 Cols on LG) -->
+        <div class="lg:col-span-7 bento-card">
+          <div class="bento-header">
+            <div class="bento-title">
+              <i data-lucide="table" class="w-3.5 h-3.5 text-indigo-400"></i>
+              <span>Multi-Wallet Position & PnL Matrix</span>
+            </div>
+            <div class="flex items-center space-x-2 text-xs">
+              <button onclick="selectAllTableRows(true)" class="btn-secondary text-[10px] px-2 py-0.5">Select All</button>
+              <button onclick="selectAllTableRows(false)" class="btn-secondary text-[10px] px-2 py-0.5">Clear</button>
+              <button onclick="loadLiveStats()" class="btn-secondary text-[10px] px-2 py-0.5 flex items-center space-x-1">
+                <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                <span>Sync</span>
+              </button>
             </div>
           </div>
 
-          <!-- Sell Input & Target Selection -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Sell Percentage</label>
-              <div class="relative">
-                <input id="manualSellPctInput" type="number" step="5" min="1" max="100" value="50" class="input-field font-mono font-bold text-rose-400 text-lg">
-                <span class="absolute right-3 top-3 text-sm text-slate-400 font-bold">%</span>
-              </div>
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Target Wallets</label>
-              <select id="manualSellTargetSelect" class="input-field text-xs py-2.5 font-semibold">
-                <option value="all">All Sub-Wallets</option>
-                <option value="dev">Master Dev Wallet Only</option>
-                <option value="selected">Selected Checkboxes</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Big Sell Button (Red) -->
-          <button id="btnManualSell" onclick="executeManualSell()" class="btn-sell-red w-full py-4 text-sm font-extrabold flex items-center justify-center space-x-2 uppercase tracking-wider">
-            <i data-lucide="arrow-down" class="w-5 h-5"></i>
-            <span>▼ SELL TOKENS (RED DOWN)</span>
-          </button>
-
-          <!-- Advanced Strategy Sell Buttons (Cascade & Panic Dump) -->
-          <div class="grid grid-cols-2 gap-3 pt-1">
-            <button onclick="executeCascadeExit()" class="btn-secondary py-2.5 text-xs font-bold text-amber-400 hover:text-amber-300 border-amber-800/60 flex items-center justify-center space-x-1.5">
-              <i data-lucide="waves" class="w-3.5 h-3.5"></i>
-              <span>Cascade Exit (Staggered)</span>
-            </button>
-            <button onclick="executePanicDumpAll()" class="btn-secondary py-2.5 text-xs font-bold text-rose-400 hover:text-rose-300 border-rose-800/60 flex items-center justify-center space-x-1.5">
-              <i data-lucide="alert-octagon" class="w-3.5 h-3.5"></i>
-              <span>Panic Dump All (100%)</span>
-            </button>
+          <div class="overflow-x-auto p-2">
+            <table class="w-full text-left text-xs font-mono">
+              <thead>
+                <tr class="border-b border-[#192235] text-slate-400 text-[11px]">
+                  <th class="py-2 px-2 w-6"><input type="checkbox" id="checkAllRows" onchange="toggleSelectAllRows(this.checked)" class="rounded border-slate-700 bg-[#090d16] text-cyan-500"></th>
+                  <th class="py-2 px-2">Wallet</th>
+                  <th class="py-2 px-2">SOL Bal</th>
+                  <th class="py-2 px-2">Tokens Held</th>
+                  <th class="py-2 px-2">Cost Basis</th>
+                  <th class="py-2 px-2">Value</th>
+                  <th class="py-2 px-2 text-center">PnL (SOL / %)</th>
+                  <th class="py-2 px-2 text-right">Inline Actions</th>
+                </tr>
+              </thead>
+              <tbody id="tradingWalletsTableBody">
+                <!-- Populated dynamically via app.js -->
+              </tbody>
+            </table>
           </div>
         </div>
 
       </div>
 
-      <!-- MULTI-WALLET REAL-TIME POSITION & PNL TABLE -->
-      <div class="card p-6 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-800">
-          <div>
-            <h3 class="text-base font-bold text-slate-100 flex items-center space-x-2">
-              <i data-lucide="table" class="w-5 h-5 text-indigo-400"></i>
-              <span>Multi-Wallet Position & PnL Matrix</span>
-            </h3>
-            <span class="text-xs text-slate-400">Live individual wallet breakdown with inline buy/sell actions</span>
+      <!-- BOTTOM ROW: PORTFOLIO DONUT & LIVE TELEMETRY TERMINAL -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
+        
+        <!-- CARD 7: PORTFOLIO DONUT & DISTRIBUTION (4 Cols on LG) -->
+        <div class="lg:col-span-4 bento-card p-4 justify-between">
+          <div class="flex justify-between items-center text-xs text-slate-400 pb-2 border-b border-[#192235]">
+            <span class="font-bold uppercase tracking-wider text-slate-300">Portfolio Distribution</span>
+            <span class="text-[10px] font-mono text-cyan-400">SUPPLY ALLOCATION</span>
           </div>
-          <div class="flex items-center space-x-2">
-            <button onclick="selectAllTableRows(true)" class="btn-secondary text-[11px] px-2.5 py-1">Select All</button>
-            <button onclick="selectAllTableRows(false)" class="btn-secondary text-[11px] px-2.5 py-1">Clear</button>
-            <button onclick="loadLiveStats()" class="btn-secondary text-[11px] px-2.5 py-1 flex items-center space-x-1">
-              <i data-lucide="refresh-cw" class="w-3 h-3"></i>
-              <span>Refresh</span>
-            </button>
+
+          <div class="flex items-center justify-around py-3">
+            <canvas id="donutCanvas" width="130" height="130" class="w-32 h-32"></canvas>
+            <div class="space-y-1.5 text-xs font-mono">
+              <div class="flex items-center space-x-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+                <span class="text-slate-300">Dev Wallet: <strong id="donutDevPct">3.2%</strong></span>
+              </div>
+              <div class="flex items-center space-x-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+                <span class="text-slate-300">Sub-Wallets: <strong id="donutSubPct">7.1%</strong></span>
+              </div>
+              <div class="flex items-center space-x-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <span class="text-slate-300">Bonding Curve: <strong id="donutCurvePct">89.7%</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-[#192235] text-[11px] font-mono text-slate-400 flex justify-between">
+            <span>Total Supply: 1,000,000,000</span>
+            <span class="text-emerald-400 font-bold">100% Non-Custodial</span>
           </div>
         </div>
 
-        <!-- Table -->
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs font-mono">
-            <thead>
-              <tr class="border-b border-surface-800 text-slate-400">
-                <th class="py-2.5 px-3 w-8"><input type="checkbox" id="checkAllRows" onchange="toggleSelectAllRows(this.checked)" class="rounded border-surface-700 bg-surface-900 text-cyan-500"></th>
-                <th class="py-2.5 px-3">Wallet</th>
-                <th class="py-2.5 px-3">SOL Bal</th>
-                <th class="py-2.5 px-3">Tokens Held</th>
-                <th class="py-2.5 px-3">Cost Basis</th>
-                <th class="py-2.5 px-3">Current Val</th>
-                <th class="py-2.5 px-3 text-center">PnL (SOL / %)</th>
-                <th class="py-2.5 px-3 text-right">Inline Actions</th>
-              </tr>
-            </thead>
-            <tbody id="tradingWalletsTableBody">
-              <!-- Dynamically populated by app.js -->
-            </tbody>
-          </table>
+        <!-- CARD 8: LIVE WEBSOCKET TERMINAL & EXECUTION TAPE (8 Cols on LG) -->
+        <div class="lg:col-span-8 bento-card">
+          <div class="bento-header">
+            <div class="bento-title">
+              <i data-lucide="terminal" class="w-3.5 h-3.5 text-cyan-400"></i>
+              <span>Live Execution Terminal & Transaction Tape</span>
+            </div>
+            <button onclick="clearTerminalLogs()" class="text-[10px] text-slate-400 hover:text-slate-200">Clear</button>
+          </div>
+          <div id="terminalLogs" class="bg-[#090d16] p-3 font-mono text-[11px] text-slate-300 h-36 overflow-y-auto space-y-1">
+            <div class="text-slate-500">[System] Initializing Svarog Terminal Workstation...</div>
+          </div>
         </div>
 
       </div>
 
     </div>
 
-    <!-- ==================== TAB 2: LAUNCHPAD & BUNDLER ==================== -->
-    <div id="tabContent-launchpad" class="tab-pane hidden space-y-6">
-      
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <!-- ==================== TAB 2: LAUNCHPAD & BUNDLER MATRIX ==================== -->
+    <div id="tabContent-launchpad" class="tab-pane hidden space-y-4">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
         
-        <!-- Left Column: Token Metadata Wizard -->
-        <div class="lg:col-span-6 space-y-6">
-          <div class="card p-6 space-y-5">
-            <div class="flex items-center justify-between pb-3 border-b border-surface-800">
-              <h2 class="text-base font-bold text-slate-100 flex items-center space-x-2">
-                <i data-lucide="file-badge" class="w-5 h-5 text-cyan-400"></i>
-                <span>Token Metadata Specification</span>
-              </h2>
-              <span class="text-xs px-2 py-0.5 rounded bg-surface-800 text-slate-400 font-mono">Pump.fun Bonding Curve</span>
-            </div>
+        <!-- Left: Token Metadata Specification -->
+        <div class="lg:col-span-6 bento-card p-5 space-y-4">
+          <div class="flex items-center justify-between pb-2 border-b border-[#192235]">
+            <h2 class="text-sm font-bold text-slate-100 flex items-center space-x-2 uppercase tracking-wider">
+              <i data-lucide="file-badge" class="w-4 h-4 text-cyan-400"></i>
+              <span>Token Metadata Specification</span>
+            </h2>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-[#131a29] text-slate-400 font-mono">Pump.fun Program</span>
+          </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Token Name *</label>
-                <input id="tokenName" type="text" placeholder="e.g. Svarog Doge" class="input-field" value="Solana Vamp Shark">
-              </div>
-              <div>
-                <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Symbol / Ticker *</label>
-                <input id="tokenSymbol" type="text" placeholder="e.g. SHARK" class="input-field uppercase font-mono font-bold" value="SHARK">
-              </div>
-            </div>
-
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Description</label>
-              <textarea id="tokenDescription" rows="3" placeholder="Token narrative and mission..." class="input-field resize-none">The alpha memecoin hunting liquidity and bonding curves across Solana with atomic Jito bundler speed.</textarea>
+              <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Token Name *</label>
+              <input id="tokenName" type="text" placeholder="e.g. Svarog Doge" class="input-field" value="Solana Vamp Shark">
             </div>
-
-            <!-- Logo Upload Dropzone -->
             <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Token Logo</label>
-              <div class="flex items-center space-x-4">
-                <div id="logoPreviewContainer" class="w-16 h-16 rounded-xl border-2 border-dashed border-surface-700 bg-surface-900 flex items-center justify-center overflow-hidden">
-                  <img id="logoPreview" src="" class="w-full h-full object-cover hidden">
-                  <i id="logoIconPlaceholder" data-lucide="image" class="w-6 h-6 text-slate-500"></i>
-                </div>
-                <div class="flex-1">
-                  <input id="logoFile" type="file" accept="image/*" class="hidden" onchange="handleLogoSelect(event)">
-                  <button type="button" onclick="document.getElementById('logoFile').click()" class="btn-secondary text-xs w-full py-2 flex items-center justify-center space-x-2">
-                    <i data-lucide="upload" class="w-4 h-4"></i>
-                    <span>Choose Image or Drag & Drop</span>
-                  </button>
-                  <p class="text-[11px] text-slate-500 mt-1">PNG, JPG, GIF or WebP up to 5MB</p>
-                </div>
+              <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Symbol / Ticker *</label>
+              <input id="tokenSymbol" type="text" placeholder="e.g. SHARK" class="input-field uppercase font-mono font-bold" value="SHARK">
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Description</label>
+            <textarea id="tokenDescription" rows="3" class="input-field resize-none">The alpha memecoin hunting liquidity across Solana with atomic Jito bundler speed.</textarea>
+          </div>
+
+          <!-- Logo Upload -->
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Token Logo</label>
+            <div class="flex items-center space-x-3">
+              <div id="logoPreviewContainer" class="w-14 h-14 rounded-lg border border-dashed border-slate-700 bg-[#090d16] flex items-center justify-center overflow-hidden">
+                <img id="logoPreview" src="" class="w-full h-full object-cover hidden">
+                <i id="logoIconPlaceholder" data-lucide="image" class="w-5 h-5 text-slate-600"></i>
+              </div>
+              <div class="flex-1">
+                <input id="logoFile" type="file" accept="image/*" class="hidden" onchange="handleLogoSelect(event)">
+                <button type="button" onclick="document.getElementById('logoFile').click()" class="btn-secondary text-xs w-full py-2 flex items-center justify-center space-x-1.5">
+                  <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                  <span>Choose Image File</span>
+                </button>
               </div>
             </div>
+          </div>
 
-            <!-- Social Links -->
-            <div class="space-y-3 pt-2 border-t border-surface-800">
-              <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Social Links (Optional)</label>
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div class="relative">
-                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 text-xs">𝕏</span>
-                  <input id="tokenTwitter" type="text" placeholder="https://x.com/..." class="input-field pl-8 text-xs">
-                </div>
-                <div class="relative">
-                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 text-xs">✈</span>
-                  <input id="tokenTelegram" type="text" placeholder="https://t.me/..." class="input-field pl-8 text-xs">
-                </div>
-                <div class="relative">
-                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 text-xs">🌐</span>
-                  <input id="tokenWebsite" type="text" placeholder="https://..." class="input-field pl-8 text-xs">
-                </div>
-              </div>
-            </div>
-
+          <!-- Socials -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-[#192235]">
+            <input id="tokenTwitter" type="text" placeholder="𝕏 Twitter" class="input-field text-xs">
+            <input id="tokenTelegram" type="text" placeholder="✈ Telegram" class="input-field text-xs">
+            <input id="tokenWebsite" type="text" placeholder="🌐 Website" class="input-field text-xs">
           </div>
         </div>
 
-        <!-- Right Column: Atomic Jito Bundler Matrix -->
-        <div class="lg:col-span-6 space-y-6">
-          <div class="card p-6 space-y-5">
-            <div class="flex items-center justify-between pb-3 border-b border-surface-800">
-              <h2 class="text-base font-bold text-slate-100 flex items-center space-x-2">
-                <i data-lucide="layers" class="w-5 h-5 text-indigo-400"></i>
-                <span>Atomic Jito Bundler Matrix</span>
-              </h2>
-              <span class="text-xs px-2 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-800 font-mono">Single-Slot Anti-Snipe</span>
+        <!-- Right: Atomic Jito Bundler Matrix -->
+        <div class="lg:col-span-6 bento-card p-5 space-y-4">
+          <div class="flex items-center justify-between pb-2 border-b border-[#192235]">
+            <h2 class="text-sm font-bold text-slate-100 flex items-center space-x-2 uppercase tracking-wider">
+              <i data-lucide="layers" class="w-4 h-4 text-indigo-400"></i>
+              <span>Atomic Jito Bundler Matrix</span>
+            </h2>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-400 border border-indigo-800 font-mono">Slot 0 Anti-Snipe</span>
+          </div>
+
+          <!-- Dev Buy -->
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="text-[10px] font-semibold text-slate-300 uppercase tracking-wider">Master Dev Buy (SOL)</label>
+              <span id="devBuyTokensEst" class="text-xs font-mono text-cyan-400">~32,258,000 tokens (3.2%)</span>
             </div>
+            <input id="devSolBuy" type="number" step="0.05" min="0" value="0.5" oninput="calculateBundleMetrics()" class="input-field font-mono font-bold text-base">
+          </div>
 
-            <!-- Master Dev Buy Setting -->
-            <div>
-              <div class="flex justify-between items-center mb-1.5">
-                <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Master Dev Buy (SOL)</label>
-                <span id="devBuyTokensEst" class="text-xs font-mono text-cyan-400">Est. ~32,258,000 tokens (3.2%)</span>
-              </div>
-              <div class="relative">
-                <input id="devSolBuy" type="number" step="0.05" min="0" value="0.5" oninput="calculateBundleMetrics()" class="input-field font-mono font-bold text-lg">
-                <span class="absolute right-3 top-3 text-sm text-slate-400 font-bold">SOL</span>
-              </div>
-            </div>
-
-            <!-- Sub-Wallets Bundle Allocations -->
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <div>
-                  <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider block">Bundle Sub-Wallets</label>
-                  <span class="text-[11px] text-slate-400">Wallets buying simultaneously in slot 0</span>
-                </div>
-                <div class="flex items-center space-x-2">
-                  <span id="subWalletCountBadge" class="text-xs font-mono font-bold text-slate-200 px-2 py-0.5 bg-surface-800 rounded">6 Wallets</span>
-                  <button type="button" onclick="quickFillSubBuys(0.2)" class="text-[11px] text-cyan-400 hover:underline">All 0.2 SOL</button>
-                  <button type="button" onclick="randomizeSubBuys()" class="text-[11px] text-indigo-400 hover:underline">Jitter</button>
-                </div>
-              </div>
-
-              <!-- Sub-Wallet Buy Inputs Grid -->
-              <div id="subWalletBuysContainer" class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto pr-1">
-                <!-- Dynamically populated via JS -->
+          <!-- Sub-Wallets Allocations -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-[10px] font-semibold text-slate-300 uppercase tracking-wider">Sub-Wallets Bundle Buys</span>
+              <div class="space-x-2">
+                <span id="subWalletCountBadge" class="text-[10px] font-mono font-bold text-slate-200 px-1.5 py-0.5 bg-[#131a29] rounded">6 Wallets</span>
+                <button type="button" onclick="quickFillSubBuys(0.2)" class="text-[10px] text-cyan-400 hover:underline">All 0.2</button>
+                <button type="button" onclick="randomizeSubBuys()" class="text-[10px] text-indigo-400 hover:underline">Jitter</button>
               </div>
             </div>
+            <div id="subWalletBuysContainer" class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto pr-1"></div>
+          </div>
 
-            <!-- Jito Tip Selector -->
-            <div>
-              <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">Jito Miner Tip (Block Inclusion Guarantee)</label>
-              <div class="grid grid-cols-3 gap-3">
-                <button type="button" onclick="setJitoTip(0.002)" id="tipBtn-0.002" class="tip-btn p-2.5 rounded-xl border border-surface-700 bg-surface-900 text-center hover:border-cyan-500 transition-all">
-                  <span class="text-xs text-slate-400 block">Fast</span>
-                  <span class="font-mono font-bold text-sm text-slate-200">0.002 SOL</span>
-                </button>
-                <button type="button" onclick="setJitoTip(0.005)" id="tipBtn-0.005" class="tip-btn active p-2.5 rounded-xl border border-cyan-500 bg-cyan-950/40 text-center transition-all">
-                  <span class="text-xs text-cyan-400 block font-semibold">Turbo (Rec.)</span>
-                  <span class="font-mono font-bold text-sm text-cyan-200">0.005 SOL</span>
-                </button>
-                <button type="button" onclick="setJitoTip(0.01)" id="tipBtn-0.01" class="tip-btn p-2.5 rounded-xl border border-surface-700 bg-surface-900 text-center hover:border-cyan-500 transition-all">
-                  <span class="text-xs text-slate-400 block">Ultra Snipe</span>
-                  <span class="font-mono font-bold text-sm text-slate-200">0.010 SOL</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Anti-Sniper Bundle Summary Box -->
-            <div class="bg-surface-900/90 rounded-xl p-4 border border-surface-800 space-y-2.5 font-mono text-xs">
-              <div class="flex justify-between text-slate-400">
-                <span>Total SOL in Bundle:</span>
-                <span id="metricTotalSol" class="text-slate-100 font-bold">1.70 SOL</span>
-              </div>
-              <div class="flex justify-between text-slate-400">
-                <span>Total Tokens Sniped:</span>
-                <span id="metricTotalTokens" class="text-cyan-400 font-bold">~103,450,000</span>
-              </div>
-              <div class="flex justify-between text-slate-400">
-                <span>Supply Secured in Slot 0:</span>
-                <span id="metricSupplyPct" class="text-emerald-400 font-bold">10.35% (Sniper-Proof)</span>
-              </div>
-              <div class="flex justify-between text-slate-400">
-                <span>Atomic Transactions:</span>
-                <span id="metricTxCount" class="text-slate-300">8 Txs (Create + 6 Buys + Tip)</span>
-              </div>
-            </div>
-
-            <!-- Action Buttons -->
-            <div class="space-y-2 pt-2">
-              <button id="btnPreflight" onclick="runPreflightCheck()" class="btn-secondary w-full py-2.5 flex items-center justify-center space-x-2 text-xs">
-                <i data-lucide="check-circle" class="w-4 h-4"></i>
-                <span>Run Pre-Flight Validation Check</span>
+          <!-- Jito Tip Selector -->
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Jito Miner Tip (Block Inclusion)</label>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" onclick="setJitoTip(0.002)" id="tipBtn-0.002" class="tip-btn p-2 rounded-lg border border-[#192235] bg-[#090d16] text-center">
+                <span class="text-[10px] text-slate-400 block">Fast</span>
+                <span class="font-mono font-bold text-xs">0.002 SOL</span>
               </button>
-              
-              <button id="btnLaunchBundle" onclick="executeLaunchBundle()" class="btn-primary w-full py-3.5 flex items-center justify-center space-x-2 text-sm font-bold shadow-lg shadow-cyan-500/20">
-                <i data-lucide="flame" class="w-5 h-5"></i>
-                <span>LAUNCH ATOMIC JITO BUNDLE (SLOT 0)</span>
+              <button type="button" onclick="setJitoTip(0.005)" id="tipBtn-0.005" class="tip-btn active p-2 rounded-lg border border-cyan-500 bg-cyan-950/40 text-center">
+                <span class="text-[10px] text-cyan-400 block font-semibold">Turbo (Rec)</span>
+                <span class="font-mono font-bold text-xs text-cyan-200">0.005 SOL</span>
+              </button>
+              <button type="button" onclick="setJitoTip(0.01)" id="tipBtn-0.01" class="tip-btn p-2 rounded-lg border border-[#192235] bg-[#090d16] text-center">
+                <span class="text-[10px] text-slate-400 block">Ultra</span>
+                <span class="font-mono font-bold text-xs">0.010 SOL</span>
               </button>
             </div>
+          </div>
 
+          <!-- Summary Box -->
+          <div class="bg-[#090d16] rounded-lg p-3 border border-[#192235] space-y-1.5 font-mono text-xs">
+            <div class="flex justify-between text-slate-400"><span>Total SOL:</span> <strong id="metricTotalSol" class="text-slate-100">1.70 SOL</strong></div>
+            <div class="flex justify-between text-slate-400"><span>Tokens Sniped:</span> <strong id="metricTotalTokens" class="text-cyan-400">~103,450,000</strong></div>
+            <div class="flex justify-between text-slate-400"><span>Supply Secured:</span> <strong id="metricSupplyPct" class="text-emerald-400">10.35% (Slot 0)</strong></div>
+          </div>
+
+          <!-- Launch Actions -->
+          <div class="space-y-2 pt-1">
+            <button id="btnPreflight" onclick="runPreflightCheck()" class="btn-secondary w-full py-2 text-xs flex items-center justify-center space-x-1.5">
+              <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
+              <span>Pre-Flight Validation Check</span>
+            </button>
+            <button id="btnLaunchBundle" onclick="executeLaunchBundle()" class="btn-primary w-full py-3 text-xs font-bold flex items-center justify-center space-x-1.5">
+              <i data-lucide="flame" class="w-4 h-4"></i>
+              <span>LAUNCH ATOMIC JITO BUNDLE (SLOT 0)</span>
+            </button>
           </div>
         </div>
 
       </div>
-
     </div>
 
     <!-- ==================== TAB 3: VAMP CLONER ==================== -->
-    <div id="tabContent-vamp" class="tab-pane hidden space-y-6">
-      
-      <!-- Vamp Header / CA Search Bar -->
-      <div class="card p-6 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div id="tabContent-vamp" class="tab-pane hidden space-y-4">
+      <div class="bento-card p-4 space-y-3">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 class="text-base font-bold text-slate-100 flex items-center space-x-2">
-              <i data-lucide="skull" class="w-5 h-5 text-pink-400"></i>
-              <span>Vampire Launcher & Narrative Cloner</span>
+            <h2 class="text-sm font-bold text-slate-100 flex items-center space-x-2 uppercase tracking-wider">
+              <i data-lucide="skull" class="w-4 h-4 text-pink-400"></i>
+              <span>Vampire Narrative Cloner</span>
             </h2>
-            <p class="text-xs text-slate-400 mt-0.5">Siphon attention and momentum from trending Solana tokens by cloning and revamping them in 1-click.</p>
+            <p class="text-xs text-slate-400 mt-0.5">Siphon attention from trending Solana tokens by cloning & revamping them in 1-click.</p>
           </div>
-          <button onclick="loadTrendingVampTokens()" class="btn-secondary text-xs flex items-center space-x-1.5 self-start sm:self-auto">
-            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+          <button onclick="loadTrendingVampTokens()" class="btn-secondary text-xs flex items-center space-x-1.5 px-3 py-1.5 self-start">
+            <i data-lucide="refresh-cw" class="w-3 h-3"></i>
             <span>Refresh Feed</span>
           </button>
         </div>
-
-        <!-- Contract Address Inspector Input -->
         <div class="flex gap-2">
-          <input id="vampCaInput" type="text" placeholder="Paste any Solana Token Mint Address (CA) to inspect & vamp..." class="input-field font-mono text-xs flex-1">
-          <button onclick="inspectCustomVampCa()" class="btn-primary text-xs px-5 flex items-center space-x-1.5">
-            <i data-lucide="search" class="w-4 h-4"></i>
+          <input id="vampCaInput" type="text" placeholder="Paste Solana Token Mint Address (CA) to inspect & vamp..." class="input-field font-mono text-xs flex-1">
+          <button onclick="inspectCustomVampCa()" class="btn-primary text-xs px-4 flex items-center space-x-1">
+            <i data-lucide="search" class="w-3.5 h-3.5"></i>
             <span>Inspect CA</span>
           </button>
         </div>
       </div>
-
-      <!-- Trending Tokens Grid -->
-      <div class="space-y-3">
-        <div class="flex items-center justify-between">
-          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Top Trending Memecoins on Solana</h3>
-          <span class="text-[11px] text-slate-500">Live DexScreener & Pump.fun Feed</span>
-        </div>
-        <div id="vampTokensGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <!-- Populated by JS -->
-        </div>
-      </div>
-
+      <div id="vampTokensGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5"></div>
     </div>
 
     <!-- ==================== TAB 4: WALLETS & FUNDING ==================== -->
-    <div id="tabContent-wallets" class="tab-pane hidden space-y-6">
-      
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div id="tabContent-wallets" class="tab-pane hidden space-y-4">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
         
-        <!-- Master Dev Wallet Card -->
-        <div class="lg:col-span-5 space-y-6">
-          <div class="card p-6 space-y-4">
-            <div class="flex items-center justify-between pb-3 border-b border-surface-800">
-              <h2 class="text-base font-bold text-slate-100 flex items-center space-x-2">
-                <i data-lucide="key" class="w-5 h-5 text-amber-400"></i>
-                <span>Master Dev Wallet</span>
-              </h2>
-              <span id="masterWalletSimBadge" class="text-xs px-2 py-0.5 rounded bg-surface-800 text-amber-400 font-mono">ACTIVE</span>
-            </div>
-
-            <div>
-              <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Public Address</label>
-              <div class="flex items-center space-x-2">
-                <input id="masterAddressInput" type="text" readonly class="input-field font-mono text-xs bg-surface-900 text-slate-300">
-                <button onclick="copyMasterAddress()" class="btn-secondary px-3 py-2 text-xs" title="Copy Address">
-                  <i data-lucide="copy" class="w-4 h-4"></i>
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <div class="flex justify-between items-center mb-1">
-                <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Private Key (Base58)</label>
-                <button type="button" onclick="toggleRevealMasterKey()" id="btnRevealMasterKey" class="text-[11px] text-cyan-400 hover:underline">Reveal</button>
-              </div>
-              <input id="masterKeyInput" type="password" readonly class="input-field font-mono text-xs bg-surface-900 text-slate-400">
-            </div>
-
-            <div class="flex gap-2 pt-2 border-t border-surface-800">
-              <button onclick="generateNewMasterWallet()" class="btn-secondary text-xs flex-1 py-2 flex items-center justify-center space-x-1.5">
-                <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
-                <span>Generate New</span>
-              </button>
-              <button onclick="promptImportMasterKey()" class="btn-secondary text-xs flex-1 py-2 flex items-center justify-center space-x-1.5">
-                <i data-lucide="log-in" class="w-4 h-4"></i>
-                <span>Import Key</span>
-              </button>
+        <!-- Master Dev Wallet -->
+        <div class="lg:col-span-5 bento-card p-4 space-y-3.5">
+          <div class="flex items-center justify-between pb-2 border-b border-[#192235]">
+            <h2 class="text-xs font-bold text-slate-100 flex items-center space-x-1.5 uppercase tracking-wider">
+              <i data-lucide="key" class="w-4 h-4 text-amber-400"></i>
+              <span>Master Dev Wallet</span>
+            </h2>
+            <span class="text-[10px] px-1.5 py-0.2 rounded bg-[#131a29] text-amber-400 font-mono">ACTIVE</span>
+          </div>
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Public Address</label>
+            <div class="flex items-center space-x-1.5">
+              <input id="masterAddressInput" type="text" readonly class="input-field font-mono text-xs bg-[#090d16]">
+              <button onclick="copyMasterAddress()" class="btn-secondary px-2.5 py-2 text-xs" title="Copy Address"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>
             </div>
           </div>
-
-          <!-- Disperse & Drain Controls -->
-          <div class="card p-6 space-y-4">
-            <h3 class="text-sm font-bold text-slate-200 flex items-center space-x-2">
-              <i data-lucide="arrow-left-right" class="w-4 h-4 text-cyan-400"></i>
-              <span>Funding & Drain Desk</span>
-            </h3>
-
-            <!-- Disperse SOL Form -->
-            <div class="space-y-3 bg-surface-900 p-4 rounded-xl border border-surface-800">
-              <div class="flex justify-between items-center">
-                <span class="text-xs font-semibold text-slate-300 uppercase tracking-wider">1-Click Auto-Disperse SOL</span>
-                <span class="text-[11px] text-slate-500">From Master to Sub-Wallets</span>
-              </div>
-              <div class="flex gap-2">
-                <input id="disperseTotalSol" type="number" step="0.1" min="0.1" value="1.2" placeholder="Total SOL to split" class="input-field text-xs font-mono">
-                <button onclick="executeDisperseSol()" class="btn-primary text-xs px-4 whitespace-nowrap flex items-center space-x-1">
-                  <i data-lucide="send" class="w-3.5 h-3.5"></i>
-                  <span>Disperse</span>
-                </button>
-              </div>
-              <div class="flex items-center space-x-2 pt-1">
-                <input id="disperseRandomize" type="checkbox" checked class="rounded border-surface-700 bg-surface-800 text-cyan-500">
-                <label for="disperseRandomize" class="text-xs text-slate-300">Randomize amounts ±20% (Anti-Clustering)</label>
-              </div>
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Private Key (Base58)</label>
+              <button type="button" onclick="toggleRevealMasterKey()" id="btnRevealMasterKey" class="text-[10px] text-cyan-400 hover:underline">Reveal</button>
             </div>
+            <input id="masterKeyInput" type="password" readonly class="input-field font-mono text-xs bg-[#090d16]">
+          </div>
+          <div class="flex gap-2 pt-2 border-t border-[#192235]">
+            <button onclick="generateNewMasterWallet()" class="btn-secondary text-xs flex-1 py-1.5 flex items-center justify-center space-x-1">
+              <i data-lucide="rotate-ccw" class="w-3 h-3"></i><span>Generate New</span>
+            </button>
+            <button onclick="promptImportMasterKey()" class="btn-secondary text-xs flex-1 py-1.5 flex items-center justify-center space-x-1">
+              <i data-lucide="log-in" class="w-3 h-3"></i><span>Import Key</span>
+            </button>
+          </div>
 
-            <!-- Drain SOL Form -->
-            <div class="space-y-2 bg-surface-900 p-4 rounded-xl border border-surface-800">
-              <div class="flex justify-between items-center">
-                <span class="text-xs font-semibold text-slate-300 uppercase tracking-wider">1-Click Drain / Sweep</span>
-                <span class="text-[11px] text-slate-500">Reclaim to Master</span>
-              </div>
-              <p class="text-xs text-slate-400">Sweeps all remaining SOL from all sub-wallets back to your Master Dev wallet.</p>
-              <button onclick="executeDrainSol()" class="btn-secondary text-xs w-full py-2.5 text-rose-400 hover:text-rose-300 hover:border-rose-500/50 flex items-center justify-center space-x-1.5">
-                <i data-lucide="download" class="w-4 h-4"></i>
-                <span>Drain All Sub-Wallets to Master</span>
-              </button>
+          <!-- Disperse & Drain -->
+          <div class="pt-3 border-t border-[#192235] space-y-3">
+            <span class="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">1-Click Disperse SOL</span>
+            <div class="flex gap-2">
+              <input id="disperseTotalSol" type="number" step="0.1" min="0.1" value="1.2" placeholder="Total SOL to split" class="input-field text-xs font-mono">
+              <button onclick="executeDisperseSol()" class="btn-primary text-xs px-3 whitespace-nowrap">Disperse</button>
             </div>
+            <div class="flex items-center space-x-2 text-xs text-slate-300">
+              <input id="disperseRandomize" type="checkbox" checked class="rounded border-slate-700 bg-[#090d16] text-cyan-500">
+              <label for="disperseRandomize" class="text-[11px]">Randomize amounts ±20% (Anti-Tracker)</label>
+            </div>
+            <button onclick="executeDrainSol()" class="btn-secondary text-xs w-full py-2 text-rose-400 hover:text-rose-300 flex items-center justify-center space-x-1">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i><span>Drain All Sub-Wallets to Master</span>
+            </button>
           </div>
         </div>
 
-        <!-- Sub-Wallets Matrix Table -->
-        <div class="lg:col-span-7 space-y-6">
-          <div class="card p-6 space-y-4">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-800">
-              <div>
-                <h2 class="text-base font-bold text-slate-100 flex items-center space-x-2">
-                  <i data-lucide="users" class="w-5 h-5 text-indigo-400"></i>
-                  <span>Sub-Wallets Bundle Matrix</span>
-                </h2>
-                <span id="subWalletsSummaryText" class="text-xs text-slate-400">6 wallets active</span>
-              </div>
-              <div class="flex items-center space-x-2">
-                <select id="subWalletCountSelect" onchange="regenerateSubWallets()" class="input-field text-xs py-1.5 px-3 w-32">
-                  <option value="4">4 Wallets</option>
-                  <option value="6" selected>6 Wallets</option>
-                  <option value="8">8 Wallets</option>
-                  <option value="12">12 Wallets</option>
-                  <option value="16">16 Wallets</option>
-                  <option value="24">24 Wallets</option>
-                </select>
-                <button onclick="exportAllWalletKeys()" class="btn-secondary text-xs px-3 py-1.5 flex items-center space-x-1" title="Export Keys Backup">
-                  <i data-lucide="download" class="w-3.5 h-3.5"></i>
-                  <span>Export</span>
-                </button>
-              </div>
+        <!-- Sub-Wallets Table -->
+        <div class="lg:col-span-7 bento-card p-4 space-y-3">
+          <div class="flex items-center justify-between pb-2 border-b border-[#192235]">
+            <h2 class="text-xs font-bold text-slate-100 flex items-center space-x-1.5 uppercase tracking-wider">
+              <i data-lucide="users" class="w-4 h-4 text-indigo-400"></i>
+              <span>Sub-Wallets Matrix</span>
+            </h2>
+            <div class="flex items-center space-x-2">
+              <select id="subWalletCountSelect" onchange="regenerateSubWallets()" class="input-field text-xs py-1 px-2 w-28">
+                <option value="4">4 Wallets</option>
+                <option value="6" selected>6 Wallets</option>
+                <option value="8">8 Wallets</option>
+                <option value="12">12 Wallets</option>
+                <option value="16">16 Wallets</option>
+                <option value="24">24 Wallets</option>
+              </select>
+              <button onclick="exportAllWalletKeys()" class="btn-secondary text-[11px] px-2.5 py-1 flex items-center space-x-1">
+                <i data-lucide="download" class="w-3 h-3"></i><span>Export</span>
+              </button>
             </div>
-
-            <!-- Table -->
-            <div class="overflow-x-auto">
-              <table class="w-full text-left text-xs font-mono">
-                <thead>
-                  <tr class="border-b border-surface-800 text-slate-400">
-                    <th class="py-2.5 px-3">#</th>
-                    <th class="py-2.5 px-3">Public Address</th>
-                    <th class="py-2.5 px-3 text-right">SOL Balance</th>
-                    <th class="py-2.5 px-3 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody id="subWalletsTableBody">
-                  <!-- Populated by JS -->
-                </tbody>
-              </table>
-            </div>
-
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs font-mono">
+              <thead>
+                <tr class="border-b border-[#192235] text-slate-400 text-[11px]">
+                  <th class="py-2 px-2">#</th>
+                  <th class="py-2 px-2">Address</th>
+                  <th class="py-2 px-2 text-right">SOL Balance</th>
+                  <th class="py-2 px-2 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody id="subWalletsTableBody"></tbody>
+            </table>
           </div>
         </div>
 
       </div>
-
     </div>
 
     <!-- ==================== TAB 5: VOLUME BUMP BOT ==================== -->
-    <div id="tabContent-bumper" class="tab-pane hidden space-y-6">
-      
-      <div class="card p-6 space-y-5 max-w-2xl mx-auto">
-        <div class="flex items-center justify-between pb-3 border-b border-surface-800">
-          <h2 class="text-base font-bold text-slate-100 flex items-center space-x-2">
-            <i data-lucide="trending-up" class="w-5 h-5 text-emerald-400"></i>
-            <span>Pump.fun Front-Page Volume Bumper</span>
+    <div id="tabContent-bumper" class="tab-pane hidden space-y-4">
+      <div class="bento-card p-6 space-y-4 max-w-xl mx-auto">
+        <div class="flex items-center justify-between pb-2 border-b border-[#192235]">
+          <h2 class="text-xs font-bold text-slate-100 flex items-center space-x-1.5 uppercase tracking-wider">
+            <i data-lucide="trending-up" class="w-4 h-4 text-emerald-400"></i>
+            <span>Pump.fun Volume Bumper</span>
           </h2>
-          <span id="bumperActiveBadge" class="text-xs px-2 py-0.5 rounded bg-surface-800 text-slate-400 font-mono">STOPPED</span>
+          <span id="bumperActiveBadge" class="text-[10px] px-1.5 py-0.2 rounded bg-[#131a29] text-slate-400 font-mono">STOPPED</span>
         </div>
-
-        <p class="text-xs text-slate-400">
-          Periodically performs randomized micro-buys from rotating sub-wallets to keep the token active on Pump.fun's "Recently Bumped" feed and DexScreener live ticker.
-        </p>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <p class="text-xs text-slate-400">Micro-buys from rotating sub-wallets to keep the token bumping on Pump.fun's front page feed.</p>
+        <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Bump Buy Size (SOL)</label>
+            <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Buy Size (SOL)</label>
             <input id="bumpAmountInput" type="number" step="0.005" min="0.005" value="0.01" class="input-field text-xs font-mono">
           </div>
           <div>
-            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Interval (Seconds)</label>
+            <label class="block text-[10px] font-semibold text-slate-300 uppercase tracking-wider mb-1">Interval (Seconds)</label>
             <input id="bumpIntervalInput" type="number" step="5" min="10" value="20" class="input-field text-xs font-mono">
           </div>
         </div>
-
-        <div class="flex gap-3 pt-2">
-          <button id="btnStartBumper" onclick="toggleVolumeBumper(true)" class="btn-primary text-xs flex-1 py-3 flex items-center justify-center space-x-1.5">
-            <i data-lucide="play" class="w-4 h-4"></i>
-            <span>Start Bumping</span>
+        <div class="flex gap-2 pt-1">
+          <button id="btnStartBumper" onclick="toggleVolumeBumper(true)" class="btn-primary text-xs flex-1 py-2 flex items-center justify-center space-x-1">
+            <i data-lucide="play" class="w-3.5 h-3.5"></i><span>Start Bumping</span>
           </button>
-          <button id="btnStopBumper" onclick="toggleVolumeBumper(false)" class="btn-secondary text-xs flex-1 py-3 flex items-center justify-center space-x-1.5">
-            <i data-lucide="square" class="w-4 h-4"></i>
-            <span>Stop Bumper</span>
+          <button id="btnStopBumper" onclick="toggleVolumeBumper(false)" class="btn-secondary text-xs flex-1 py-2 flex items-center justify-center space-x-1">
+            <i data-lucide="square" class="w-3.5 h-3.5"></i><span>Stop Bumper</span>
           </button>
         </div>
-      </div>
-
-    </div>
-
-    <!-- Live Terminal & Transaction Activity Drawer -->
-    <div class="card p-4 space-y-3">
-      <div class="flex items-center justify-between text-xs text-slate-400 border-b border-surface-800 pb-2">
-        <span class="font-mono font-semibold flex items-center space-x-1.5 text-slate-200">
-          <i data-lucide="terminal" class="w-4 h-4 text-cyan-400"></i>
-          <span>Live WebSocket Execution Terminal</span>
-        </span>
-        <button onclick="clearTerminalLogs()" class="hover:text-slate-200 text-[11px]">Clear Logs</button>
-      </div>
-      <div id="terminalLogs" class="bg-surface-950 p-3 rounded-lg font-mono text-[11px] text-slate-300 h-32 overflow-y-auto space-y-1">
-        <div class="text-slate-500">[System] Initializing Svarog Solana Vamp Launcher & Bundler Desk...</div>
       </div>
     </div>
 
   </main>
 
   <!-- Notification Toast Container -->
-  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 space-y-2 pointer-events-none"></div>
+  <div id="toastContainer" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
 
   <script src="js/app.js"></script>
 </body>
