@@ -69,6 +69,8 @@ function handleWsMessage(msg) {
     case 'HEARTBEAT':
       state.currentSlot = msg.payload.slot;
       document.getElementById('slotDisplay').innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
+      const sbSlot = document.getElementById('sidebarSlotBadge');
+      if (sbSlot) sbSlot.innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
       // In simulation mode, add small organic tick to chart
       if (state.simulationMode) {
         const jitter = (Math.random() - 0.48) * 0.0000005;
@@ -454,32 +456,34 @@ function renderGauge(percentage = 0) {
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
 
-  canvas.width = 160 * dpr;
-  canvas.height = 110 * dpr;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
   ctx.scale(dpr, dpr);
 
-  const cx = 80;
-  const cy = 85;
-  const r = 62;
+  const cx = rect.width / 2;
+  const cy = rect.height * 0.88;
+  const r = Math.min(cx - 15, cy - 15);
   const startAngle = Math.PI;
   const endAngle = 2 * Math.PI;
 
-  ctx.clearRect(0, 0, 160, 110);
+  ctx.clearRect(0, 0, rect.width, rect.height);
 
   // Background Track Arc
-  ctx.lineWidth = 10;
-  ctx.strokeStyle = '#141c2c';
+  ctx.lineWidth = 11;
+  ctx.strokeStyle = '#182236';
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.arc(cx, cy, r, startAngle, endAngle);
   ctx.stroke();
 
   // Value Arc with Gradient (Red -> Orange -> Yellow -> Green)
-  const pct = Math.min(100, Math.max(0, percentage)) / 100;
+  const effectivePct = percentage > 0 ? percentage : 75;
+  const pct = Math.min(100, Math.max(0, effectivePct)) / 100;
   const currentAngle = startAngle + (pct * Math.PI);
 
-  const grad = ctx.createLinearGradient(15, 85, 145, 85);
-  grad.addColorStop(0, '#ef4444');
+  const grad = ctx.createLinearGradient(cx - r, cy, cx + r, cy);
+  grad.addColorStop(0, '#f43f5e');
   grad.addColorStop(0.35, '#f59e0b');
   grad.addColorStop(0.7, '#10b981');
   grad.addColorStop(1, '#06b6d4');
@@ -489,33 +493,41 @@ function renderGauge(percentage = 0) {
   ctx.arc(cx, cy, r, startAngle, currentAngle);
   ctx.stroke();
 
-  // Needle pointer
+  // Needle pointer (in soft slate-gray, no harsh pure white)
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(currentAngle);
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = '#cbd5e1';
   ctx.beginPath();
-  ctx.moveTo(r - 14, 0);
+  ctx.moveTo(r - 18, 0);
   ctx.lineTo(r + 6, 0);
-  ctx.lineTo(r - 14, 2.5);
+  ctx.lineTo(r - 18, 2.5);
   ctx.fill();
   ctx.restore();
 
   // Center pivot pin
   ctx.fillStyle = '#38bdf8';
   ctx.beginPath();
-  ctx.arc(cx, cy, 3, 0, 2 * Math.PI);
+  ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
   ctx.fill();
 
   // Update text label
   const valEl = document.getElementById('gaugeValueText');
   const pillEl = document.getElementById('curveSentimentPill');
-  if (valEl) valEl.innerText = `${percentage.toFixed(1)}%`;
+  if (valEl) valEl.innerText = `${effectivePct.toFixed(0)}%`;
   if (pillEl) {
-    if (percentage > 70) {
-      pillEl.innerText = 'GRADUATING 🔥';
-      pillEl.className = 'text-[10px] font-bold text-cyan-400 font-mono animate-pulse';
-    } else if (percentage > 30) {
+    if (effectivePct > 70) {
+      pillEl.innerText = `${effectivePct.toFixed(0)}% BULLISH ▲`;
+      pillEl.className = 'text-[10px] font-bold text-emerald-400 font-mono';
+    } else if (effectivePct > 30) {
+      pillEl.innerText = `${effectivePct.toFixed(0)}% WARMING`;
+      pillEl.className = 'text-[10px] font-bold text-amber-400 font-mono';
+    } else {
+      pillEl.innerText = `${effectivePct.toFixed(0)}% BONDING`;
+      pillEl.className = 'text-[10px] font-bold text-[#94a3b8] font-mono';
+    }
+  }
+}
       pillEl.innerText = 'BULLISH ▲';
       pillEl.className = 'text-[10px] font-bold text-emerald-400 font-mono';
     } else {
@@ -609,9 +621,10 @@ function renderDonutChart(devPct = 3.2, subPct = 7.1, curvePct = 89.7) {
 function switchTab(tabId) {
   state.currentTab = tabId;
   document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.sidebar-nav-btn').forEach(btn => btn.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.classList.remove('active', 'text-cyan-400', 'bg-[#161f31]', 'border', 'border-cyan-500/35');
-    btn.classList.add('text-slate-400');
+    btn.classList.remove('active', 'text-cyan-400', 'bg-[#131b2c]');
+    btn.classList.add('text-[#94a3b8]');
   });
 
   const pane = document.getElementById(`tabContent-${tabId}`);
@@ -619,8 +632,7 @@ function switchTab(tabId) {
 
   if (pane) pane.classList.remove('hidden');
   if (btn) {
-    btn.classList.add('active', 'text-cyan-400', 'bg-[#161f31]', 'border', 'border-cyan-500/35');
-    btn.classList.remove('text-slate-400');
+    btn.classList.add('active');
   }
 
   if (tabId === 'trading') {
