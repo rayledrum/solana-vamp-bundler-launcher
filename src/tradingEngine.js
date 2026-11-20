@@ -66,12 +66,19 @@ class TradingEngine {
     totalTokens += devPos.tokens;
     totalInvested += devPos.solInvested;
 
+    const devCurrentVal = pumpfun.calculateSellOutput(devPos.tokens, 15);
+    const devPnlSol = devCurrentVal - devPos.solInvested;
+    const devPnlPct = devPos.solInvested > 0 ? (devPnlSol / devPos.solInvested) * 100 : 0;
+
     walletRows.push({
       role: 'Master Dev',
       address: master.address,
       solBalance: master.balance,
       tokens: devPos.tokens,
-      solInvested: devPos.solInvested
+      solInvested: devPos.solInvested,
+      currentValue: Number(devCurrentVal.toFixed(4)),
+      pnlSol: Number(devPnlSol.toFixed(4)),
+      pnlPct: Number(devPnlPct.toFixed(2))
     });
 
     // Sub-Wallets positions
@@ -79,12 +86,19 @@ class TradingEngine {
       const p = this.positions.get(w.address) || { tokens: w.tokenBalance, solInvested: 0 };
       totalTokens += p.tokens;
       totalInvested += p.solInvested;
+      const subVal = pumpfun.calculateSellOutput(p.tokens, 15);
+      const subPnl = subVal - p.solInvested;
+      const subPct = p.solInvested > 0 ? (subPnl / p.solInvested) * 100 : 0;
+
       walletRows.push({
         role: `Sub #${w.index}`,
         address: w.address,
         solBalance: w.solBalance,
         tokens: p.tokens,
-        solInvested: p.solInvested
+        solInvested: p.solInvested,
+        currentValue: Number(subVal.toFixed(4)),
+        pnlSol: Number(subPnl.toFixed(4)),
+        pnlPct: Number(subPct.toFixed(2))
       });
     }
 
@@ -104,6 +118,98 @@ class TradingEngine {
       curveProgressPct,
       dexInfo,
       wallets: walletRows
+    };
+  }
+
+  // Execute Manual Buy on specific or all wallets
+  async executeBuy({ solAmount = 0.1, walletAddresses = [] }) {
+    if (!this.activeToken) throw new Error('No active token is currently selected');
+    const isSim = walletManager.simulationMode;
+    const amountPerWallet = Math.max(0.001, parseFloat(solAmount || '0.1'));
+
+    const targets = walletAddresses.length > 0 
+      ? walletAddresses 
+      : Array.from(this.positions.keys());
+
+    const results = [];
+    let totalBoughtTokens = 0;
+    let totalSpentSol = 0;
+
+    for (const addr of targets) {
+      const tokensOut = pumpfun.calculateBuyOutput(amountPerWallet, 15);
+      totalBoughtTokens += tokensOut;
+      totalSpentSol += amountPerWallet;
+
+      const pos = this.positions.get(addr) || { tokens: 0, solInvested: 0 };
+      pos.tokens += Math.floor(tokensOut);
+      pos.solInvested += amountPerWallet;
+      this.positions.set(addr, pos);
+
+      if (isSim) {
+        const curBal = walletManager.simulatedBalances.get(addr) || 0;
+        walletManager.simulatedBalances.set(addr, Math.max(0, curBal - amountPerWallet));
+        results.push({
+          address: addr,
+          solSpent: amountPerWallet,
+          tokensBought: Math.floor(tokensOut),
+          status: 'Simulated Success'
+        });
+      } else {
+        // LIVE BUY via PumpPortal
+        try {
+          const signerKp = addr === walletManager.masterWallet.publicKey.toBase58()
+            ? walletManager.masterWallet
+            : walletManager.subWallets.find(w => w.publicKey.toBase58() === addr);
+
+          if (signerKp) {
+            const buyRes = await axios.post(`${config.PUMPPORTAL_API}/trade-local`, {
+              publicKey: addr,
+              action: 'buy',
+              mint: this.activeToken,
+              denominatedInSol: 'true',
+              amount: amountPerWallet,
+              slippage: 15,
+              priorityFee: 0.0002,
+              pool: 'pump'
+            });
+
+            const txBuf = Buffer.from(buyRes.data, 'base64');
+            const tx = Transaction.from(txBuf);
+            tx.sign(signerKp);
+
+            const sig = await walletManager.connection.sendRawTransaction(tx.serialize());
+            results.push({
+              address: addr,
+              solSpent: amountPerWallet,
+              tokensBought: Math.floor(tokensOut),
+              txSignature: sig,
+              status: 'Success'
+            });
+          }
+        } catch (err) {
+          results.push({
+            address: addr,
+            solSpent: 0,
+            status: 'Failed: ' + err.message
+          });
+        }
+      }
+    }
+
+    this.broadcast('BUY_EXECUTED', {
+      amountPerWallet,
+      totalBoughtTokens: Math.floor(totalBoughtTokens),
+      totalSpentSol: Number(totalSpentSol.toFixed(4)),
+      resultsCount: results.length
+    });
+
+    return {
+      success: true,
+      simulation: isSim,
+      amountPerWallet,
+      totalBoughtTokens: Math.floor(totalBoughtTokens),
+      totalSpentSol: Number(totalSpentSol.toFixed(4)),
+      results
     };
   }
 

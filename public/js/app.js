@@ -1,6 +1,6 @@
 // Frontend State Management & API Client
 const state = {
-  currentTab: 'launchpad',
+  currentTab: 'trading',
   simulationMode: true,
   currentSlot: null,
   masterWallet: null,
@@ -21,12 +21,12 @@ document.addEventListener('DOMContentLoaded', () => {
   loadMasterWallet();
   loadSubWallets();
   loadTrendingVampTokens();
-  setupEventListeners();
+  loadLiveStats();
 
-  // Periodic polling for stats (every 4 seconds)
+  // Periodic polling for stats & balances (every 3 seconds)
   setInterval(() => {
     loadLiveStats();
-  }, 4000);
+  }, 3000);
 });
 
 // Setup WebSocket Connection
@@ -70,6 +70,8 @@ function handleWsMessage(msg) {
     case 'LAUNCH_SUCCESS':
       logTerminal(`✅ [Bundle Landed] Mint: ${msg.payload.mint} | Slot: ${msg.payload.slot} | Jito Tip: ${msg.payload.jitoTipSol} SOL`);
       showToast(`Landed! Mint: ${msg.payload.mint.slice(0, 8)}...`, 'success');
+      state.activeToken = msg.payload.mint;
+      updateActiveTokenUi(msg.payload.mint);
       loadSubWallets();
       loadLiveStats();
       switchTab('trading');
@@ -78,6 +80,31 @@ function handleWsMessage(msg) {
     case 'LAUNCH_FAILED':
       logTerminal(`❌ [Bundle Failed] Error: ${msg.payload.error}`);
       showToast(`Launch failed: ${msg.payload.error}`, 'error');
+      break;
+
+    case 'BUY_EXECUTED':
+      logTerminal(`🟢 [Manual Buy] Bought tokens for ${msg.payload.totalSpentSol} SOL across ${msg.payload.resultsCount} wallets`);
+      showToast(`Bought tokens (+${msg.payload.totalSpentSol} SOL)`, 'success');
+      loadLiveStats();
+      loadMasterWallet();
+      loadSubWallets();
+      break;
+
+    case 'SELL_EXECUTED':
+      logTerminal(`🔴 [Manual Sell] Sold ${msg.payload.pct}% | Recv: +${msg.payload.totalReceivedSol} SOL`);
+      showToast(`Sold ${msg.payload.pct}% across bundle wallets (+${msg.payload.totalReceivedSol} SOL)`, 'warning');
+      loadLiveStats();
+      loadMasterWallet();
+      loadSubWallets();
+      break;
+
+    case 'CASCADE_STEP':
+      logTerminal(`🌊 [Cascade Exit] Step ${msg.payload.step}/${msg.payload.total} executed for ${msg.payload.address.slice(0, 6)}...`);
+      break;
+
+    case 'CASCADE_COMPLETED':
+      showToast('Cascade exit successfully completed', 'success');
+      loadLiveStats();
       break;
 
     case 'SOL_DISPERSED':
@@ -92,20 +119,6 @@ function handleWsMessage(msg) {
       showToast(`Drained ${msg.payload.drainedSol} SOL to Master`, 'success');
       loadMasterWallet();
       loadSubWallets();
-      break;
-
-    case 'SELL_EXECUTED':
-      logTerminal(`📉 [Exit] Sold ${msg.payload.pct}% | Recv: ${msg.payload.totalReceivedSol} SOL`);
-      showToast(`Sold ${msg.payload.pct}% across bundle wallets`, 'info');
-      loadLiveStats();
-      break;
-
-    case 'CASCADE_STEP':
-      logTerminal(`🌊 [Cascade] Step ${msg.payload.step}/${msg.payload.total} executed for ${msg.payload.address.slice(0, 6)}...`);
-      break;
-
-    case 'CASCADE_COMPLETED':
-      showToast('Cascade exit successfully completed', 'success');
       break;
 
     case 'BUMP_TICK':
@@ -163,6 +176,7 @@ async function toggleSimulation(enable) {
     updateSimulationUi(state.simulationMode);
     loadMasterWallet();
     loadSubWallets();
+    loadLiveStats();
     showToast(`Switched to ${enable ? 'SIMULATION MODE' : 'LIVE MAINNET'}`, enable ? 'info' : 'warning');
   } catch (e) {
     showToast('Failed to toggle mode: ' + e.message, 'error');
@@ -175,12 +189,12 @@ function updateSimulationUi(isSim) {
   const banner = document.getElementById('simBanner');
 
   if (isSim) {
-    simBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg transition-all bg-cyan-500/20 text-cyan-400 border border-cyan-500/30';
-    liveBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-rose-400 transition-all';
+    simBtn.className = 'px-2.5 py-1 text-xs font-semibold rounded-lg transition-all bg-cyan-500/20 text-cyan-400 border border-cyan-500/30';
+    liveBtn.className = 'px-2.5 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-rose-400 transition-all';
     banner.classList.remove('hidden');
   } else {
-    liveBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg transition-all bg-rose-500/20 text-rose-400 border border-rose-500/30';
-    simBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-cyan-400 transition-all';
+    liveBtn.className = 'px-2.5 py-1 text-xs font-semibold rounded-lg transition-all bg-rose-500/20 text-rose-400 border border-rose-500/30';
+    simBtn.className = 'px-2.5 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-cyan-400 transition-all';
     banner.classList.add('hidden');
   }
 }
@@ -281,7 +295,6 @@ function calculateBundleMetrics() {
   const totalBundleSol = devSol + totalSubSol;
   document.getElementById('metricTotalSol').innerText = `${totalBundleSol.toFixed(2)} SOL`;
 
-  // Estimate token output: constant product x * y = k approximation for bonding curve
   const virtualSol = 30 + totalBundleSol;
   const k = 30 * 1073000000;
   const newTokens = k / virtualSol;
@@ -292,7 +305,6 @@ function calculateBundleMetrics() {
   document.getElementById('metricSupplyPct').innerText = `${supplyPct}% (Sniper-Proof)`;
   document.getElementById('metricTxCount').innerText = `${state.subWallets.length + 2} Txs (Create + ${state.subWallets.length} Buys + Tip)`;
   
-  // Dev estimate
   const devTokens = Math.floor(tokensOut * (devSol / (totalBundleSol || 1)));
   const devPct = ((devTokens / 1000000000) * 100).toFixed(2);
   document.getElementById('devBuyTokensEst').innerText = `Est. ~${devTokens.toLocaleString()} tokens (${devPct}%)`;
@@ -327,7 +339,7 @@ function randomizeSubBuys() {
   calculateBundleMetrics();
 }
 
-// Run Pre-Flight Validation Check
+// Pre-flight check
 async function runPreflightCheck() {
   const btn = document.getElementById('btnPreflight');
   btn.disabled = true;
@@ -379,7 +391,6 @@ async function executeLaunchBundle() {
   btn.innerHTML = `<i data-lucide="loader" class="w-5 h-5 animate-spin"></i><span>PACKING ATOMIC JITO BUNDLE...</span>`;
 
   try {
-    // 1. Upload Metadata & Logo to IPFS
     logTerminal(`[Metadata] Uploading ${tokenSymbol} metadata...`);
     const formData = new FormData();
     formData.append('name', tokenName);
@@ -399,7 +410,6 @@ async function executeLaunchBundle() {
     const metaData = await metaRes.json();
     const metadataUri = metaData.metadataUri;
 
-    // 2. Assemble and Launch Bundle
     const devSolBuy = parseFloat(document.getElementById('devSolBuy').value || '0.5');
     const subWalletBuys = state.subWallets.map((_, i) => parseFloat(document.getElementById(`subBuyInput-${i}`)?.value || '0'));
 
@@ -420,6 +430,7 @@ async function executeLaunchBundle() {
     const launchData = await launchRes.json();
     if (launchData.success) {
       state.activeToken = launchData.mint;
+      updateActiveTokenUi(launchData.mint);
       logTerminal(`🎉 [Success] Atomic Bundle Landed! CA: ${launchData.mint}`);
       showToast(`Token launched & bundled! CA: ${launchData.mint.slice(0, 8)}...`, 'success');
       loadLiveStats();
@@ -437,9 +448,354 @@ async function executeLaunchBundle() {
   }
 }
 
-// Load Trending Memecoins for Vamp Cloner
+// Update Active Token UI elements
+function updateActiveTokenUi(mint) {
+  if (!mint) return;
+  document.getElementById('deskActiveTokenMintDisplay').innerText = mint;
+  document.getElementById('navTrackCaInput').value = mint;
+  const link = document.getElementById('deskPumpLink');
+  link.href = `https://pump.fun/coin/${mint}`;
+  link.innerText = `View on Pump.fun (${mint.slice(0, 6)}...)`;
+}
+
+// Track CA from Nav input
+async function setTrackedTokenFromNav() {
+  const mint = document.getElementById('navTrackCaInput').value.trim();
+  if (!mint) return showToast('Please enter a Token Mint Address', 'warning');
+  try {
+    const res = await fetch('/api/trading/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mint })
+    });
+    const data = await res.json();
+    state.activeToken = data.activeToken;
+    updateActiveTokenUi(data.activeToken);
+    loadLiveStats();
+    showToast(`Tracking token: ${mint.slice(0, 8)}...`, 'success');
+  } catch (e) {
+    showToast('Failed to track CA: ' + e.message, 'error');
+  }
+}
+
+function copyActiveMintAddress() {
+  if (state.activeToken) {
+    navigator.clipboard.writeText(state.activeToken);
+    showToast('Copied CA to clipboard', 'info');
+  }
+}
+
+// ==================== MANUAL TRADING CONTROLS (GREEN BUY / RED SELL) ====================
+
+function setManualBuyAmount(amt) {
+  document.getElementById('manualBuySolInput').value = amt;
+}
+
+function setManualSellPct(pct) {
+  document.getElementById('manualSellPctInput').value = pct;
+}
+
+// Get selected target wallet addresses
+function getTargetAddresses(targetMode) {
+  if (targetMode === 'dev') {
+    return state.masterWallet ? [state.masterWallet.address] : [];
+  }
+  if (targetMode === 'selected') {
+    const checked = Array.from(document.querySelectorAll('.row-checkbox:checked')).map(cb => cb.value);
+    return checked;
+  }
+  // 'all'
+  const all = [];
+  if (state.masterWallet) all.push(state.masterWallet.address);
+  state.subWallets.forEach(w => all.push(w.address));
+  return all;
+}
+
+// Execute Manual Buy (Green / Up)
+async function executeManualBuy() {
+  if (!state.activeToken) {
+    return showToast('No active token is currently selected! Launch or track a CA first.', 'warning');
+  }
+
+  const solAmount = parseFloat(document.getElementById('manualBuySolInput').value || '0.1');
+  const targetMode = document.getElementById('manualBuyTargetSelect').value;
+  const walletAddresses = getTargetAddresses(targetMode);
+
+  if (walletAddresses.length === 0) {
+    return showToast('No target wallets selected for buy order', 'warning');
+  }
+
+  const btn = document.getElementById('btnManualBuy');
+  btn.disabled = true;
+  btn.innerHTML = `<i data-lucide="loader" class="w-5 h-5 animate-spin"></i><span>EXECUTING BUY...</span>`;
+
+  try {
+    const res = await fetch('/api/trading/buy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ solAmount, walletAddresses })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Buy Executed! Spent ${data.totalSpentSol} SOL across ${data.results.length} wallets`, 'success');
+      loadLiveStats();
+      loadMasterWallet();
+      loadSubWallets();
+    } else {
+      throw new Error(data.error);
+    }
+  } catch (err) {
+    showToast(`Buy error: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<i data-lucide="arrow-up" class="w-5 h-5"></i><span>▲ BUY TOKENS (GREEN UP)</span>`;
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+// Execute Manual Sell (Red / Down)
+async function executeManualSell() {
+  if (!state.activeToken) {
+    return showToast('No active token is currently selected! Launch or track a CA first.', 'warning');
+  }
+
+  const pct = parseFloat(document.getElementById('manualSellPctInput').value || '50');
+  const targetMode = document.getElementById('manualSellTargetSelect').value;
+  const walletAddresses = getTargetAddresses(targetMode);
+
+  if (walletAddresses.length === 0) {
+    return showToast('No target wallets selected for sell order', 'warning');
+  }
+
+  const btn = document.getElementById('btnManualSell');
+  btn.disabled = true;
+  btn.innerHTML = `<i data-lucide="loader" class="w-5 h-5 animate-spin"></i><span>EXECUTING SELL...</span>`;
+
+  try {
+    const res = await fetch('/api/trading/sell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pct, walletAddresses })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Sold ${pct}%: gained +${data.totalReceivedSol} SOL`, 'warning');
+      loadLiveStats();
+      loadMasterWallet();
+      loadSubWallets();
+    } else {
+      throw new Error(data.error);
+    }
+  } catch (err) {
+    showToast(`Sell error: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<i data-lucide="arrow-down" class="w-5 h-5"></i><span>▼ SELL TOKENS (RED DOWN)</span>`;
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+// Execute Inline Quick Buy for a single wallet
+async function executeInlineBuy(address, solAmount = 0.1) {
+  try {
+    showToast(`Buying ${solAmount} SOL for ${address.slice(0, 6)}...`, 'info');
+    const res = await fetch('/api/trading/buy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ solAmount, walletAddresses: [address] })
+    });
+    const data = await res.json();
+    showToast(`Bought tokens (+${solAmount} SOL)`, 'success');
+    loadLiveStats();
+  } catch (err) {
+    showToast('Inline buy error: ' + err.message, 'error');
+  }
+}
+
+// Execute Inline Quick Sell for a single wallet
+async function executeInlineSell(address, pct = 100) {
+  try {
+    showToast(`Selling ${pct}% from ${address.slice(0, 6)}...`, 'info');
+    const res = await fetch('/api/trading/sell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pct, walletAddresses: [address] })
+    });
+    const data = await res.json();
+    showToast(`Sold ${pct}% (+${data.totalReceivedSol} SOL)`, 'warning');
+    loadLiveStats();
+  } catch (err) {
+    showToast('Inline sell error: ' + err.message, 'error');
+  }
+}
+
+// Cascade Exit
+async function executeCascadeExit() {
+  if (!confirm('CASCADE EXIT: Smoothly sell holdings across sub-wallets with staggered delays?')) return;
+  try {
+    showToast('Starting Cascade Exit...', 'info');
+    const res = await fetch('/api/trading/cascade-sell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delayMs: 800, pct: 100 })
+    });
+    const data = await res.json();
+    showToast('Cascade exit successfully completed', 'success');
+    loadLiveStats();
+  } catch (err) {
+    showToast('Cascade error: ' + err.message, 'error');
+  }
+}
+
+// Panic Dump All
+async function executePanicDumpAll() {
+  if (!confirm('PANIC DUMP ALL: Emergency exit 100% of all tokens across Dev & Sub-wallets immediately?')) return;
+  try {
+    showToast('PANIC DUMPING ALL HOLDINGS...', 'warning');
+    const res = await fetch('/api/trading/sell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pct: 100 })
+    });
+    const data = await res.json();
+    showToast(`Panic dumped all! Received +${data.totalReceivedSol} SOL`, 'success');
+    loadLiveStats();
+  } catch (err) {
+    showToast('Dump error: ' + err.message, 'error');
+  }
+}
+
+// Multi-select table checkboxes
+function selectAllTableRows(select) {
+  document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = select);
+  const masterCb = document.getElementById('checkAllRows');
+  if (masterCb) masterCb.checked = select;
+}
+
+function toggleSelectAllRows(checked) {
+  document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = checked);
+}
+
+// ==================== LIVE STATS & TABLE RENDER ====================
+
+async function loadLiveStats() {
+  try {
+    const res = await fetch('/api/trading/stats');
+    const data = await res.json();
+    const s = data.stats;
+    if (!s) return;
+
+    if (s.activeToken) {
+      state.activeToken = s.activeToken;
+      updateActiveTokenUi(s.activeToken);
+
+      document.getElementById('deskTotalTokensDisplay').innerText = s.totalTokens.toLocaleString();
+      const pctOfSupply = ((s.totalTokens / 1000000000) * 100).toFixed(2);
+      document.getElementById('deskTokensPctDisplay').innerText = `${pctOfSupply}% of supply owned`;
+
+      document.getElementById('deskSolValueDisplay').innerText = `${s.currentSolValue} SOL`;
+      document.getElementById('deskInvestedDisplay').innerText = `${s.totalSolInvested} SOL`;
+
+      // Aggregate PnL Display (Green Up / Red Down)
+      const pnlPrefix = s.pnlSol >= 0 ? '+' : '';
+      const pnlText = `${pnlPrefix}${s.pnlSol} SOL (${pnlPrefix}${s.pnlPct}%)`;
+      const pnlDisplay = document.getElementById('deskPnlDisplay');
+      const pnlBadge = document.getElementById('deskPnlStatusBadge');
+
+      pnlDisplay.innerText = pnlText;
+      if (s.pnlSol >= 0) {
+        pnlDisplay.className = 'text-2xl font-mono font-extrabold text-emerald-400';
+        pnlBadge.className = 'badge-pnl-green';
+        pnlBadge.innerText = '▲ IN PROFIT';
+      } else {
+        pnlDisplay.className = 'text-2xl font-mono font-extrabold text-rose-400';
+        pnlBadge.className = 'badge-pnl-red';
+        pnlBadge.innerText = '▼ DRAWDOWN';
+      }
+
+      // Curve progress
+      document.getElementById('curveProgressBar').style.width = `${s.curveProgressPct}%`;
+      document.getElementById('curveProgressText').innerText = `${s.curveProgressPct}% / 100% (Raydium Migration @ 85 SOL)`;
+
+      // Dex metrics
+      if (s.dexInfo) {
+        document.getElementById('deskMcapDisplay').innerText = `$${(s.dexInfo.marketCap || 0).toLocaleString()}`;
+        document.getElementById('deskPriceDisplay').innerText = `Price: $${s.dexInfo.priceUsd}`;
+      } else {
+        document.getElementById('deskMcapDisplay').innerText = `$${Math.round((s.curveProgressPct * 690)).toLocaleString()}`;
+      }
+
+      renderTradingWalletsTable(s.wallets);
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+// Render Multi-Wallet Table with Green/Red PnL badges & inline buttons
+function renderTradingWalletsTable(wallets) {
+  const tbody = document.getElementById('tradingWalletsTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  (wallets || []).forEach(w => {
+    const isDev = w.role === 'Master Dev';
+    const tr = document.createElement('tr');
+    tr.className = 'border-b border-surface-800/60 hover:bg-surface-900/50 transition-colors';
+
+    const pnlSol = w.pnlSol !== undefined ? w.pnlSol : 0;
+    const pnlPct = w.pnlPct !== undefined ? w.pnlPct : 0;
+    const pnlPrefix = pnlSol >= 0 ? '+' : '';
+    const pnlClass = pnlSol >= 0 ? 'badge-pnl-green' : 'badge-pnl-red';
+    const pnlSymbol = pnlSol >= 0 ? '▲' : '▼';
+
+    tr.innerHTML = `
+      <td class="py-2.5 px-3">
+        <input type="checkbox" value="${w.address}" class="row-checkbox rounded border-surface-700 bg-surface-900 text-cyan-500">
+      </td>
+      <td class="py-2.5 px-3">
+        <div class="flex items-center space-x-1.5">
+          <span class="font-bold ${isDev ? 'text-amber-400' : 'text-slate-300'}">${w.role}</span>
+          <span class="text-slate-500">${w.address.slice(0, 4)}...${w.address.slice(-4)}</span>
+          <button onclick="navigator.clipboard.writeText('${w.address}'); showToast('Copied address', 'info')" class="text-slate-500 hover:text-cyan-400">
+            <i data-lucide="copy" class="w-3 h-3"></i>
+          </button>
+        </div>
+      </td>
+      <td class="py-2.5 px-3 font-bold text-cyan-400">${(w.solBalance || 0).toFixed(3)} SOL</td>
+      <td class="py-2.5 px-3 text-slate-200">${(w.tokens || 0).toLocaleString()}</td>
+      <td class="py-2.5 px-3 text-slate-400">${(w.solInvested || 0).toFixed(3)} SOL</td>
+      <td class="py-2.5 px-3 font-semibold text-slate-200">${(w.currentValue || 0).toFixed(3)} SOL</td>
+      <td class="py-2.5 px-3 text-center">
+        <span class="${pnlClass} text-[11px] font-mono">
+          ${pnlSymbol} ${pnlPrefix}${pnlSol.toFixed(3)} SOL (${pnlPrefix}${pnlPct.toFixed(1)}%)
+        </span>
+      </td>
+      <td class="py-2.5 px-3 text-right">
+        <div class="flex items-center justify-end space-x-1">
+          <button onclick="executeInlineBuy('${w.address}', 0.1)" class="btn-quick-buy text-[10px] py-1 px-1.5" title="Quick Buy 0.1 SOL">
+            ▲ Buy
+          </button>
+          <button onclick="executeInlineSell('${w.address}', 50)" class="btn-quick-sell text-[10px] py-1 px-1.5" title="Sell 50%">
+            ▼ 50%
+          </button>
+          <button onclick="executeInlineSell('${w.address}', 100)" class="btn-quick-sell text-[10px] py-1 px-1.5 bg-rose-950/60" title="Sell 100%">
+            ▼ 100%
+          </button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  if (window.lucide) lucide.createIcons();
+}
+
+// ==================== VAMP & WALLET AUXILIARIES ====================
+
 async function loadTrendingVampTokens() {
   const container = document.getElementById('vampTokensGrid');
+  if (!container) return;
   container.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-slate-500 font-mono">Fetching trending tokens from DexScreener & Pump.fun...</div>`;
 
   try {
@@ -485,7 +841,6 @@ async function loadTrendingVampTokens() {
   }
 }
 
-// Inspect Custom CA
 async function inspectCustomVampCa() {
   const ca = document.getElementById('vampCaInput').value.trim();
   if (!ca) return showToast('Please enter a Solana CA', 'warning');
@@ -502,7 +857,6 @@ async function inspectCustomVampCa() {
   }
 }
 
-// Vamp direct
 async function vampDirect(address) {
   try {
     const res = await fetch(`/api/vamp/inspect/${address}`);
@@ -515,7 +869,6 @@ async function vampDirect(address) {
   }
 }
 
-// Vamp 2.0 Spin
 async function vampMutate2(address) {
   try {
     const res = await fetch(`/api/vamp/inspect/${address}`);
@@ -550,7 +903,6 @@ function applyVampToLaunchpad(token) {
   }
 }
 
-// Handle Logo File Selection
 function handleLogoSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -566,85 +918,7 @@ function handleLogoSelect(e) {
   reader.readAsDataURL(file);
 }
 
-// Load Live Trading Desk Stats
-async function loadLiveStats() {
-  try {
-    const res = await fetch('/api/trading/stats');
-    const data = await res.json();
-    const s = data.stats;
-    if (!s) return;
-
-    if (s.activeToken) {
-      document.getElementById('deskTotalTokensDisplay').innerText = s.totalTokens.toLocaleString();
-      const pctOfSupply = ((s.totalTokens / 1000000000) * 100).toFixed(2);
-      document.getElementById('deskTokensPctDisplay').innerText = `${pctOfSupply}% of supply`;
-
-      document.getElementById('deskSolValueDisplay').innerText = `${s.currentSolValue} SOL`;
-      document.getElementById('deskInvestedDisplay').innerText = `Cost: ${s.totalSolInvested} SOL`;
-
-      const pnlPrefix = s.pnlSol >= 0 ? '+' : '';
-      document.getElementById('deskPnlDisplay').innerText = `${pnlPrefix}${s.pnlSol} SOL (${pnlPrefix}${s.pnlPct}%)`;
-      document.getElementById('deskPnlDisplay').className = s.pnlSol >= 0 ? 'text-xl font-mono font-bold text-emerald-400' : 'text-xl font-mono font-bold text-rose-400';
-      document.getElementById('deskPnlStatus').innerText = s.pnlSol >= 0 ? 'In Profit' : 'Drawdown';
-
-      // Curve progress
-      document.getElementById('curveProgressBar').style.width = `${s.curveProgressPct}%`;
-      document.getElementById('curveProgressText').innerText = `${s.curveProgressPct}% / 100% (Raydium Migration)`;
-
-      // Dex metrics
-      if (s.dexInfo) {
-        document.getElementById('deskMcapDisplay').innerText = `$${(s.dexInfo.marketCap || 0).toLocaleString()}`;
-        document.getElementById('deskPriceDisplay').innerText = `Price: $${s.dexInfo.priceUsd}`;
-      } else {
-        document.getElementById('deskMcapDisplay').innerText = `$${Math.round((s.curveProgressPct * 690)).toLocaleString()}`;
-      }
-    }
-  } catch (e) {
-    // ignore
-  }
-}
-
-// Exit Controls: Percentage Sell
-async function executeSellPercentage(pct) {
-  try {
-    showToast(`Executing ${pct}% sell across wallets...`, 'info');
-    const res = await fetch('/api/trading/sell', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pct })
-    });
-    const data = await res.json();
-    showToast(`Sold ${pct}%: gained ${data.totalReceivedSol} SOL`, 'success');
-    loadLiveStats();
-  } catch (err) {
-    showToast('Sell error: ' + err.message, 'error');
-  }
-}
-
-// Exit Controls: Cascade Exit
-async function executeCascadeExit() {
-  try {
-    showToast('Starting Cascade Exit across sub-wallets...', 'info');
-    const res = await fetch('/api/trading/cascade-sell', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ delayMs: 1000, pct: 100 })
-    });
-    const data = await res.json();
-    showToast('Cascade exit successfully finished!', 'success');
-    loadLiveStats();
-  } catch (err) {
-    showToast('Cascade error: ' + err.message, 'error');
-  }
-}
-
-// Exit Controls: Panic Dump All
-async function executePanicDumpAll() {
-  if (!confirm('PANIC DUMP: Sell 100% of all holdings immediately?')) return;
-  executeSellPercentage(100);
-}
-
-// Volume Bumper Toggle
+// Bumper Controls
 async function toggleVolumeBumper(start) {
   try {
     const badge = document.getElementById('bumperActiveBadge');
@@ -670,7 +944,7 @@ async function toggleVolumeBumper(start) {
   }
 }
 
-// Disperse SOL Action
+// Disperse & Drain
 async function executeDisperseSol() {
   const totalSol = parseFloat(document.getElementById('disperseTotalSol').value || '1.0');
   const randomize = document.getElementById('disperseRandomize').checked;
@@ -695,7 +969,6 @@ async function executeDisperseSol() {
   }
 }
 
-// Drain SOL Action
 async function executeDrainSol() {
   if (!confirm('Drain all remaining SOL from all sub-wallets back to Master Dev wallet?')) return;
   try {
@@ -712,7 +985,6 @@ async function executeDrainSol() {
   }
 }
 
-// Regenerate Sub-Wallets
 async function regenerateSubWallets() {
   const count = parseInt(document.getElementById('subWalletCountSelect').value, 10);
   try {
@@ -729,7 +1001,6 @@ async function regenerateSubWallets() {
   }
 }
 
-// Wallet Key helpers
 function copyMasterAddress() {
   const val = document.getElementById('masterAddressInput').value;
   navigator.clipboard.writeText(val);
@@ -802,7 +1073,6 @@ async function promptImportMasterKey() {
   }
 }
 
-// Terminal Log Helper
 function logTerminal(message) {
   const term = document.getElementById('terminalLogs');
   if (!term) return;
@@ -818,7 +1088,6 @@ function clearTerminalLogs() {
   if (term) term.innerHTML = `<div class="text-slate-500">[System] Logs cleared.</div>`;
 }
 
-// Toast Notifications Helper
 function showToast(text, type = 'info') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
@@ -843,8 +1112,4 @@ function showToast(text, type = 'info') {
     toast.classList.add('opacity-0', 'translate-y-2');
     setTimeout(() => toast.remove(), 300);
   }, 4000);
-}
-
-function setupEventListeners() {
-  // Listen for key shortcuts or form submits if needed
 }

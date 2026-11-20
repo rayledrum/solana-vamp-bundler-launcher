@@ -52,3 +52,4 @@ module.exports = {
   // Mode: can be toggled via API/UI
   SIMULATION_MODE: process.env.SIMULATION_MODE === 'true'
 };
+

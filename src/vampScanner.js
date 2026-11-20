@@ -153,3 +153,4 @@ class VampScanner {
 }
 
 module.exports = new VampScanner();
+

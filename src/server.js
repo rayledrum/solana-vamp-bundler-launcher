@@ -339,6 +339,19 @@ app.post('/api/trading/track', (req, res) => {
   }
 });
 
+app.post('/api/trading/buy', async (req, res) => {
+  try {
+    const { solAmount, walletAddresses } = req.body;
+    const result = await tradingEngine.executeBuy({
+      solAmount: parseFloat(solAmount || '0.1'),
+      walletAddresses: walletAddresses || []
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/trading/sell', async (req, res) => {
   try {
     const { pct, walletAddresses } = req.body;
@@ -393,3 +406,4 @@ server.listen(PORT, config.HOST, () => {
   console.log(`🛡️  Mode: ${walletManager.simulationMode ? 'SIMULATION MODE (Safe Testing)' : 'LIVE MAINNET'}`);
   console.log(`=======================================================`);
 });
+
