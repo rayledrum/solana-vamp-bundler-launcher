@@ -18,7 +18,11 @@ const state = {
   currentCandle: null,
   lastPrice: 0.000034,
   curveProgressPct: 0,
-  hoverCandle: null
+  hoverCandle: null,
+
+  // Sub-wallet execution settings
+  subWalletDelaySec: 0,
+  trendingTokens: []
 };
 
 // Initialize App
@@ -41,9 +45,18 @@ document.addEventListener('DOMContentLoaded', () => {
 // ==================== REAL-TIME WEBSOCKET PIPELINE ====================
 
 function connectWebSocket() {
+  const isHttp = window.location.protocol === 'http:' || window.location.protocol === 'https:';
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}`;
-  state.ws = new WebSocket(wsUrl);
+  const host = (isHttp && window.location.host) ? window.location.host : 'localhost:3000';
+  const wsUrl = `${protocol}//${host}`;
+
+  try {
+    state.ws = new WebSocket(wsUrl);
+  } catch (err) {
+    console.error('WebSocket init error:', err);
+    setTimeout(connectWebSocket, 3000);
+    return;
+  }
 
   state.ws.onopen = () => {
     logTerminal('[WebSocket] Connected to real-time Helius & Jito telemetry');
@@ -56,6 +69,10 @@ function connectWebSocket() {
     } catch (e) {
       console.error('Error parsing WS message:', e);
     }
+  };
+
+  state.ws.onerror = (e) => {
+    console.warn('[WebSocket] Connection notice for', wsUrl);
   };
 
   state.ws.onclose = () => {
@@ -80,8 +97,17 @@ function handleWsMessage(msg) {
       break;
 
     case 'LAUNCH_STARTED':
-      logTerminal(`🚀 [Bundle Launch] Started for ${msg.payload.tokenSymbol}...`);
-      showToast(`Launching ${msg.payload.tokenSymbol} atomic bundle...`, 'info');
+      logTerminal(`🚀 [Bundle Launch] Started for ${msg.payload.tokenSymbol}... (Sub delay: ${msg.payload.subWalletDelaySec || 0}s)`);
+      showToast(`Launching ${msg.payload.tokenSymbol}...`, 'info');
+      break;
+
+    case 'LAUNCH_STEP_DEV':
+      logTerminal(`🚀 [Block 1 Landed] Dev token created & bought in 1st block! Mint: ${msg.payload.mint?.slice(0, 8)}...`);
+      logTerminal(`⏳ [Delay Timer] Holding ${msg.payload.delaySec}s before sub-wallets buy...`);
+      showToast(`Block 1 Dev Buy landed! Sub-wallets firing in ${msg.payload.delaySec}s...`, 'info');
+      state.activeToken = msg.payload.mint;
+      updateActiveTokenUi(msg.payload.mint);
+      loadLiveStats();
       break;
 
     case 'LAUNCH_SUCCESS':
@@ -148,6 +174,16 @@ function handleWsMessage(msg) {
     case 'BUMP_TICK':
       logTerminal(`⚡ [Bump Bot] Micro trade on ${msg.payload.wallet} (${msg.payload.solAmount} SOL)`);
       pushChartTick(state.lastPrice * (1 + (Math.random() * 0.02 - 0.01)), msg.payload.solAmount);
+      break;
+
+    case 'TOKEN_TRACKED':
+      state.activeToken = msg.payload.mint;
+      updateActiveTokenUi(msg.payload.mint);
+      loadLiveStats();
+      break;
+
+    case 'PUBLIC_TRADE':
+      renderTradeTick(msg.payload);
       break;
   }
 }
@@ -528,14 +564,6 @@ function renderGauge(percentage = 0) {
     }
   }
 }
-      pillEl.innerText = 'BULLISH ▲';
-      pillEl.className = 'text-[10px] font-bold text-emerald-400 font-mono';
-    } else {
-      pillEl.innerText = 'BONDING';
-      pillEl.className = 'text-[10px] font-bold text-slate-400 font-mono';
-    }
-  }
-}
 
 // ==================== MINI SPARKLINE & DONUT CHARTS ====================
 
@@ -620,7 +648,10 @@ function renderDonutChart(devPct = 3.2, subPct = 7.1, curvePct = 89.7) {
 
 function switchTab(tabId) {
   state.currentTab = tabId;
-  document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.tab-pane').forEach(el => {
+    el.classList.add('hidden');
+    el.style.display = 'none';
+  });
   document.querySelectorAll('.sidebar-nav-btn').forEach(btn => btn.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.remove('active', 'text-cyan-400', 'bg-[#131b2c]');
@@ -630,7 +661,10 @@ function switchTab(tabId) {
   const pane = document.getElementById(`tabContent-${tabId}`);
   const btn = document.getElementById(`tabBtn-${tabId}`);
 
-  if (pane) pane.classList.remove('hidden');
+  if (pane) {
+    pane.classList.remove('hidden');
+    pane.style.display = 'flex';
+  }
   if (btn) {
     btn.classList.add('active');
   }
@@ -641,10 +675,18 @@ function switchTab(tabId) {
       renderGauge(state.curveProgressPct);
       renderSparkline();
       renderDonutChart();
+      renderTopMovers();
     }, 50);
+  } else if (tabId === 'wallets') {
+    loadMasterWallet();
+    loadSubWallets();
+  } else if (tabId === 'vamp') {
+    loadTrendingVampTokens();
   }
 
-  if (window.lucide) lucide.createIcons();
+  if (window.lucide) {
+    setTimeout(() => lucide.createIcons(), 10);
+  }
 }
 
 async function loadStatus() {
@@ -871,10 +913,191 @@ function selectAllTableRows(select) {
   document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = select);
   const masterCb = document.getElementById('checkAllRows');
   if (masterCb) masterCb.checked = select;
+  updateSelectedCount();
 }
 
 function toggleSelectAllRows(checked) {
   document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = checked);
+  updateSelectedCount();
+}
+
+function selectWalletsByRole(role) {
+  if (role === 'all') {
+    selectAllTableRows(true);
+  } else if (role === 'none') {
+    selectAllTableRows(false);
+  } else if (role === 'dev') {
+    document.querySelectorAll('.row-checkbox').forEach(cb => {
+      cb.checked = (state.masterWallet && cb.value === state.masterWallet.address);
+    });
+    updateSelectedCount();
+  } else if (role === 'subs') {
+    document.querySelectorAll('.row-checkbox').forEach(cb => {
+      cb.checked = !(state.masterWallet && cb.value === state.masterWallet.address);
+    });
+    updateSelectedCount();
+  }
+}
+
+function updateSelectedCount() {
+  const count = document.querySelectorAll('.row-checkbox:checked').length;
+  const total = document.querySelectorAll('.row-checkbox').length;
+  const badge = document.getElementById('matrixSelectedCount');
+  if (badge) {
+    badge.innerText = `${count}/${total} Selected`;
+  }
+}
+
+function setMatrixBuyAmount(amt) {
+  const el = document.getElementById('matrixBuyAmountInput');
+  if (el) el.value = amt;
+}
+
+function setMatrixSellPct(pct) {
+  const el = document.getElementById('matrixSellPctInput');
+  if (el) el.value = pct;
+}
+
+function handleDelayInputChange(val) {
+  let num = Math.max(0, Math.min(10, parseFloat(val || '0')));
+  if (isNaN(num)) num = 0;
+  state.subWalletDelaySec = num;
+
+  const mInput = document.getElementById('subWalletBuyDelayInput');
+  const lInput = document.getElementById('launchSubDelayInput');
+  const mBadge = document.getElementById('subDelayBadge');
+  const lBadge = document.getElementById('launchSubDelayBadge');
+
+  if (mInput && parseFloat(mInput.value) !== num) mInput.value = num;
+  if (lInput && parseFloat(lInput.value) !== num) lInput.value = num;
+
+  const badgeText = num === 0 ? '1st Block' : `+${num}s Delay`;
+  const badgeColor = num === 0 ? '#00c48c' : '#fbbf24';
+  const badgeBg = num === 0 ? 'rgba(0,196,140,0.12)' : 'rgba(251,191,36,0.12)';
+  const badgeBorder = num === 0 ? 'rgba(0,196,140,0.25)' : 'rgba(251,191,36,0.25)';
+
+  [mBadge, lBadge].forEach(b => {
+    if (b) {
+      b.innerText = badgeText;
+      b.style.color = badgeColor;
+      b.style.background = badgeBg;
+      b.style.borderColor = badgeBorder;
+    }
+  });
+}
+window.handleDelayInputChange = handleDelayInputChange;
+
+async function executeMatrixBuy() {
+  if (!state.activeToken) {
+    return showToast('No active token is currently selected! Launch or track a CA first.', 'warning');
+  }
+  const checked = Array.from(document.querySelectorAll('.row-checkbox:checked')).map(cb => cb.value);
+  const walletAddresses = checked.length > 0 ? checked : getTargetAddresses('all');
+  if (walletAddresses.length === 0) {
+    return showToast('No wallets selected for buy order', 'warning');
+  }
+  const solAmount = parseFloat(document.getElementById('matrixBuyAmountInput')?.value || '0.1');
+  const btn = document.getElementById('btnMatrixBuy');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader" class="w-3 h-3 animate-spin"></i><span>BUYING...</span>`;
+  }
+
+  const delaySec = state.subWalletDelaySec || 0;
+  const isDevIncluded = state.masterWallet && walletAddresses.includes(state.masterWallet.address);
+  const subTargets = state.masterWallet ? walletAddresses.filter(a => a !== state.masterWallet.address) : walletAddresses;
+
+  try {
+    if (delaySec > 0 && isDevIncluded && subTargets.length > 0) {
+      // Step 1: Dev buys immediately
+      logTerminal(`[Multi-Buy] Dev wallet executing ${solAmount} SOL in 1st block...`);
+      showToast(`Dev buy sent! Delaying ${delaySec}s before sub-wallets buy...`, 'info');
+      await fetch('/api/trading/buy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ solAmount, walletAddresses: [state.masterWallet.address] })
+      });
+      loadLiveStats();
+
+      // Step 2: Delay countdown
+      await new Promise(r => setTimeout(r, delaySec * 1000));
+
+      // Step 3: Sub-wallets buy
+      logTerminal(`[Multi-Buy] Firing ${subTargets.length} sub-wallets buy after ${delaySec}s delay...`);
+      const res = await fetch('/api/trading/buy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ solAmount, walletAddresses: subTargets })
+      });
+      const data = await res.json();
+      showToast(`Delayed Multi-Buy Complete! (+${data.totalTokensBought || ''} tokens)`, 'success');
+    } else {
+      // Simultaneous buy across all target wallets
+      const res = await fetch('/api/trading/buy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ solAmount, walletAddresses })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Multi-Buy Success! Bought with ${walletAddresses.length} wallets (+${data.totalTokensBought || ''} tokens)`, 'success');
+      } else {
+        throw new Error(data.error);
+      }
+    }
+    loadLiveStats();
+    loadMasterWallet();
+    loadSubWallets();
+  } catch (err) {
+    showToast(`Multi-Buy error: ${err.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `▲ BUY SELECTED`;
+    }
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+async function executeMatrixSell() {
+  if (!state.activeToken) {
+    return showToast('No active token is currently selected! Launch or track a CA first.', 'warning');
+  }
+  const checked = Array.from(document.querySelectorAll('.row-checkbox:checked')).map(cb => cb.value);
+  const walletAddresses = checked.length > 0 ? checked : getTargetAddresses('all');
+  if (walletAddresses.length === 0) {
+    return showToast('No wallets selected for sell order', 'warning');
+  }
+  const pct = parseInt(document.getElementById('matrixSellPctInput')?.value || '50', 10);
+  const btn = document.getElementById('btnMatrixSell');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader" class="w-3 h-3 animate-spin"></i><span>SELLING...</span>`;
+  }
+  try {
+    const res = await fetch('/api/trading/sell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pct, walletAddresses })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Multi-Sell Success! Sold ${pct}% from ${walletAddresses.length} wallets (+${data.totalReceivedSol} SOL)`, 'warning');
+      loadLiveStats();
+      loadMasterWallet();
+      loadSubWallets();
+    } else {
+      throw new Error(data.error);
+    }
+  } catch (err) {
+    showToast(`Multi-Sell error: ${err.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `▼ SELL SELECTED`;
+    }
+    if (window.lucide) lucide.createIcons();
+  }
 }
 
 // ==================== LIVE STATS & TABLE SYNC ====================
@@ -915,7 +1138,9 @@ async function loadLiveStats() {
       } else {
         document.getElementById('deskMcapDisplay').innerText = `$${Math.round((s.curveProgressPct * 690)).toLocaleString()}`;
       }
+    }
 
+    if (s.wallets && s.wallets.length > 0) {
       renderTradingWalletsTable(s.wallets);
     }
   } catch (e) {
@@ -926,6 +1151,14 @@ async function loadLiveStats() {
 function renderTradingWalletsTable(wallets) {
   const tbody = document.getElementById('tradingWalletsTableBody');
   if (!tbody) return;
+
+  // Preserve checked state across polling intervals
+  const existingBoxes = Array.from(document.querySelectorAll('.row-checkbox'));
+  const isInitial = existingBoxes.length === 0;
+  const prevChecked = new Set(
+    existingBoxes.filter(cb => cb.checked).map(cb => cb.value)
+  );
+
   tbody.innerHTML = '';
 
   (wallets || []).forEach(w => {
@@ -938,46 +1171,66 @@ function renderTradingWalletsTable(wallets) {
     const pnlPrefix = pnlSol >= 0 ? '+' : '';
     const pnlClass = pnlSol >= 0 ? 'badge-pnl-green' : 'badge-pnl-red';
     const pnlSymbol = pnlSol >= 0 ? '▲' : '▼';
+    const isChecked = isInitial ? true : prevChecked.has(w.address);
 
     tr.innerHTML = `
-      <td class="py-2 px-2">
-        <input type="checkbox" value="${w.address}" class="row-checkbox rounded border-slate-700 bg-[#090d16] text-cyan-500">
+      <td class="py-2 px-2" style="width:26px;">
+        <input type="checkbox" value="${w.address}" class="row-checkbox" onchange="updateSelectedCount()" ${isChecked ? 'checked' : ''} style="accent-color:#00d4ff;width:13px;height:13px;cursor:pointer;">
       </td>
       <td class="py-2 px-2">
-        <div class="flex items-center space-x-1.5">
-          <span class="font-bold ${isDev ? 'text-amber-400' : 'text-slate-300'}">${w.role}</span>
-          <span class="text-slate-500">${w.address.slice(0, 4)}...${w.address.slice(-4)}</span>
-          <button onclick="navigator.clipboard.writeText('${w.address}'); showToast('Copied address', 'info')" class="text-slate-500 hover:text-cyan-400">
-            <i data-lucide="copy" class="w-3 h-3"></i>
+        <div style="display:flex;align-items:center;gap:5px;">
+          <span class="font-bold ${isDev ? 'text-amber-400' : 'text-slate-300'}" style="font-size:11px;">${w.role}</span>
+          <span style="color:#546e7a;font-size:10px;">${w.address.slice(0, 4)}...${w.address.slice(-4)}</span>
+          <button onclick="navigator.clipboard.writeText('${w.address}'); showToast('Copied ${w.role} address', 'info')" style="background:none;border:none;color:#546e7a;cursor:pointer;padding:1px;display:flex;align-items:center;" title="Copy Address">
+            <i data-lucide="copy" style="width:11px;height:11px;"></i>
           </button>
+          <a href="https://solscan.io/account/${w.address}" target="_blank" rel="noopener" style="color:#546e7a;display:flex;align-items:center;text-decoration:none;" title="View on Solscan">
+            <i data-lucide="external-link" style="width:10px;height:10px;"></i>
+          </a>
         </div>
       </td>
-      <td class="py-2 px-2 font-bold text-cyan-400">${(w.solBalance || 0).toFixed(3)} SOL</td>
-      <td class="py-2 px-2 text-slate-200">${(w.tokens || 0).toLocaleString()}</td>
-      <td class="py-2 px-2 text-slate-400">${(w.solInvested || 0).toFixed(3)} SOL</td>
-      <td class="py-2 px-2 font-semibold text-slate-200">${(w.currentValue || 0).toFixed(3)} SOL</td>
+      <td class="py-2 px-2 text-right font-bold text-cyan-400">${(w.solBalance || 0).toFixed(3)}</td>
+      <td class="py-2 px-2 text-right text-slate-200">${(w.tokens || 0).toLocaleString()}</td>
+      <td class="py-2 px-2 text-right text-slate-400">${(w.solInvested || 0).toFixed(3)}</td>
+      <td class="py-2 px-2 text-right font-semibold text-slate-200">${(w.currentValue || 0).toFixed(3)}</td>
       <td class="py-2 px-2 text-center">
         <span class="${pnlClass} text-[10px] font-mono">
-          ${pnlSymbol} ${pnlPrefix}${pnlSol.toFixed(3)} SOL (${pnlPrefix}${pnlPct.toFixed(1)}%)
+          ${pnlSymbol} ${pnlPrefix}${pnlSol.toFixed(3)} (${pnlPrefix}${pnlPct.toFixed(1)}%)
         </span>
       </td>
       <td class="py-2 px-2 text-right">
-        <div class="flex items-center justify-end space-x-1">
-          <button onclick="executeInlineBuy('${w.address}', 0.1)" class="btn-quick-buy text-[10px] py-0.5 px-1.5" title="Quick Buy 0.1 SOL">▲ Buy</button>
-          <button onclick="executeInlineSell('${w.address}', 50)" class="btn-quick-sell text-[10px] py-0.5 px-1.5" title="Sell 50%">▼ 50%</button>
-          <button onclick="executeInlineSell('${w.address}', 100)" class="btn-quick-sell text-[10px] py-0.5 px-1.5 bg-rose-950/60" title="Sell 100%">▼ 100%</button>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:5px;">
+          <!-- Svarog Quick Buy Chips -->
+          <div style="display:flex;align-items:center;gap:2px;background:rgba(0,196,140,0.06);padding:2px 3px;border-radius:5px;border:1px solid rgba(0,196,140,0.2);">
+            <span style="font-size:8px;font-weight:800;color:#00c48c;padding:0 2px;">BUY</span>
+            <button onclick="executeInlineBuy('${w.address}', 0.05)" class="btn-quick-buy" style="font-size:9px;padding:1px 4px;" title="Buy 0.05 SOL">+0.05</button>
+            <button onclick="executeInlineBuy('${w.address}', 0.1)"  class="btn-quick-buy" style="font-size:9px;padding:1px 4px;" title="Buy 0.10 SOL">+0.1</button>
+            <button onclick="executeInlineBuy('${w.address}', 0.25)" class="btn-quick-buy" style="font-size:9px;padding:1px 4px;" title="Buy 0.25 SOL">+0.25</button>
+          </div>
+          <!-- Svarog Quick Sell Chips -->
+          <div style="display:flex;align-items:center;gap:2px;background:rgba(240,76,94,0.06);padding:2px 3px;border-radius:5px;border:1px solid rgba(240,76,94,0.2);">
+            <span style="font-size:8px;font-weight:800;color:#f04c5e;padding:0 2px;">SELL</span>
+            <button onclick="executeInlineSell('${w.address}', 25)"  class="btn-quick-sell" style="font-size:9px;padding:1px 4px;" title="Sell 25%">25%</button>
+            <button onclick="executeInlineSell('${w.address}', 50)"  class="btn-quick-sell" style="font-size:9px;padding:1px 4px;" title="Sell 50%">50%</button>
+            <button onclick="executeInlineSell('${w.address}', 75)"  class="btn-quick-sell" style="font-size:9px;padding:1px 4px;" title="Sell 75%">75%</button>
+            <button onclick="executeInlineSell('${w.address}', 100)" class="btn-quick-sell" style="font-size:9px;padding:1px 4px;background:rgba(240,76,94,0.22);font-weight:800;" title="Dump 100%">100%</button>
+          </div>
         </div>
       </td>
     `;
     tbody.appendChild(tr);
   });
 
+  updateSelectedCount();
   if (window.lucide) lucide.createIcons();
 }
 
 function updateActiveTokenUi(mint) {
   if (!mint) return;
-  document.getElementById('navTrackCaInput').value = mint;
+  const navInput = document.getElementById('navTrackCaInput');
+  if (navInput) navInput.value = mint;
+  const chartCa = document.getElementById('chartManualCaInput');
+  if (chartCa) chartCa.value = mint;
   const link = document.getElementById('deskPumpLink');
   if (link) {
     link.href = `https://pump.fun/coin/${mint}`;
@@ -985,9 +1238,29 @@ function updateActiveTokenUi(mint) {
   }
 }
 
+function extractSolanaAddress(input) {
+  if (!input) return '';
+  const match = String(input).trim().match(/[1-9A-HJ-NP-za-km-z]{32,44}/);
+  return match ? match[0] : String(input).trim();
+}
+
+function loadChartCaFromInput() {
+  const input = document.getElementById('chartManualCaInput');
+  if (!input) return;
+  const raw = input.value.trim();
+  const ca = extractSolanaAddress(raw);
+  if (!ca) return showToast('Please enter a Token Mint Address / CA or Pump.fun URL', 'warning');
+  input.value = ca;
+  const navInput = document.getElementById('navTrackCaInput');
+  if (navInput) navInput.value = ca;
+  setTrackedTokenFromNav();
+}
+
 async function setTrackedTokenFromNav() {
-  const mint = document.getElementById('navTrackCaInput').value.trim();
-  if (!mint) return showToast('Please enter a Token Mint Address', 'warning');
+  const raw = document.getElementById('navTrackCaInput').value.trim();
+  const mint = extractSolanaAddress(raw);
+  if (!mint) return showToast('Please enter a Token Mint Address or Pump.fun URL', 'warning');
+  document.getElementById('navTrackCaInput').value = mint;
   try {
     const res = await fetch('/api/trading/track', {
       method: 'POST',
@@ -1122,6 +1395,8 @@ async function executeLaunchBundle() {
     formData.append('website', document.getElementById('tokenWebsite').value.trim());
     if (state.logoFile) {
       formData.append('logo', state.logoFile);
+    } else if (state.vampedImageUrl) {
+      formData.append('imageUrl', state.vampedImageUrl);
     }
 
     const metaRes = await fetch('/api/launch/upload-meta', { method: 'POST', body: formData });
@@ -1141,7 +1416,8 @@ async function executeLaunchBundle() {
         tokenMetadataUri: metadataUri,
         devSolBuy,
         subWalletBuys,
-        jitoTipSol: state.selectedJitoTip
+        jitoTipSol: state.selectedJitoTip,
+        subWalletDelaySec: state.subWalletDelaySec || parseFloat(document.getElementById('subWalletBuyDelayInput')?.value || '0')
       })
     });
 
@@ -1346,6 +1622,7 @@ async function exportAllWalletKeys() {
     showToast('Export failed: ' + e.message, 'error');
   }
 }
+window.exportSubWallets = exportAllWalletKeys;
 
 async function generateNewMasterWallet() {
   if (!confirm('Generate a new Master Dev Wallet? Make sure you backed up the current key!')) return;
@@ -1384,54 +1661,333 @@ async function promptImportMasterKey() {
 
 async function loadTrendingVampTokens() {
   const container = document.getElementById('vampTokensGrid');
-  if (!container) return;
-  container.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-slate-500 font-mono">Fetching trending tokens from DexScreener & Pump.fun...</div>`;
+  if (container) {
+    container.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-slate-500 font-mono">Fetching trending tokens from DexScreener & Pump.fun...</div>`;
+  }
 
   try {
     const res = await fetch('/api/vamp/trending');
     const data = await res.json();
-    container.innerHTML = '';
+    state.trendingTokens = data.tokens || [];
 
-    (data.tokens || []).forEach(t => {
-      const card = document.createElement('div');
-      card.className = 'bento-card p-3 space-y-2 hover:border-cyan-500/50 transition-all';
-      const m = t.metrics || {};
-      card.innerHTML = `
-        <div class="flex items-center space-x-2.5">
-          <div class="w-10 h-10 rounded-lg bg-[#090d16] border border-[#192235] flex items-center justify-center overflow-hidden flex-shrink-0">
-            ${t.icon ? `<img src="${t.icon}" class="w-full h-full object-cover">` : `<i data-lucide="coins" class="w-5 h-5 text-slate-500"></i>`}
+    // Render Top Movers on Dashboard
+    renderTopMovers(state.trendingTokens);
+
+    if (container) {
+      container.innerHTML = '';
+      (data.tokens || []).forEach(t => {
+        const card = document.createElement('div');
+        card.className = 'bento-card p-3 space-y-2 hover:border-cyan-500/50 transition-all';
+        const m = t.metrics || {};
+        const twitter = t.twitter || t.socials?.twitter || '';
+        const telegram = t.telegram || t.socials?.telegram || '';
+        const website = t.website || t.socials?.website || '';
+        const hasSocials = !!(twitter || telegram || website);
+        const socialCount = [twitter, telegram, website].filter(Boolean).length;
+
+        card.innerHTML = `
+          <!-- Top Card Status & Socials Badge -->
+          <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;border-bottom:1px solid #161f33;font-size:9.5px;">
+            <span style="font-family:monospace;font-weight:700;color:#64748b;text-transform:uppercase;">${m.dexId || 'Pump.fun'}</span>
+            ${hasSocials ? `
+              <div class="relative group" style="cursor:pointer;" onclick="inspectAndPopupSocials('${t.tokenAddress}')">
+                <div style="display:flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.25);font-size:9.5px;color:#00d4ff;font-weight:700;">
+                  <i data-lucide="share-2" style="width:10px;height:10px;"></i>
+                  <span>Socials (${socialCount})</span>
+                  <div style="display:flex;align-items:center;gap:3px;margin-left:2px;">
+                    ${twitter ? `<span title="Twitter / X: ${twitter}" style="color:#38bdf8;font-size:9.5px;font-weight:800;">𝕏</span>` : ''}
+                    ${telegram ? `<span title="Telegram: ${telegram}" style="color:#00d4ff;font-size:9.5px;">✈</span>` : ''}
+                    ${website ? `<span title="Website: ${website}" style="color:#a78bfa;font-size:9.5px;">🌐</span>` : ''}
+                  </div>
+                </div>
+                <!-- Hover Dropdown -->
+                <div class="hidden group-hover:flex absolute right-0 top-full mt-1 z-30 flex-col gap-1.5 p-2 rounded-lg bg-[#0d1322] border border-[#233554] shadow-2xl min-w-[200px] text-[10.5px] font-mono pointer-events-auto backdrop-blur" onclick="event.stopPropagation()">
+                  <div style="font-size:9px;font-weight:800;text-transform:uppercase;color:#78909c;letter-spacing:0.06em;padding-bottom:3px;border-bottom:1px solid #1a253d;display:flex;align-items:center;justify-content:space-between;">
+                    <span>Verified Socials</span>
+                    <span style="color:#00d4ff;">${socialCount} Active</span>
+                  </div>
+                  ${twitter ? `
+                    <a href="${twitter}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;color:#38bdf8;text-decoration:none;padding:3px 6px;border-radius:4px;background:#090e1a;border:1px solid #1c2b45;font-size:10px;">
+                      <span style="display:flex;align-items:center;gap:5px;"><strong>𝕏</strong> Twitter / X</span>
+                      <span style="font-size:9px;color:#64748b;">Visit ↗</span>
+                    </a>` : ''}
+                  ${telegram ? `
+                    <a href="${telegram}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;color:#00d4ff;text-decoration:none;padding:3px 6px;border-radius:4px;background:#090e1a;border:1px solid #1c2b45;font-size:10px;">
+                      <span style="display:flex;align-items:center;gap:5px;"><strong>✈</strong> Telegram</span>
+                      <span style="font-size:9px;color:#64748b;">Join ↗</span>
+                    </a>` : ''}
+                  ${website ? `
+                    <a href="${website}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;color:#a78bfa;text-decoration:none;padding:3px 6px;border-radius:4px;background:#090e1a;border:1px solid #1c2b45;font-size:10px;">
+                      <span style="display:flex;align-items:center;gap:5px;"><strong>🌐</strong> Website</span>
+                      <span style="font-size:9px;color:#64748b;">Open ↗</span>
+                    </a>` : ''}
+                  <button onclick="inspectAndPopupSocials('${t.tokenAddress}')" style="margin-top:2px;width:100%;padding:4px;border-radius:4px;background:#141f36;border:1px solid #233554;color:#cfd8dc;font-size:9.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;">
+                    <i data-lucide="eye" style="width:10px;height:10px;"></i> Full Inspect Popup
+                  </button>
+                </div>
+              </div>
+            ` : `
+              <div class="relative group" style="cursor:pointer;" onclick="inspectAndPopupSocials('${t.tokenAddress}')">
+                <span style="display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;background:rgba(100,116,139,0.08);border:1px solid rgba(100,116,139,0.2);font-size:9px;color:#64748b;" title="No social links detected on this coin (click to inspect)">
+                  <span style="width:5px;height:5px;border-radius:50%;background:#64748b;display:inline-block;"></span> No Socials
+                </span>
+              </div>
+            `}
           </div>
-          <div class="overflow-hidden flex-1">
-            <h4 class="font-bold text-xs text-slate-100 truncate">${t.name}</h4>
-            <span class="text-[11px] font-mono font-bold text-cyan-400 block">${t.symbol}</span>
+
+          <div class="flex items-center space-x-2.5">
+            <div class="w-10 h-10 rounded-lg bg-[#090d16] border border-[#192235] flex items-center justify-center overflow-hidden flex-shrink-0">
+              ${t.icon ? `<img src="${t.icon}" class="w-full h-full object-cover">` : `<i data-lucide="coins" class="w-5 h-5 text-slate-500"></i>`}
+            </div>
+            <div class="overflow-hidden flex-1">
+              <h4 class="font-bold text-xs text-slate-100 truncate">${t.name}</h4>
+              <span class="text-[11px] font-mono font-bold text-cyan-400 block">${t.symbol}</span>
+            </div>
           </div>
-        </div>
-        <p class="text-[10px] text-slate-400 line-clamp-2 h-7">${t.description || 'No description provided.'}</p>
-        <div class="grid grid-cols-2 gap-1.5 text-[9px] font-mono bg-[#090d16] p-1.5 rounded border border-[#192235]">
-          <div><span class="text-slate-500">MCap:</span> <span class="text-slate-200 font-bold">$${(m.mcap || 0).toLocaleString()}</span></div>
-          <div><span class="text-slate-500">24h Vol:</span> <span class="text-slate-200 font-bold">$${(m.volume24h || 0).toLocaleString()}</span></div>
-        </div>
-        <div class="flex gap-1.5 pt-1">
-          <button onclick="vampDirect('${t.tokenAddress}')" class="btn-primary text-[10px] flex-1 py-1 flex items-center justify-center space-x-1">
-            <i data-lucide="skull" class="w-3 h-3"></i><span>Vamp This</span>
-          </button>
-          <button onclick="vampMutate2('${t.tokenAddress}')" class="btn-secondary text-[10px] flex-1 py-1 flex items-center justify-center space-x-1">
-            <span>2.0 Spin</span>
-          </button>
-        </div>
-      `;
-      container.appendChild(card);
-    });
+
+          <!-- Token CA Display with 1-Click Copy -->
+          <div style="display:flex;align-items:center;justify-content:space-between;background:#060810;padding:3px 7px;border-radius:4px;border:1px solid #161f33;font-size:9.5px;font-family:'JetBrains Mono',monospace;">
+            <span style="color:#78909c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:175px;" title="${t.tokenAddress}">${t.tokenAddress}</span>
+            <button onclick="copyToClipboard('${t.tokenAddress}', '${t.symbol} CA')" style="background:none;border:none;color:#00d4ff;cursor:pointer;display:flex;align-items:center;gap:3px;font-size:9.5px;padding:1px 4px;font-weight:700;" title="1-Click Copy CA">
+              <i data-lucide="copy" style="width:11px;height:11px;"></i> Copy
+            </button>
+          </div>
+
+          <p class="text-[10px] text-slate-400 line-clamp-2 h-7">${t.description || 'No description provided.'}</p>
+          <div class="grid grid-cols-2 gap-1.5 text-[9px] font-mono bg-[#090d16] p-1.5 rounded border border-[#192235]">
+            <div><span class="text-slate-500">MCap:</span> <span class="text-slate-200 font-bold">$${(m.mcap || 0).toLocaleString()}</span></div>
+            <div><span class="text-slate-500">24h Vol:</span> <span class="text-slate-200 font-bold">$${(m.volume24h || 0).toLocaleString()}</span></div>
+          </div>
+          <div class="flex gap-1.5 pt-1">
+            <button onclick="vampDirect('${t.tokenAddress}')" class="btn-primary text-[10px] flex-1 py-1 flex items-center justify-center space-x-1">
+              <i data-lucide="skull" class="w-3 h-3"></i><span>Vamp This</span>
+            </button>
+            <button onclick="vampMutate2('${t.tokenAddress}')" class="btn-secondary text-[10px] flex-1 py-1 flex items-center justify-center space-x-1">
+              <span>2.0 Spin</span>
+            </button>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
 
     if (window.lucide) lucide.createIcons();
   } catch (err) {
-    container.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-rose-400">Failed to load trending tokens: ${err.message}</div>`;
+    if (container) {
+      container.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-rose-400">Failed to load trending tokens: ${err.message}</div>`;
+    }
   }
 }
 
+function renderTopMovers(tokens) {
+  const panel = document.getElementById('topMoversPanel');
+  if (!panel) return;
+
+  const list = (tokens && tokens.length > 0) ? tokens : (state.trendingTokens || []);
+  if (list.length === 0) {
+    panel.innerHTML = `<div style="font-size:11px;color:#546e7a;text-align:center;padding:14px 0;">Scanning top Solana movers...</div>`;
+    return;
+  }
+
+  // Sort by 24h price change percentage
+  const sorted = [...list].sort((a, b) => {
+    const chgA = parseFloat(a.metrics?.priceChange24h || 0);
+    const chgB = parseFloat(b.metrics?.priceChange24h || 0);
+    return chgB - chgA;
+  }).slice(0, 5);
+
+  panel.innerHTML = '';
+  sorted.forEach(t => {
+    const m = t.metrics || {};
+    const change = m.priceChange24h !== undefined ? parseFloat(m.priceChange24h) : 12.5;
+    const isUp = change >= 0;
+    const color = isUp ? '#00c48c' : '#f04c5e';
+    const bgSoft = isUp ? 'rgba(0,196,140,0.1)' : 'rgba(240,76,94,0.1)';
+    const symbol = t.symbol || 'TOKEN';
+    const name = t.name || t.tokenAddress?.slice(0, 6) || 'Meme';
+    const price = m.priceUsd ? `$${Number(m.priceUsd) < 0.001 ? Number(m.priceUsd).toFixed(6) : Number(m.priceUsd).toFixed(4)}` : `$0.000034`;
+    const mcap = m.mcap ? `$${Math.round(m.mcap).toLocaleString()}` : '$35.2K';
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:6px;transition:all 0.15s;cursor:pointer;background:#090d17;border:1px solid #1a2338;gap:8px;';
+    row.title = `Click to load and track ${symbol}`;
+    row.onmouseenter = () => {
+      row.style.background = '#0d1222';
+      row.style.borderColor = '#00d4ff';
+    };
+    row.onmouseleave = () => {
+      row.style.background = '#090d17';
+      row.style.borderColor = '#1a2338';
+    };
+    row.onclick = () => {
+      if (t.tokenAddress) {
+        document.getElementById('navTrackCaInput').value = t.tokenAddress;
+        setTrackedTokenFromNav();
+      }
+    };
+
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden;">
+        <div style="width:22px;height:22px;border-radius:5px;background:#111827;border:1px solid #1a2338;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+          ${t.icon ? `<img src="${t.icon}" style="width:100%;height:100%;object-fit:cover;" onerror="this.remove()">` : `<span style="font-size:8.5px;font-weight:800;color:#00d4ff;">${symbol.slice(0, 2)}</span>`}
+        </div>
+        <div style="min-width:0;overflow:hidden;">
+          <div style="font-size:11px;font-weight:800;color:#cfd8dc;line-height:1.2;display:flex;align-items:center;gap:4px;white-space:nowrap;">
+            <span style="color:#00d4ff;">${symbol}</span>
+            <span style="font-size:9px;color:#546e7a;font-weight:400;overflow:hidden;text-overflow:ellipsis;">${name}</span>
+          </div>
+          <div style="font-size:9px;color:#78909c;font-family:monospace;">${mcap}</div>
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div style="font-size:10px;font-weight:700;font-family:monospace;color:#cfd8dc;">${price}</div>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;">
+          <span style="font-size:8.5px;font-weight:800;font-family:monospace;padding:1px 4px;border-radius:4px;background:${bgSoft};color:${color};">
+            ${isUp ? '▲ +' : '▼ '}${Number(change).toFixed(1)}%
+          </span>
+          <button onclick="event.stopPropagation(); copyToClipboard('${t.tokenAddress}', '${symbol} CA')" style="background:none;border:none;color:#78909c;cursor:pointer;padding:1px 2px;display:flex;align-items:center;" title="Copy ${symbol} CA">
+            <i data-lucide="copy" style="width:11px;height:11px;"></i>
+          </button>
+        </div>
+      </div>
+    `;
+    panel.appendChild(row);
+  });
+}
+window.renderTopMovers = renderTopMovers;
+
+// ==================== SOCIALS & TOKEN POPUP INSPECT ====================
+
+async function inspectAndPopupSocials(address) {
+  const modal = document.getElementById('socialInspectModal');
+  const body = document.getElementById('socialInspectModalBody');
+  if (!modal || !body) return;
+
+  modal.style.display = 'flex';
+  body.innerHTML = `
+    <div style="padding:28px 0;text-align:center;font-size:11px;font-family:monospace;color:#78909c;">
+      <i data-lucide="loader" style="width:18px;height:18px;margin:0 auto 10px;display:block;" class="animate-spin"></i>
+      Fetching live socials &amp; metadata for ${address.slice(0, 8)}...
+    </div>
+  `;
+  if (window.lucide) lucide.createIcons();
+
+  try {
+    const res = await fetch(`/api/vamp/inspect/${address}`);
+    const data = await res.json();
+    const token = data.token || {};
+
+    const twitter = token.twitter || token.socials?.twitter || '';
+    const telegram = token.telegram || token.socials?.telegram || '';
+    const website = token.website || token.socials?.website || '';
+    const hasSocials = !!(twitter || telegram || website);
+
+    body.innerHTML = `
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;">
+        <div style="width:48px;height:48px;border-radius:8px;background:#090d16;border:1px solid #1a253d;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+          ${token.icon ? `<img src="${token.icon}" style="width:100%;height:100%;object-fit:cover;">` : `<i data-lucide="coins" style="width:20px;height:20px;color:#546e7a;"></i>`}
+        </div>
+        <div style="min-width:0;flex:1;">
+          <h3 style="font-size:14px;font-weight:800;color:#f1f5f9;margin:0 0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${token.name || 'Unknown'}</h3>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:11.5px;font-weight:800;font-family:monospace;color:#00d4ff;">${token.symbol || 'TOKEN'}</span>
+            <span style="font-size:10px;color:#64748b;font-family:monospace;">MCap: $${Number(token.marketCap || 0).toLocaleString()}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contract Address -->
+      <div style="background:#090d16;padding:6px 9px;border-radius:6px;border:1px solid #1a253d;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-family:monospace;font-size:10.5px;">
+        <span style="color:#78909c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;">${address}</span>
+        <button onclick="copyToClipboard('${address}', 'CA')" style="background:none;border:none;color:#00d4ff;cursor:pointer;font-size:10px;font-weight:700;display:flex;align-items:center;gap:3px;">
+          <i data-lucide="copy" style="width:11px;height:11px;"></i> Copy
+        </button>
+      </div>
+
+      <!-- Socials List -->
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:6px;">
+          Verified Social Media Channels
+        </label>
+        ${hasSocials ? `
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${twitter ? `
+              <div style="display:flex;align-items:center;justify-content:space-between;background:#090d16;padding:7px 10px;border-radius:6px;border:1px solid #1a253d;">
+                <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:#e2e8f0;">
+                  <strong style="color:#38bdf8;font-size:12px;">𝕏</strong>
+                  <span>Twitter / X</span>
+                </div>
+                <a href="${twitter}" target="_blank" style="color:#38bdf8;font-size:10.5px;text-decoration:none;font-weight:700;display:flex;align-items:center;gap:3px;">
+                  Open Link ↗
+                </a>
+              </div>` : ''}
+            ${telegram ? `
+              <div style="display:flex;align-items:center;justify-content:space-between;background:#090d16;padding:7px 10px;border-radius:6px;border:1px solid #1a253d;">
+                <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:#e2e8f0;">
+                  <strong style="color:#00d4ff;font-size:12px;">✈</strong>
+                  <span>Telegram</span>
+                </div>
+                <a href="${telegram}" target="_blank" style="color:#00d4ff;font-size:10.5px;text-decoration:none;font-weight:700;display:flex;align-items:center;gap:3px;">
+                  Join Channel ↗
+                </a>
+              </div>` : ''}
+            ${website ? `
+              <div style="display:flex;align-items:center;justify-content:space-between;background:#090d16;padding:7px 10px;border-radius:6px;border:1px solid #1a253d;">
+                <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:#e2e8f0;">
+                  <strong style="color:#a78bfa;font-size:12px;">🌐</strong>
+                  <span>Official Website</span>
+                </div>
+                <a href="${website}" target="_blank" style="color:#a78bfa;font-size:10.5px;text-decoration:none;font-weight:700;display:flex;align-items:center;gap:3px;">
+                  Visit Site ↗
+                </a>
+              </div>` : ''}
+          </div>
+        ` : `
+          <div style="background:#090d16;padding:10px;border-radius:6px;border:1px dashed #1a253d;font-size:11px;color:#64748b;text-align:center;">
+            No official socials detected. (Stealth launch / community takeover candidate)
+          </div>
+        `}
+      </div>
+
+      <!-- Description -->
+      <div style="margin-bottom:14px;">
+        <label style="display:block;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">
+          Narrative / Description
+        </label>
+        <div style="background:#090d16;padding:8px 10px;border-radius:6px;border:1px solid #1a253d;font-size:10.5px;color:#94a3b8;max-height:80px;overflow-y:auto;line-height:1.4;">
+          ${token.description || 'No description provided.'}
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div style="display:flex;gap:8px;">
+        <button onclick="closeSocialInspectModal(); vampDirect('${address}')" class="btn-primary" style="flex:1;padding:8px;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:5px;">
+          <i data-lucide="skull" style="width:12px;height:12px;"></i> Vamp into Launchpad
+        </button>
+        <button onclick="closeSocialInspectModal()" class="btn-secondary" style="padding:8px 14px;font-size:11px;">
+          Close
+        </button>
+      </div>
+    `;
+
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    body.innerHTML = `<div style="color:#f04c5e;font-size:11px;padding:12px;text-align:center;">Failed to inspect socials: ${err.message}</div>`;
+  }
+}
+window.inspectAndPopupSocials = inspectAndPopupSocials;
+
+function closeSocialInspectModal() {
+  const modal = document.getElementById('socialInspectModal');
+  if (modal) modal.style.display = 'none';
+}
+window.closeSocialInspectModal = closeSocialInspectModal;
+
 async function inspectCustomVampCa() {
-  const ca = document.getElementById('vampCaInput').value.trim();
-  if (!ca) return showToast('Please enter a Solana CA', 'warning');
+  const raw = document.getElementById('vampCaInput').value.trim();
+  const ca = extractSolanaAddress(raw);
+  if (!ca) return showToast('Please enter a Solana CA or Pump.fun link', 'warning');
+  document.getElementById('vampCaInput').value = ca;
   try {
     const res = await fetch(`/api/vamp/inspect/${ca}`);
     const data = await res.json();
@@ -1475,19 +2031,100 @@ async function vampMutate2(address) {
   }
 }
 
-function applyVampToLaunchpad(token) {
-  document.getElementById('tokenName').value = token.name;
-  document.getElementById('tokenSymbol').value = token.symbol;
-  document.getElementById('tokenDescription').value = token.description;
-  if (token.twitter) document.getElementById('tokenTwitter').value = token.twitter;
-  if (token.telegram) document.getElementById('tokenTelegram').value = token.telegram;
-  if (token.website) document.getElementById('tokenWebsite').value = token.website;
+function copyToClipboard(text, label = 'CA') {
+  if (!text) return showToast('No address to copy', 'warning');
+  const clean = extractSolanaAddress(text) || text;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(clean).then(() => {
+      showToast(`Copied ${label} to clipboard!`, 'info');
+    }).catch(() => fallbackCopyText(clean, label));
+  } else {
+    fallbackCopyText(clean, label);
+  }
+}
+window.copyToClipboard = copyToClipboard;
 
-  if (token.icon) {
-    const preview = document.getElementById('logoPreview');
-    preview.src = token.icon;
-    preview.classList.remove('hidden');
-    document.getElementById('logoIconPlaceholder').classList.add('hidden');
+function fallbackCopyText(text, label) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast(`Copied ${label} to clipboard!`, 'info');
+  } catch(e) {
+    showToast('Failed to copy', 'error');
+  }
+}
+
+async function inspectCustomVampCaFromLaunchpad() {
+  const raw = document.getElementById('launchpadVampedCa').value.trim();
+  const ca = extractSolanaAddress(raw);
+  if (!ca) return showToast('Please enter a Solana CA or Pump.fun URL', 'warning');
+  document.getElementById('launchpadVampedCa').value = ca;
+  try {
+    const res = await fetch(`/api/vamp/inspect/${ca}`);
+    const data = await res.json();
+    if (data.token) {
+      applyVampToLaunchpad(data.token);
+      showToast(`Vamped ${data.token.symbol}! Ready in Launchpad`, 'success');
+    }
+  } catch (e) {
+    showToast('Failed to inspect token: ' + e.message, 'error');
+  }
+}
+window.inspectCustomVampCaFromLaunchpad = inspectCustomVampCaFromLaunchpad;
+
+function applyVampToLaunchpad(token) {
+  if (!token) return;
+
+  // 1. Name, Symbol & Description
+  document.getElementById('tokenName').value = token.name || '';
+  document.getElementById('tokenSymbol').value = token.symbol || '';
+  document.getElementById('tokenDescription').value = token.description || '';
+
+  // 2. Source / Vamped Token CA window
+  const ca = token.address || token.tokenAddress || '';
+  const caInput = document.getElementById('launchpadVampedCa');
+  if (caInput) caInput.value = ca;
+  const pumpLink = document.getElementById('launchpadPumpLink');
+  if (pumpLink && ca) {
+    pumpLink.href = `https://pump.fun/coin/${ca}`;
+    pumpLink.style.display = 'inline-block';
+  }
+
+  // 3. Socials
+  const twitter = token.twitter || token.socials?.twitter || (token.links || []).find(l => (l.url || '').includes('x.com') || (l.url || '').includes('twitter'))?.url || '';
+  const telegram = token.telegram || token.socials?.telegram || (token.links || []).find(l => (l.url || '').includes('t.me'))?.url || '';
+  const website = token.website || token.socials?.website || (token.links || []).find(l => !(l.url || '').includes('twitter') && !(l.url || '').includes('t.me') && !(l.url || '').includes('x.com'))?.url || '';
+
+  document.getElementById('tokenTwitter').value = twitter;
+  document.getElementById('tokenTelegram').value = telegram;
+  document.getElementById('tokenWebsite').value = website;
+
+  // 4. Logo Picture Display & Storage
+  const iconUrl = token.icon || token.imageUrl || token.image || '';
+  state.vampedImageUrl = iconUrl;
+  const preview = document.getElementById('logoPreview');
+  const placeholder = document.getElementById('logoIconPlaceholder');
+
+  if (iconUrl) {
+    if (preview) {
+      preview.src = iconUrl;
+      preview.style.display = 'block';
+    }
+    if (placeholder) {
+      placeholder.style.display = 'none';
+    }
+  } else {
+    if (preview) {
+      preview.src = '';
+      preview.style.display = 'none';
+    }
+    if (placeholder) {
+      placeholder.style.display = 'block';
+    }
   }
 }
 
@@ -1495,13 +2132,19 @@ function handleLogoSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
   state.logoFile = file;
+  state.vampedImageUrl = null;
 
   const reader = new FileReader();
   reader.onload = (ev) => {
     const preview = document.getElementById('logoPreview');
-    preview.src = ev.target.result;
-    preview.classList.remove('hidden');
-    document.getElementById('logoIconPlaceholder').classList.add('hidden');
+    const placeholder = document.getElementById('logoIconPlaceholder');
+    if (preview) {
+      preview.src = ev.target.result;
+      preview.style.display = 'block';
+    }
+    if (placeholder) {
+      placeholder.style.display = 'none';
+    }
   };
   reader.readAsDataURL(file);
 }
@@ -1570,4 +2213,101 @@ function showToast(text, type = 'info') {
     toast.classList.add('opacity-0', 'translate-y-2');
     setTimeout(() => toast.remove(), 300);
   }, 4000);
+}
+
+// ==================== RENT & CREATOR REWARDS RECLAMATION ====================
+
+async function reclaimRentAndRewards() {
+  const mint = state.activeToken || (document.getElementById('chartManualCaInput')?.value.trim()) || '';
+  logTerminal(`🧹 [Rent & Rewards] Scanning 0-balance token accounts to reclaim SOL rent and creator rewards...`);
+  showToast('Scanning token accounts for rent reclamation...', 'info');
+
+  try {
+    const res = await fetch('/api/wallets/reclaim-rent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mint })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to reclaim rent');
+    }
+
+    logTerminal(`✨ [Rent Reclaimed] Success! Closed ${data.closedCount} token accounts, recovered +${data.reclaimedSol} SOL rent + ${data.creatorRewardsSol} SOL Pump.fun rewards to Master (${data.masterAddress ? data.masterAddress.slice(0, 8) + '...' : ''})`);
+    showToast(`Reclaimed +${data.totalReclaimedSol} SOL to Master Wallet!`, 'success');
+    loadMasterWallet();
+    loadSubWallets();
+    loadLiveStats();
+  } catch (err) {
+    logTerminal(`❌ [Rent Reclaim Error] ${err.message}`);
+    showToast('Rent claim: ' + err.message, 'error');
+  }
+}
+
+// ==================== LIVE PUBLIC TRADE STREAM ====================
+
+function renderTradeTick(trade) {
+  if (!trade) return;
+  const isBuy = trade.txType === 'buy';
+  const color = isBuy ? '#00c48c' : '#f04c5e';
+  const badgeBg = isBuy ? 'rgba(0,196,140,0.12)' : 'rgba(240,76,94,0.12)';
+  const borderCol = isBuy ? 'rgba(0,196,140,0.3)' : 'rgba(240,76,94,0.3)';
+  const timeStr = new Date(trade.timestamp || Date.now()).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const traderShort = (trade.traderPublicKey || 'anon').slice(0, 4) + '..' + (trade.traderPublicKey || 'anon').slice(-4);
+  const solFormatted = (trade.solAmount || 0).toFixed(trade.solAmount >= 1 ? 2 : 3);
+
+  // 1. Chart bar chip
+  const chartBar = document.getElementById('chartLiveTradesBar');
+  if (chartBar) {
+    // If it currently shows the placeholder text, clear it
+    if (chartBar.innerText.includes('Streaming live trades')) {
+      chartBar.innerHTML = '';
+    }
+    const chip = document.createElement('div');
+    chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:4px;background:${badgeBg};border:1px solid ${borderCol};font-size:10px;flex-shrink:0;`;
+    chip.innerHTML = `
+      <strong style="color:${color};font-weight:800;">${isBuy ? '▲ BUY' : '▼ SELL'}</strong>
+      <span style="color:#e2e8f0;font-weight:700;">${solFormatted} SOL</span>
+      <span style="color:#64748b;font-size:9.5px;">(${traderShort})</span>
+    `;
+    chartBar.prepend(chip);
+    while (chartBar.children.length > 12) {
+      chartBar.removeChild(chartBar.lastChild);
+    }
+  }
+
+  // 2. Tx Tape Panel row (Recent Transactions below desk)
+  const tapePanel = document.getElementById('txTapePanel');
+  if (tapePanel) {
+    // If placeholder
+    if (tapePanel.innerText.includes('No transactions yet')) {
+      tapePanel.innerHTML = '';
+    }
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid #161b2e;font-size:11px;font-family:'JetBrains Mono',monospace;`;
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="color:#64748b;font-size:10px;">${timeStr}</span>
+        <span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:9.5px;font-weight:800;background:${badgeBg};color:${color};border:1px solid ${borderCol};">
+          ${isBuy ? 'BUY' : 'SELL'}
+        </span>
+        <span style="color:#e2e8f0;font-weight:600;">${solFormatted} SOL</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="color:#94a3b8;font-size:10px;">${(trade.tokenAmount || 0).toLocaleString()} tokens</span>
+        <a href="https://solscan.io/account/${trade.traderPublicKey}" target="_blank" style="color:#00d4ff;font-size:10px;text-decoration:none;">${traderShort}</a>
+      </div>
+    `;
+    tapePanel.prepend(row);
+    while (tapePanel.children.length > 30) {
+      tapePanel.removeChild(tapePanel.lastChild);
+    }
+  }
+
+  // 3. Nudge chart candle on trade
+  if (trade.solAmount > 0) {
+    const delta = isBuy ? (trade.solAmount * 0.002) : -(trade.solAmount * 0.002);
+    const updatedPrice = Math.max(0.000005, state.lastPrice * (1 + delta));
+    pushChartTick(updatedPrice, trade.solAmount);
+  }
 }

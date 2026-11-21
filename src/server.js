@@ -37,6 +37,7 @@ function broadcast(data) {
   });
 }
 tradingEngine.setBroadcaster(broadcast);
+bundler.setBroadcaster(broadcast);
 
 wss.on('connection', ws => {
   ws.send(JSON.stringify({
@@ -194,12 +195,37 @@ app.get('/api/wallets/export', (req, res) => {
   }
 });
 
+// Reclaim SOL rent from 0-balance token accounts (SPL closeAccount) & claim creator rewards
+app.post('/api/wallets/reclaim-rent', async (req, res) => {
+  try {
+    const mintAddress = req.body?.mintAddress || null;
+    const result = await walletManager.reclaimRentAndRewards(mintAddress);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Token Launch & Bundler
 app.post('/api/launch/upload-meta', upload.single('logo'), async (req, res) => {
   try {
-    const { name, symbol, description, twitter, telegram, website } = req.body;
+    const { name, symbol, description, twitter, telegram, website, imageUrl } = req.body;
     if (!name || !symbol) {
       return res.status(400).json({ error: 'Token name and symbol are required' });
+    }
+
+    let fileBuffer = req.file ? req.file.buffer : null;
+    let fileName = req.file ? req.file.originalname : 'logo.png';
+
+    // If no direct file uploaded but an imageUrl is provided (e.g. from vamped coin), fetch buffer
+    if (!fileBuffer && imageUrl && typeof imageUrl === 'string' && imageUrl.startsWith('http')) {
+      try {
+        const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 8000 });
+        fileBuffer = Buffer.from(imgRes.data);
+        fileName = 'vamped_logo.png';
+      } catch (imgErr) {
+        console.warn('[UploadMeta] Failed to download remote imageUrl:', imgErr.message);
+      }
     }
 
     const uploadRes = await pumpfun.uploadMetadata({
@@ -209,8 +235,8 @@ app.post('/api/launch/upload-meta', upload.single('logo'), async (req, res) => {
       twitter,
       telegram,
       website,
-      fileBuffer: req.file ? req.file.buffer : null,
-      fileName: req.file ? req.file.originalname : 'logo.png'
+      fileBuffer,
+      fileName
     });
 
     res.json({ success: true, ...uploadRes });
@@ -242,14 +268,15 @@ app.post('/api/launch/execute', async (req, res) => {
       tokenMetadataUri,
       devSolBuy,
       subWalletBuys,
-      jitoTipSol
+      jitoTipSol,
+      subWalletDelaySec
     } = req.body;
 
     if (!tokenName || !tokenSymbol) {
       return res.status(400).json({ error: 'Token Name and Symbol are required' });
     }
 
-    broadcast({ type: 'LAUNCH_STARTED', payload: { tokenSymbol, tokenName } });
+    broadcast({ type: 'LAUNCH_STARTED', payload: { tokenSymbol, tokenName, subWalletDelaySec: parseFloat(subWalletDelaySec || '0') } });
 
     const launchResult = await bundler.launchBundle({
       tokenName,
@@ -258,7 +285,8 @@ app.post('/api/launch/execute', async (req, res) => {
       tokenMetadataUri,
       devSolBuy: parseFloat(devSolBuy || '0.5'),
       subWalletBuys: (subWalletBuys || []).map(x => parseFloat(x || '0')),
-      jitoTipSol: parseFloat(jitoTipSol || '0.003')
+      jitoTipSol: parseFloat(jitoTipSol || '0.003'),
+      subWalletDelaySec: parseFloat(subWalletDelaySec || '0')
     });
 
     // Auto-track launched token in trading desk

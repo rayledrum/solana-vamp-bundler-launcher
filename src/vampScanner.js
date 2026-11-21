@@ -14,16 +14,18 @@ class VampScanner {
         .filter(item => item.chainId === 'solana')
         .slice(0, limit);
 
-      // Enhance with detailed pair metrics
+      // Enhance with detailed pair metrics & socials
       const results = [];
       for (const t of solanaTokens) {
         let metrics = null;
+        let pairInfo = {};
         try {
           const pairRes = await axios.get(`${config.DEXSCREENER_API}/tokens/${t.tokenAddress}`, {
             timeout: 4000
           });
           if (pairRes.data?.pairs?.[0]) {
             const p = pairRes.data.pairs[0];
+            pairInfo = p.info || {};
             metrics = {
               priceUsd: p.priceUsd,
               mcap: p.marketCap,
@@ -36,13 +38,25 @@ class VampScanner {
           // ignore individual pair errors
         }
 
+        const icon = t.icon || pairInfo.imageUrl || '';
+        const twitter = (pairInfo.socials || []).find(s => (s.type || '').toLowerCase().includes('twitter') || (s.url || '').includes('x.com') || (s.url || '').includes('twitter.com'))?.url || 
+                        (t.links || []).find(l => (l.type || '').toLowerCase().includes('twitter') || (l.url || '').includes('x.com') || (l.url || '').includes('twitter.com'))?.url || '';
+        const telegram = (pairInfo.socials || []).find(s => (s.type || '').toLowerCase().includes('telegram') || (s.url || '').includes('t.me'))?.url || 
+                         (t.links || []).find(l => (l.type || '').toLowerCase().includes('telegram') || (l.url || '').includes('t.me'))?.url || '';
+        const website = (pairInfo.websites || [])[0]?.url || (typeof (pairInfo.websites || [])[0] === 'string' ? (pairInfo.websites || [])[0] : '') ||
+                        (t.links || []).find(l => (l.type || '').toLowerCase().includes('website'))?.url || '';
+
         results.push({
           tokenAddress: t.tokenAddress,
           name: t.name || (t.tokenAddress.slice(0, 6)),
           symbol: t.symbol || 'MEME',
-          description: t.description || '',
-          icon: t.icon || '',
-          header: t.header || '',
+          description: t.description || pairInfo.description || '',
+          icon: icon,
+          header: t.header || pairInfo.header || '',
+          socials: { twitter, telegram, website },
+          twitter,
+          telegram,
+          website,
           links: t.links || [],
           metrics: metrics || { priceUsd: '0.0001', mcap: 45000, volume24h: 12000, priceChange24h: 35.5, dexId: 'pumpfun' }
         });
@@ -84,25 +98,46 @@ class VampScanner {
     }
   }
 
-  // Inspect any token by CA for direct Vamp Cloning
+  // Inspect any token by CA or Pump.fun URL for direct Vamp Cloning
   async inspectToken(tokenAddress) {
+    const match = String(tokenAddress).match(/[1-9A-HJ-NP-za-km-z]{32,44}/);
+    const cleanAddress = match ? match[0] : tokenAddress;
+
     try {
-      const res = await axios.get(`${config.DEXSCREENER_API}/tokens/${tokenAddress}`);
-      if (res.data?.pairs?.[0]) {
-        const pair = res.data.pairs[0];
+      let pair = null;
+      // 1. Try direct DexScreener tokens endpoint
+      try {
+        const res = await axios.get(`${config.DEXSCREENER_API}/tokens/${cleanAddress}`, { timeout: 4000 });
+        if (res.data?.pairs?.[0]) pair = res.data.pairs[0];
+      } catch (e) {}
+
+      // 2. Fallback to DexScreener search endpoint (reliably catches newly created pump.fun coins)
+      if (!pair) {
+        try {
+          const searchRes = await axios.get(`${config.DEXSCREENER_API}/search?q=${cleanAddress}`, { timeout: 4000 });
+          if (searchRes.data?.pairs && searchRes.data.pairs.length > 0) {
+            pair = searchRes.data.pairs.find(p => p.baseToken?.address === cleanAddress) || searchRes.data.pairs[0];
+          }
+        } catch (e) {}
+      }
+
+      if (pair) {
         const base = pair.baseToken || {};
         const info = pair.info || {};
+        const twitter = (info.socials || []).find(s => (s.type || s.platform || '').toLowerCase().includes('twitter') || (s.url || '').includes('x.com') || (s.url || '').includes('twitter.com'))?.url || '';
+        const telegram = (info.socials || []).find(s => (s.type || s.platform || '').toLowerCase().includes('telegram') || (s.url || '').includes('t.me'))?.url || '';
+        const website = (info.websites || [])[0]?.url || (typeof (info.websites || [])[0] === 'string' ? (info.websites || [])[0] : '') || '';
+
         return {
-          address: tokenAddress,
+          address: cleanAddress,
           name: base.name || 'Unknown',
           symbol: base.symbol || 'VAMP',
           description: info.description || `${base.name} - cloned & launched with Svarog/Vamp bundler`,
           icon: info.imageUrl || '',
-          socials: {
-            twitter: (info.socials || []).find(s => s.type === 'twitter')?.url || '',
-            telegram: (info.socials || []).find(s => s.type === 'telegram')?.url || '',
-            website: (info.websites || [])[0]?.url || ''
-          },
+          socials: { twitter, telegram, website },
+          twitter,
+          telegram,
+          website,
           priceUsd: pair.priceUsd,
           marketCap: pair.marketCap,
           volume24h: pair.volume?.h24
@@ -113,7 +148,7 @@ class VampScanner {
     }
 
     return {
-      address: tokenAddress,
+      address: cleanAddress,
       name: 'Vamped Meme Coin',
       symbol: 'VAMP',
       description: 'Instant vamp launch on Pump.fun bonding curve',
@@ -141,13 +176,15 @@ class VampScanner {
     }
 
     return {
+      address: tokenData.address || tokenData.tokenAddress || '',
       name: newName,
       symbol: newSymbol,
       description: `${tokenData.description || originalName} - Community takeover & reborn launch.`,
       icon: tokenData.icon || '',
-      twitter: tokenData.socials?.twitter || '',
-      telegram: tokenData.socials?.telegram || '',
-      website: tokenData.socials?.website || ''
+      socials: tokenData.socials || {},
+      twitter: tokenData.socials?.twitter || tokenData.twitter || '',
+      telegram: tokenData.socials?.telegram || tokenData.telegram || '',
+      website: tokenData.socials?.website || tokenData.website || ''
     };
   }
 }

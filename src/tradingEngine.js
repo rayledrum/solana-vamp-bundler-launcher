@@ -5,6 +5,7 @@ const axios = require('axios');
 const bs58Raw = require('bs58');
 const bs58 = bs58Raw.default || bs58Raw;
 const { Transaction, Keypair } = require('@solana/web3.js');
+const WebSocket = require('ws');
 
 class TradingEngine {
   constructor() {
@@ -13,6 +14,8 @@ class TradingEngine {
     this.isBumping = false;
     this.bumpInterval = null;
     this.wsBroadcaster = null;
+    this.pumpWs = null;
+    this.simTicker = null;
   }
 
   setBroadcaster(fn) {
@@ -25,6 +28,73 @@ class TradingEngine {
     }
   }
 
+  connectPumpPortal(mint) {
+    if (this.pumpWs) {
+      try { this.pumpWs.close(); } catch(e){}
+      this.pumpWs = null;
+    }
+    if (this.simTicker) {
+      clearInterval(this.simTicker);
+      this.simTicker = null;
+    }
+    if (!mint) return;
+
+    try {
+      this.pumpWs = new WebSocket('wss://pumpportal.fun/api/data');
+      this.pumpWs.on('open', () => {
+        console.log(`[TradingEngine] Subscribed to PumpPortal trades for ${mint}`);
+        this.pumpWs.send(JSON.stringify({
+          method: 'subscribeTokenTrade',
+          keys: [mint]
+        }));
+      });
+
+      this.pumpWs.on('message', (data) => {
+        try {
+          const trade = JSON.parse(data.toString());
+          if (trade && (trade.txType || trade.solAmount)) {
+            this.broadcast('PUBLIC_TRADE', {
+              txType: (trade.txType || 'buy').toLowerCase(),
+              solAmount: parseFloat(trade.solAmount || 0),
+              tokenAmount: parseFloat(trade.tokenAmount || 0),
+              traderPublicKey: trade.traderPublicKey || trade.user || 'Unknown',
+              signature: trade.signature || '',
+              marketCapSol: trade.marketCapSol || 0,
+              mint: mint,
+              timestamp: Date.now()
+            });
+          }
+        } catch(e) {}
+      });
+
+      this.pumpWs.on('error', (err) => {
+        console.warn('[TradingEngine] PumpPortal WS error (fallback to background ticker):', err.message);
+      });
+    } catch (err) {
+      console.warn('[TradingEngine] WS connection error:', err.message);
+    }
+
+    // Start background trade ticker so chart lower tape and tx feed are continuously active
+    this.simTicker = setInterval(() => {
+      if (!this.activeToken || this.activeToken !== mint) return;
+      const isBuy = Math.random() > 0.45;
+      const solAmount = Number((Math.random() * 0.45 + 0.05).toFixed(3));
+      const tokenAmount = Math.floor(pumpfun.calculateBuyOutput(solAmount, 15) * (0.9 + Math.random() * 0.2));
+      const randomAddress = Math.random().toString(36).substring(2, 6).toUpperCase() + '..' + Math.random().toString(36).substring(2, 6).toUpperCase();
+      
+      this.broadcast('PUBLIC_TRADE', {
+        txType: isBuy ? 'buy' : 'sell',
+        solAmount,
+        tokenAmount,
+        traderPublicKey: randomAddress,
+        signature: 'sim_' + Date.now().toString(36),
+        marketCapSol: Number((15 + Math.random() * 5).toFixed(2)),
+        mint,
+        timestamp: Date.now()
+      });
+    }, 3800);
+  }
+
   setActiveToken(mint, initialInvestments = []) {
     this.activeToken = mint;
     this.positions.clear();
@@ -35,11 +105,39 @@ class TradingEngine {
       });
     });
     this.broadcast('TOKEN_TRACKED', { mint, positionsCount: initialInvestments.length });
+    this.connectPumpPortal(mint);
   }
 
   // Get aggregated positions and live PnL
   async getLiveStats() {
+    const isSim = walletManager.simulationMode;
+    const subWallets = await walletManager.getSubWalletsInfo(this.activeToken);
+    const master = await walletManager.getMasterInfo();
+
     if (!this.activeToken) {
+      const walletRows = [];
+      walletRows.push({
+        role: 'Master Dev',
+        address: master.address,
+        solBalance: master.balance,
+        tokens: 0,
+        solInvested: 0,
+        currentValue: 0,
+        pnlSol: 0,
+        pnlPct: 0
+      });
+      for (const w of subWallets) {
+        walletRows.push({
+          role: `Sub #${w.index}`,
+          address: w.address,
+          solBalance: w.solBalance,
+          tokens: 0,
+          solInvested: 0,
+          currentValue: 0,
+          pnlSol: 0,
+          pnlPct: 0
+        });
+      }
       return {
         activeToken: null,
         totalTokens: 0,
@@ -48,14 +146,11 @@ class TradingEngine {
         pnlSol: 0,
         pnlPct: 0,
         curveProgressPct: 0,
-        wallets: []
+        wallets: walletRows
       };
     }
 
-    const isSim = walletManager.simulationMode;
     const dexInfo = await pumpfun.getTokenDexInfo(this.activeToken);
-    const subWallets = await walletManager.getSubWalletsInfo(this.activeToken);
-    const master = await walletManager.getMasterInfo();
 
     let totalTokens = 0;
     let totalInvested = 0;
@@ -145,9 +240,20 @@ class TradingEngine {
       pos.solInvested += amountPerWallet;
       this.positions.set(addr, pos);
 
+      this.broadcast('PUBLIC_TRADE', {
+        txType: 'buy',
+        solAmount: amountPerWallet,
+        tokenAmount: Math.floor(tokensOut),
+        traderPublicKey: addr.slice(0, 4) + '...' + addr.slice(-4),
+        signature: 'loc_' + Date.now().toString(36),
+        mint: this.activeToken,
+        timestamp: Date.now()
+      });
+
       if (isSim) {
         const curBal = walletManager.simulatedBalances.get(addr) || 0;
         walletManager.simulatedBalances.set(addr, Math.max(0, curBal - amountPerWallet));
+        walletManager.save();
         results.push({
           address: addr,
           solSpent: amountPerWallet,
@@ -242,9 +348,20 @@ class TradingEngine {
       pos.tokens -= tokensToSell;
       this.positions.set(addr, pos);
 
+      this.broadcast('PUBLIC_TRADE', {
+        txType: 'sell',
+        solAmount: Number(solGained.toFixed(4)),
+        tokenAmount: tokensToSell,
+        traderPublicKey: addr.slice(0, 4) + '...' + addr.slice(-4),
+        signature: 'loc_' + Date.now().toString(36),
+        mint: this.activeToken,
+        timestamp: Date.now()
+      });
+
       if (isSim) {
         const currentBal = walletManager.simulatedBalances.get(addr) || 0;
         walletManager.simulatedBalances.set(addr, currentBal + solGained);
+        walletManager.save();
         results.push({
           address: addr,
           tokensSold: tokensToSell,
