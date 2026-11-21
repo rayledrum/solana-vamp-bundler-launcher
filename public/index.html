@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Svarog PRO // Solana Memecoin Bundler & Trading Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js"></script>
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <style>
+    /* Tailwind overrides for custom vars */
+    .bg-main    { background-color: #080b12; }
+    .bg-card    { background-color: #0d1120; }
+    .bg-inner   { background-color: #090d17; }
+    .text-soft  { color: #b0bec5; }
+    .text-head  { color: #cfd8dc; }
+    .text-muted { color: #78909c; }
+    .text-dim   { color: #546e7a; }
+    .border-sub { border-color: #1a2338; }
+    .col-cyan   { color: #00d4ff; }
+    .col-green  { color: #00c48c; }
+    .col-red    { color: #f04c5e; }
+    .col-amber  { color: #fbbf24; }
+    .col-indigo { color: #6c63ff; }
+  </style>
+</head>
+<body style="background:#080b12;color:#b0bec5;font-family:'Plus Jakarta Sans',sans-serif;min-height:100vh;display:flex;margin:0;">
+
+  <!-- ==================== LEFT SIDEBAR ==================== -->
+  <aside class="app-sidebar hidden md:flex flex-col" style="width:220px;min-height:100vh;position:sticky;top:0;height:100vh;overflow-y:auto;">
+
+    <!-- Logo -->
+    <div class="sidebar-logo-wrap">
+      <div class="sidebar-logo-icon">
+        <div class="sidebar-logo-icon-inner">
+          <i data-lucide="zap" style="width:14px;height:14px;color:#00d4ff;"></i>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:900;letter-spacing:-0.02em;color:#cfd8dc;">SVAROG <span style="color:#00d4ff;">PRO</span></div>
+        <div style="font-size:9px;color:#546e7a;font-family:monospace;letter-spacing:0.08em;line-height:1;">SOLANA TERMINAL</div>
+      </div>
+    </div>
+
+    <!-- Nav -->
+    <nav style="flex:1;padding:12px 10px;display:flex;flex-direction:column;gap:4px;">
+      <div class="sidebar-section-label">Main Menu</div>
+      <button onclick="switchTab('trading')"  id="tabBtn-trading"  class="sidebar-nav-btn active">
+        <i data-lucide="layout-dashboard" style="width:15px;height:15px;"></i><span>Dashboard</span>
+      </button>
+      <button onclick="switchTab('launchpad')" id="tabBtn-launchpad" class="sidebar-nav-btn">
+        <i data-lucide="rocket" style="width:15px;height:15px;"></i><span>Launchpad</span>
+      </button>
+      <button onclick="switchTab('vamp')"     id="tabBtn-vamp"     class="sidebar-nav-btn">
+        <i data-lucide="skull" style="width:15px;height:15px;"></i><span>Vamp Cloner</span>
+      </button>
+      <button onclick="switchTab('wallets')"  id="tabBtn-wallets"  class="sidebar-nav-btn">
+        <i data-lucide="users" style="width:15px;height:15px;"></i><span>Wallets Matrix</span>
+      </button>
+      <button onclick="switchTab('bumper')"   id="tabBtn-bumper"   class="sidebar-nav-btn">
+        <i data-lucide="trending-up" style="width:15px;height:15px;"></i><span>Volume Bumper</span>
+      </button>
+      <div class="sidebar-section-label" style="margin-top:8px;">Tools</div>
+      <button class="sidebar-nav-btn" onclick="switchTab('wallets')">
+        <i data-lucide="key" style="width:15px;height:15px;"></i><span>Key Manager</span>
+      </button>
+      <button class="sidebar-nav-btn" onclick="switchTab('launchpad')">
+        <i data-lucide="layers" style="width:15px;height:15px;"></i><span>Jito Bundler</span>
+      </button>
+    </nav>
+
+    <!-- Bottom status widget -->
+    <div style="padding:10px;">
+      <div style="background:#0d1120;border:1px solid #1a2338;border-radius:10px;padding:10px 12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+          <span style="display:flex;align-items:center;gap:5px;font-size:10px;font-weight:800;color:#00c48c;font-family:monospace;">
+            <span class="anim-pulse" style="width:6px;height:6px;border-radius:50%;background:#00c48c;display:inline-block;"></span>HELIUS FREE
+          </span>
+          <span id="sidebarSlotBadge" style="font-size:9.5px;color:#546e7a;font-family:monospace;">Slot: ---</span>
+        </div>
+        <div style="font-size:9.5px;color:#78909c;line-height:1.4;">RPC &amp; WebSocket active.<br>Atomic Jito bundle ready.</div>
+      </div>
+
+      <!-- Pro tag -->
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;padding:8px 10px;background:linear-gradient(135deg,rgba(108,99,255,0.1),rgba(0,212,255,0.08));border:1px solid rgba(108,99,255,0.2);border-radius:10px;">
+        <i data-lucide="shield-check" style="width:14px;height:14px;color:#6c63ff;flex-shrink:0;"></i>
+        <div>
+          <div style="font-size:10px;font-weight:800;color:#9d94ff;">PRO PLAN</div>
+          <div style="font-size:9px;color:#546e7a;">Simulation mode active</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== MAIN CONTENT ==================== -->
+  <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div style="padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+
+        <!-- Mobile logo -->
+        <div class="flex md:hidden items-center gap-2">
+          <div class="sidebar-logo-icon" style="width:28px;height:28px;">
+            <div class="sidebar-logo-icon-inner"><i data-lucide="zap" style="width:12px;height:12px;color:#00d4ff;"></i></div>
+          </div>
+          <span style="font-size:12px;font-weight:900;color:#cfd8dc;">SVAROG</span>
+        </div>
+
+        <!-- KPI Strip -->
+        <div class="hidden xl:flex items-center gap-6">
+          <div class="kpi-chip">
+            <span class="kpi-label">Total Mkt Cap</span>
+            <span class="kpi-value" style="color:#cfd8dc;">$2.45T <span style="font-size:10px;color:#00c48c;">+3.45%</span></span>
+          </div>
+          <div style="width:1px;height:28px;background:#1a2338;"></div>
+          <div class="kpi-chip">
+            <span class="kpi-label">24h SOL Volume</span>
+            <span class="kpi-value" style="color:#cfd8dc;">$89.76B <span style="font-size:10px;color:#00c48c;">+12.4%</span></span>
+          </div>
+          <div style="width:1px;height:28px;background:#1a2338;"></div>
+          <div class="kpi-chip">
+            <span class="kpi-label">Bonding Sentiment</span>
+            <span class="kpi-value col-cyan">75% BULLISH</span>
+          </div>
+          <div style="width:1px;height:28px;background:#1a2338;"></div>
+          <div class="kpi-chip">
+            <span class="kpi-label">Helius Slot</span>
+            <span id="slotDisplay" class="kpi-value" style="color:#cfd8dc;">---</span>
+          </div>
+        </div>
+
+        <!-- Center: Search CA -->
+        <div style="display:flex;align-items:center;gap:6px;background:#090d17;padding:6px 12px;border-radius:9px;border:1px solid #1a2338;width:280px;max-width:100%;">
+          <i data-lucide="search" style="width:13px;height:13px;color:#546e7a;flex-shrink:0;"></i>
+          <input id="navTrackCaInput" type="text" placeholder="Track Token CA / Mint..." style="background:none;border:none;outline:none;font-size:11.5px;font-family:'JetBrains Mono',monospace;color:#b0bec5;width:100%;" placeholder="Track CA...">
+          <button onclick="setTrackedTokenFromNav()" style="font-size:9.5px;font-weight:800;color:#00d4ff;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.2);border-radius:5px;padding:2px 7px;cursor:pointer;white-space:nowrap;letter-spacing:0.05em;">TRACK</button>
+        </div>
+
+        <!-- Right: Mode toggle + balance -->
+        <div style="display:flex;align-items:center;gap:10px;">
+          <!-- Simulation / Live toggle -->
+          <div style="display:flex;align-items:center;background:#0d1120;padding:3px;border-radius:8px;border:1px solid #1a2338;">
+            <button id="modeSimBtn" onclick="toggleSimulation(true)"
+              style="padding:3px 10px;font-size:10px;font-weight:800;border-radius:6px;background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.25);cursor:pointer;letter-spacing:0.05em;">
+              SIM
+            </button>
+            <button id="modeLiveBtn" onclick="toggleSimulation(false)"
+              style="padding:3px 10px;font-size:10px;font-weight:800;border-radius:6px;color:#546e7a;border:1px solid transparent;cursor:pointer;letter-spacing:0.05em;background:none;">
+              LIVE
+            </button>
+          </div>
+
+          <!-- Dev balance -->
+          <div style="display:flex;align-items:center;gap:7px;background:#0d1120;padding:5px 11px;border-radius:9px;border:1px solid #1a2338;">
+            <i data-lucide="wallet" style="width:13px;height:13px;color:#fbbf24;"></i>
+            <div>
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:#546e7a;">Dev SOL</div>
+              <div id="headerDevBalance" style="font-size:12px;font-weight:800;color:#cfd8dc;font-family:'JetBrains Mono',monospace;">0.00 SOL</div>
+            </div>
+          </div>
+
+          <!-- Notification bell -->
+          <button style="width:34px;height:34px;border-radius:8px;background:#0d1120;border:1px solid #1a2338;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+            <i data-lucide="bell" style="width:14px;height:14px;color:#78909c;"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Mobile tabs -->
+      <div class="flex md:hidden border-t items-center gap-1 px-3 py-1.5 overflow-x-auto text-xs" style="border-color:#1a2338;background:#080b12;">
+        <button onclick="switchTab('trading')"  style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#00d4ff;background:#111827;border:none;cursor:pointer;">Dashboard</button>
+        <button onclick="switchTab('launchpad')" style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Launch</button>
+        <button onclick="switchTab('vamp')"     style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Vamp</button>
+        <button onclick="switchTab('wallets')"  style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Wallets</button>
+        <button onclick="switchTab('bumper')"   style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Bumper</button>
+      </div>
+    </header>
+
+    <!-- Simulation Banner -->
+    <div id="simBanner" class="sim-banner">
+      <i data-lucide="shield-check" style="width:12px;height:12px;"></i>
+      <span><strong style="color:#00d4ff;">Simulation Sandbox:</strong> Balances &amp; bundles are simulated with real Helius data — no real SOL at risk. Switch to LIVE anytime.</span>
+    </div>
+
+    <!-- ==================== MAIN BODY ==================== -->
+    <main style="flex:1;padding:16px 18px;display:flex;flex-direction:column;gap:14px;max-width:1800px;width:100%;">
+
+      <!-- ===== TAB 1: TRADING DASHBOARD ===== -->
+      <div id="tabContent-trading" class="tab-pane" style="display:flex;flex-direction:column;gap:14px;">
+
+        <!-- ROW 1: HERO CHART (8 cols) + SENTIMENT + TOP MOVERS (4 cols) -->
+        <div style="display:grid;grid-template-columns:1fr 320px;gap:14px;">
+
+          <!-- HERO CANDLESTICK CHART -->
+          <div class="bento-card card-accent-cyan">
+            <div class="bento-header">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#78909c;">Market Overview</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;"><span id="chartSymbolDisplay" style="color:#00d4ff;">TOKEN</span><span style="color:#546e7a;">/SOL</span></span>
+                <span id="chartPriceDisplay" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#00c48c;"></span>
+                <span id="chartChangeDisplay" style="font-size:10px;padding:1px 7px;border-radius:5px;background:rgba(0,196,140,0.12);color:#00c48c;font-weight:800;font-family:monospace;">+0.0%</span>
+              </div>
+              <!-- Timeframe buttons -->
+              <div style="display:flex;align-items:center;gap:2px;">
+                <button onclick="setChartTimeframe('1s')"  id="tfBtn-1s"  class="chart-tf-btn">1s</button>
+                <button onclick="setChartTimeframe('5s')"  id="tfBtn-5s"  class="chart-tf-btn active">5s</button>
+                <button onclick="setChartTimeframe('15s')" id="tfBtn-15s" class="chart-tf-btn">15s</button>
+                <button onclick="setChartTimeframe('30s')" id="tfBtn-30s" class="chart-tf-btn">30s</button>
+                <button onclick="setChartTimeframe('1m')"  id="tfBtn-1m"  class="chart-tf-btn">1m</button>
+                <button onclick="setChartTimeframe('5m')"  id="tfBtn-5m"  class="chart-tf-btn">5m</button>
+              </div>
+            </div>
+            <!-- Canvas area -->
+            <div style="flex:1;position:relative;background:#08091500;min-height:0;">
+              <canvas id="candlestickCanvas" style="width:100%;height:280px;display:block;"></canvas>
+              <!-- Bottom indicators strip -->
+              <div style="position:absolute;bottom:8px;left:12px;display:flex;gap:14px;font-size:10px;font-family:'JetBrains Mono',monospace;color:#546e7a;pointer-events:none;">
+                <span>VOL <strong id="chartVolDisplay" style="color:#b0bec5;">24.5 SOL</strong></span>
+                <span>RSI(14) <strong style="color:#00d4ff;">58.2</strong></span>
+                <span>MA(5) <strong style="color:#fbbf24;">0.000032</strong></span>
+              </div>
+            </div>
+            <!-- Pump link row -->
+            <div style="padding:7px 14px;border-top:1px solid #1a2338;display:flex;align-items:center;justify-content:space-between;background:#0d1120;">
+              <div style="display:flex;align-items:center;gap:14px;font-size:10.5px;font-family:'JetBrains Mono',monospace;">
+                <span style="color:#546e7a;">Target Migration: <strong style="color:#cfd8dc;">85 SOL → Raydium</strong></span>
+                <span style="color:#546e7a;">Active: <a id="deskPumpLink" href="https://pump.fun" target="_blank" style="color:#00d4ff;text-decoration:none;">Pump.fun ↗</a></span>
+              </div>
+              <div style="display:flex;align-items:center;gap:5px;">
+                <button onclick="switchTab('launchpad')" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.25);color:#00d4ff;cursor:pointer;">Launch Token</button>
+                <button onclick="executeManualBuy()" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(0,196,140,0.1);border:1px solid rgba(0,196,140,0.25);color:#00c48c;cursor:pointer;">Buy</button>
+                <button onclick="executeManualSell()" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(240,76,94,0.1);border:1px solid rgba(240,76,94,0.25);color:#f04c5e;cursor:pointer;">Sell</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT COLUMN: SENTIMENT GAUGE + TOP MOVERS -->
+          <div style="display:flex;flex-direction:column;gap:14px;">
+
+            <!-- MARKET SENTIMENT GAUGE -->
+            <div class="bento-card" style="padding:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#78909c;">Market Sentiment</span>
+                <span id="curveSentimentPill" style="font-size:10px;font-weight:800;color:#00c48c;font-family:monospace;">24H</span>
+              </div>
+              <!-- Gauge canvas -->
+              <div style="display:flex;align-items:center;justify-content:center;position:relative;">
+                <canvas id="gaugeCanvas" width="220" height="130" style="width:220px;height:130px;max-width:100%;"></canvas>
+                <div style="position:absolute;bottom:6px;text-align:center;">
+                  <div id="gaugeValueText" style="font-size:28px;font-weight:900;color:#cfd8dc;font-family:'JetBrains Mono',monospace;line-height:1;">75</div>
+                  <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:#78909c;">BULLISH</div>
+                </div>
+              </div>
+              <!-- Breakdown chips -->
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:10px;background:#090d17;border:1px solid #1a2338;border-radius:8px;padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;">
+                <div>
+                  <div style="color:#00c48c;font-weight:800;">▲ 75%</div>
+                  <div style="color:#546e7a;font-size:9px;">BULLISH</div>
+                </div>
+                <div>
+                  <div style="color:#fbbf24;font-weight:800;">~ 15%</div>
+                  <div style="color:#546e7a;font-size:9px;">NEUTRAL</div>
+                </div>
+                <div>
+                  <div style="color:#f04c5e;font-weight:800;">▼ 10%</div>
+                  <div style="color:#546e7a;font-size:9px;">SEEK EXIT</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- TOP MOVERS (like reference image sector bars) -->
+            <div class="bento-card" style="flex:1;">
+              <div class="bento-header">
+                <div class="bento-title"><i data-lucide="flame" style="width:13px;height:13px;color:#f04c5e;"></i> Top Movers</div>
+                <button onclick="loadTrendingVampTokens();renderTopMovers();" style="font-size:9.5px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">↻ Refresh</button>
+              </div>
+              <div id="topMoversPanel" style="padding:10px 12px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:200px;">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ROW 2: BUY CONSOLE + SELL CONSOLE + WALLET MATRIX -->
+        <div style="display:grid;grid-template-columns:240px 240px 1fr;gap:14px;">
+
+          <!-- GREEN MANUAL BUY -->
+          <div class="bento-card card-accent-green" style="padding:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid #1a2338;margin-bottom:10px;">
+              <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:#00c48c;">
+                <i data-lucide="arrow-up-circle" style="width:13px;height:13px;"></i> Manual Buy
+              </div>
+              <span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:rgba(0,196,140,0.12);border:1px solid rgba(0,196,140,0.25);color:#00c48c;font-weight:800;font-family:monospace;">▲ UP</span>
+            </div>
+
+            <!-- Quick presets -->
+            <div style="margin-bottom:10px;">
+              <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#546e7a;margin-bottom:5px;">Quick Size</div>
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:3px;">
+                <button type="button" onclick="setManualBuyAmount(0.05)"  class="btn-quick-buy">0.05</button>
+                <button type="button" onclick="setManualBuyAmount(0.10)"  class="btn-quick-buy">0.10</button>
+                <button type="button" onclick="setManualBuyAmount(0.25)"  class="btn-quick-buy">0.25</button>
+                <button type="button" onclick="setManualBuyAmount(0.50)"  class="btn-quick-buy">0.50</button>
+                <button type="button" onclick="setManualBuyAmount(1.00)"  class="btn-quick-buy">1.00</button>
+              </div>
+            </div>
+
+            <div style="margin-bottom:8px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">SOL Per Wallet</label>
+              <div style="position:relative;">
+                <input id="manualBuySolInput" type="number" step="0.05" min="0.01" value="0.1" class="input-field font-mono" style="color:#00c48c;font-weight:800;padding-right:38px;">
+                <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:#546e7a;font-weight:700;font-family:monospace;">SOL</span>
+              </div>
+            </div>
+
+            <div style="margin-bottom:12px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Target Wallets</label>
+              <select id="manualBuyTargetSelect" class="input-field" style="font-size:11.5px;padding:7px 10px;">
+                <option value="all">All Sub-Wallets</option>
+                <option value="dev">Master Dev Only</option>
+                <option value="selected">Selected Only</option>
+              </select>
+            </div>
+
+            <button id="btnManualBuy" onclick="executeManualBuy()" class="btn-buy-green w-full" style="padding:11px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
+              <i data-lucide="arrow-up" style="width:14px;height:14px;"></i>
+              <span>▲ BUY TOKENS</span>
+            </button>
+          </div>
+
+          <!-- RED MANUAL SELL -->
+          <div class="bento-card card-accent-red" style="padding:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid #1a2338;margin-bottom:10px;">
+              <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:#f04c5e;">
+                <i data-lucide="arrow-down-circle" style="width:13px;height:13px;"></i> Manual Sell
+              </div>
+              <span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:rgba(240,76,94,0.12);border:1px solid rgba(240,76,94,0.25);color:#f04c5e;font-weight:800;font-family:monospace;">▼ DOWN</span>
+            </div>
+
+            <!-- Quick pct presets -->
+            <div style="margin-bottom:10px;">
+              <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#546e7a;margin-bottom:5px;">Quick %</div>
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:3px;">
+                <button type="button" onclick="setManualSellPct(10)"  class="btn-quick-sell">10%</button>
+                <button type="button" onclick="setManualSellPct(25)"  class="btn-quick-sell">25%</button>
+                <button type="button" onclick="setManualSellPct(50)"  class="btn-quick-sell">50%</button>
+                <button type="button" onclick="setManualSellPct(75)"  class="btn-quick-sell">75%</button>
+                <button type="button" onclick="setManualSellPct(100)" class="btn-quick-sell">100</button>
+              </div>
+            </div>
+
+            <div style="margin-bottom:8px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Sell Percentage</label>
+              <div style="position:relative;">
+                <input id="manualSellPctInput" type="number" step="5" min="1" max="100" value="50" class="input-field font-mono" style="color:#f04c5e;font-weight:800;padding-right:28px;">
+                <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:#546e7a;font-weight:700;">%</span>
+              </div>
+            </div>
+
+            <div style="margin-bottom:12px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Target Wallets</label>
+              <select id="manualSellTargetSelect" class="input-field" style="font-size:11.5px;padding:7px 10px;">
+                <option value="all">All Sub-Wallets</option>
+                <option value="dev">Master Dev Only</option>
+                <option value="selected">Selected Only</option>
+              </select>
+            </div>
+
+            <button id="btnManualSell" onclick="executeManualSell()" class="btn-sell-red w-full" style="padding:11px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
+              <i data-lucide="arrow-down" style="width:14px;height:14px;"></i>
+              <span>▼ SELL TOKENS</span>
+            </button>
+
+            <!-- Cascade & Panic -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;">
+              <button onclick="executeCascadeExit()" class="btn-secondary" style="padding:6px;font-size:10px;font-weight:700;color:#fbbf24;display:flex;align-items:center;justify-content:center;gap:4px;">
+                <i data-lucide="waves" style="width:11px;height:11px;"></i> Cascade
+              </button>
+              <button onclick="executePanicDumpAll()" class="btn-secondary" style="padding:6px;font-size:10px;font-weight:700;color:#f04c5e;display:flex;align-items:center;justify-content:center;gap:4px;">
+                <i data-lucide="alert-octagon" style="width:11px;height:11px;"></i> Panic Dump
+              </button>
+            </div>
+          </div>
+
+          <!-- WALLET PNL MATRIX -->
+          <div class="bento-card">
+            <div class="bento-header">
+              <div class="bento-title">
+                <i data-lucide="table" style="width:13px;height:13px;color:#6c63ff;"></i>
+                Multi-Wallet Position &amp; PnL Matrix
+              </div>
+              <div style="display:flex;align-items:center;gap:5px;">
+                <button onclick="selectAllTableRows(true)"  class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">Select All</button>
+                <button onclick="selectAllTableRows(false)" class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">Clear</button>
+                <button onclick="loadLiveStats()" class="btn-secondary" style="font-size:9.5px;padding:2px 7px;display:flex;align-items:center;gap:3px;">
+                  <i data-lucide="refresh-cw" style="width:10px;height:10px;"></i> Sync
+                </button>
+              </div>
+            </div>
+            <div style="overflow-x:auto;padding:4px 6px;">
+              <table style="width:100%;font-size:11px;font-family:'JetBrains Mono',monospace;border-collapse:collapse;">
+                <thead>
+                  <tr style="border-bottom:1px solid #1a2338;font-size:10px;color:#546e7a;">
+                    <th style="padding:7px 6px;text-align:left;font-weight:600;"><input type="checkbox" id="checkAllRows" onchange="toggleSelectAllRows(this.checked)" style="accent-color:#00d4ff;"></th>
+                    <th style="padding:7px 6px;text-align:left;font-weight:600;">Wallet</th>
+                    <th style="padding:7px 6px;text-align:right;font-weight:600;">SOL Bal</th>
+                    <th style="padding:7px 6px;text-align:right;font-weight:600;">Tokens</th>
+                    <th style="padding:7px 6px;text-align:right;font-weight:600;">Cost</th>
+                    <th style="padding:7px 6px;text-align:right;font-weight:600;">Value</th>
+                    <th style="padding:7px 6px;text-align:center;font-weight:600;">PnL (SOL / %)</th>
+                    <th style="padding:7px 6px;text-align:right;font-weight:600;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="tradingWalletsTableBody">
+                  <!-- JS populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ROW 3: PORTFOLIO DONUT + PNL OVERVIEW + RECENT TRANSACTIONS + TERMINAL -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;">
+
+          <!-- PORTFOLIO DONUT -->
+          <div class="bento-card" style="padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:9px;border-bottom:1px solid #1a2338;margin-bottom:10px;">
+              <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#78909c;">Portfolio</span>
+              <span style="font-size:9.5px;font-weight:700;color:#00d4ff;font-family:monospace;">SUPPLY ALLOC</span>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-around;margin-bottom:10px;">
+              <canvas id="donutCanvas" width="120" height="120" style="width:110px;height:110px;"></canvas>
+              <div style="display:flex;flex-direction:column;gap:7px;font-family:'JetBrains Mono',monospace;font-size:10.5px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="width:9px;height:9px;border-radius:50%;background:#00d4ff;display:inline-block;"></span>
+                  <span style="color:#b0bec5;">Dev: <strong id="donutDevPct">3.2%</strong></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="width:9px;height:9px;border-radius:50%;background:#6c63ff;display:inline-block;"></span>
+                  <span style="color:#b0bec5;">Subs: <strong id="donutSubPct">7.1%</strong></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="width:9px;height:9px;border-radius:50%;background:#00c48c;display:inline-block;"></span>
+                  <span style="color:#b0bec5;">Pool: <strong id="donutCurvePct">89.7%</strong></span>
+                </div>
+              </div>
+            </div>
+            <div style="border-top:1px solid #1a2338;padding-top:7px;display:flex;justify-content:space-between;font-size:9.5px;font-family:monospace;color:#78909c;">
+              <span>Supply: 1B</span>
+              <span style="color:#00c48c;font-weight:700;">Non-Custodial</span>
+            </div>
+          </div>
+
+          <!-- PNL OVERVIEW + SPARKLINE -->
+          <div class="bento-card" style="padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:9px;border-bottom:1px solid #1a2338;margin-bottom:10px;">
+              <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#78909c;">Position PnL</span>
+              <span id="deskPnlStatusBadge" class="badge-pnl-green">▲ IN PROFIT</span>
+            </div>
+            <div id="deskPnlDisplay" style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:900;color:#00c48c;line-height:1.1;margin-bottom:4px;">+0.00 SOL</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#78909c;display:flex;gap:12px;margin-bottom:12px;">
+              <span>Cost: <strong id="deskInvestedDisplay" style="color:#cfd8dc;">0.00 SOL</strong></span>
+              <span>Value: <strong id="deskSolValueDisplay" style="color:#00d4ff;">0.00 SOL</strong></span>
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:9.5px;font-family:monospace;color:#78909c;margin-bottom:4px;">
+                <span>Curve Trajectory</span>
+                <span id="deskMcapDisplay" style="font-weight:700;color:#cfd8dc;">$0.00</span>
+              </div>
+              <canvas id="sparklineCanvas" width="260" height="40" style="width:100%;height:40px;border-radius:6px;background:#090d17;"></canvas>
+            </div>
+          </div>
+
+          <!-- RECENT TRANSACTIONS TAPE -->
+          <div class="bento-card">
+            <div class="bento-header">
+              <div class="bento-title"><i data-lucide="activity" style="width:12px;height:12px;color:#00d4ff;"></i> Recent Transactions</div>
+              <button style="font-size:9.5px;color:#78909c;background:none;border:none;cursor:pointer;">View All</button>
+            </div>
+            <div id="txTapePanel" style="padding:4px 12px;overflow-y:auto;max-height:160px;">
+              <div style="padding:5px 0;border-bottom:1px solid rgba(26,35,56,0.5);font-size:10.5px;font-family:monospace;display:grid;grid-template-columns:1fr 55px 75px 50px;gap:4px;color:#546e7a;">
+                <span>PAIR</span><span style="text-align:center;">TYPE</span><span style="text-align:right;">PRICE</span><span style="text-align:right;">TIME</span>
+              </div>
+              <!-- JS populated -->
+            </div>
+          </div>
+
+          <!-- EXECUTION TERMINAL -->
+          <div class="bento-card">
+            <div class="bento-header">
+              <div class="bento-title"><i data-lucide="terminal" style="width:12px;height:12px;color:#00d4ff;"></i> Execution Log</div>
+              <button onclick="clearTerminalLogs()" style="font-size:9.5px;color:#78909c;background:none;border:none;cursor:pointer;">Clear</button>
+            </div>
+            <div id="terminalLogs" style="background:#090d17;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#78909c;height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;">
+              <div style="color:#546e7a;">[System] Svarog Institutional Desk Ready.</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ===== TAB 2: LAUNCHPAD ===== -->
+      <div id="tabContent-launchpad" class="tab-pane hidden" style="display:none;flex-direction:column;gap:14px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+          <!-- Token Metadata -->
+          <div class="bento-card" style="padding:18px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid #1a2338;margin-bottom:14px;">
+              <h2 style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:7px;">
+                <i data-lucide="file-badge" style="width:14px;height:14px;color:#00d4ff;"></i>Token Metadata
+              </h2>
+              <span style="font-size:9.5px;padding:2px 8px;border-radius:5px;background:#111827;color:#78909c;font-family:monospace;">Pump.fun Program</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+              <div>
+                <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Token Name *</label>
+                <input id="tokenName" type="text" placeholder="e.g. Svarog Doge" class="input-field" value="Solana Vamp Shark">
+              </div>
+              <div>
+                <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Symbol / Ticker *</label>
+                <input id="tokenSymbol" type="text" placeholder="SHARK" class="input-field font-mono" style="text-transform:uppercase;font-weight:800;" value="SHARK">
+              </div>
+            </div>
+            <div style="margin-bottom:10px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Description</label>
+              <textarea id="tokenDescription" rows="3" class="input-field" style="resize:none;">The alpha memecoin hunting liquidity across Solana with atomic Jito bundler speed.</textarea>
+            </div>
+            <!-- Logo Upload -->
+            <div style="margin-bottom:10px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Token Logo</label>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div id="logoPreviewContainer" style="width:52px;height:52px;border-radius:9px;border:1px dashed #2d4068;background:#090d17;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">
+                  <img id="logoPreview" src="" style="width:100%;height:100%;object-fit:cover;display:none;">
+                  <i id="logoIconPlaceholder" data-lucide="image" style="width:18px;height:18px;color:#2d4068;"></i>
+                </div>
+                <div style="flex:1;">
+                  <input id="logoFile" type="file" accept="image/*" style="display:none;" onchange="handleLogoSelect(event)">
+                  <button type="button" onclick="document.getElementById('logoFile').click()" class="btn-secondary" style="width:100%;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
+                    <i data-lucide="upload" style="width:12px;height:12px;"></i> Choose Image
+                  </button>
+                </div>
+              </div>
+            </div>
+            <!-- Socials -->
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;padding-top:10px;border-top:1px solid #1a2338;">
+              <input id="tokenTwitter"  type="text" placeholder="𝕏 Twitter"  class="input-field" style="font-size:11.5px;">
+              <input id="tokenTelegram" type="text" placeholder="✈ Telegram"  class="input-field" style="font-size:11.5px;">
+              <input id="tokenWebsite"  type="text" placeholder="🌐 Website"  class="input-field" style="font-size:11.5px;">
+            </div>
+          </div>
+
+          <!-- Jito Bundler Matrix -->
+          <div class="bento-card" style="padding:18px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid #1a2338;margin-bottom:14px;">
+              <h2 style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:7px;">
+                <i data-lucide="layers" style="width:14px;height:14px;color:#6c63ff;"></i>Atomic Jito Bundler
+              </h2>
+              <span style="font-size:9.5px;padding:2px 8px;border-radius:5px;background:#1a1040;color:#6c63ff;border:1px solid rgba(108,99,255,0.25);font-family:monospace;font-weight:700;">Slot 0 Anti-Snipe</span>
+            </div>
+
+            <div style="margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;">Master Dev Buy (SOL)</label>
+                <span id="devBuyTokensEst" style="font-size:10.5px;font-family:monospace;color:#00d4ff;">~32,258,000 tokens (3.2%)</span>
+              </div>
+              <input id="devSolBuy" type="number" step="0.05" min="0" value="0.5" oninput="calculateBundleMetrics()" class="input-field font-mono" style="font-size:15px;font-weight:800;">
+            </div>
+
+            <div style="margin-bottom:12px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <span style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;">Sub-Wallets Bundle</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span id="subWalletCountBadge" style="font-size:9.5px;font-family:monospace;font-weight:800;color:#cfd8dc;padding:1px 7px;background:#111827;border-radius:4px;">6 Wallets</span>
+                  <button type="button" onclick="quickFillSubBuys(0.2)" style="font-size:9.5px;color:#00d4ff;background:none;border:none;cursor:pointer;">All 0.2</button>
+                  <button type="button" onclick="randomizeSubBuys()" style="font-size:9.5px;color:#6c63ff;background:none;border:none;cursor:pointer;">Jitter</button>
+                </div>
+              </div>
+              <div id="subWalletBuysContainer" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:120px;overflow-y:auto;"></div>
+            </div>
+
+            <!-- Jito Tips -->
+            <div style="margin-bottom:12px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:7px;">Jito Miner Tip</label>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;">
+                <button type="button" onclick="setJitoTip(0.002)" id="tipBtn-0.002" class="tip-btn" style="padding:8px;border:1px solid #1a2338;background:#090d17;border-radius:8px;text-align:center;cursor:pointer;">
+                  <div style="font-size:9.5px;color:#78909c;margin-bottom:2px;">Fast</div>
+                  <div style="font-family:monospace;font-weight:800;font-size:11.5px;color:#cfd8dc;">0.002 SOL</div>
+                </button>
+                <button type="button" onclick="setJitoTip(0.005)" id="tipBtn-0.005" class="tip-btn active" style="padding:8px;border:1px solid #00d4ff;background:rgba(0,212,255,0.08);border-radius:8px;text-align:center;cursor:pointer;">
+                  <div style="font-size:9.5px;color:#00d4ff;font-weight:700;margin-bottom:2px;">Turbo ✓</div>
+                  <div style="font-family:monospace;font-weight:800;font-size:11.5px;color:#a0e8ff;">0.005 SOL</div>
+                </button>
+                <button type="button" onclick="setJitoTip(0.01)" id="tipBtn-0.01" class="tip-btn" style="padding:8px;border:1px solid #1a2338;background:#090d17;border-radius:8px;text-align:center;cursor:pointer;">
+                  <div style="font-size:9.5px;color:#78909c;margin-bottom:2px;">Ultra</div>
+                  <div style="font-family:monospace;font-weight:800;font-size:11.5px;color:#cfd8dc;">0.010 SOL</div>
+                </button>
+              </div>
+            </div>
+
+            <!-- Summary -->
+            <div style="background:#090d17;border:1px solid #1a2338;border-radius:9px;padding:11px 13px;display:flex;flex-direction:column;gap:6px;font-family:'JetBrains Mono',monospace;font-size:11px;margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;color:#78909c;"><span>Total SOL:</span><strong id="metricTotalSol" style="color:#cfd8dc;">1.70 SOL</strong></div>
+              <div style="display:flex;justify-content:space-between;color:#78909c;"><span>Tokens Sniped:</span><strong id="metricTotalTokens" style="color:#00d4ff;">~103,450,000</strong></div>
+              <div style="display:flex;justify-content:space-between;color:#78909c;"><span>Supply Secured:</span><strong id="metricSupplyPct" style="color:#00c48c;">10.35% (Slot 0)</strong></div>
+            </div>
+
+            <!-- Actions -->
+            <div style="display:flex;flex-direction:column;gap:7px;">
+              <button id="btnPreflight" onclick="runPreflightCheck()" class="btn-secondary" style="width:100%;padding:9px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
+                <i data-lucide="check-circle" style="width:13px;height:13px;"></i> Pre-Flight Validation
+              </button>
+              <button id="btnLaunchBundle" onclick="executeLaunchBundle()" class="btn-primary" style="width:100%;padding:12px;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:7px;letter-spacing:0.04em;">
+                <i data-lucide="flame" style="width:15px;height:15px;"></i>
+                LAUNCH ATOMIC JITO BUNDLE (SLOT 0)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== TAB 3: VAMP CLONER ===== -->
+      <div id="tabContent-vamp" class="tab-pane hidden" style="display:none;flex-direction:column;gap:14px;">
+        <div class="bento-card" style="padding:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid #1a2338;margin-bottom:12px;">
+            <div>
+              <h2 style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:7px;margin:0 0 3px;">
+                <i data-lucide="skull" style="width:14px;height:14px;color:#e879f9;"></i>Vampire Narrative Cloner
+              </h2>
+              <p style="font-size:11px;color:#78909c;margin:0;">Siphon attention from trending Solana tokens by cloning &amp; revamping them in 1-click.</p>
+            </div>
+            <button onclick="loadTrendingVampTokens()" class="btn-secondary" style="font-size:11px;padding:7px 12px;display:flex;align-items:center;gap:5px;">
+              <i data-lucide="refresh-cw" style="width:11px;height:11px;"></i> Refresh Feed
+            </button>
+          </div>
+          <div style="display:flex;gap:7px;">
+            <input id="vampCaInput" type="text" placeholder="Paste Solana Token Mint Address (CA) to inspect &amp; vamp..." class="input-field font-mono" style="flex:1;font-size:11.5px;">
+            <button onclick="inspectCustomVampCa()" class="btn-primary" style="font-size:11.5px;padding:7px 14px;display:flex;align-items:center;gap:5px;white-space:nowrap;">
+              <i data-lucide="search" style="width:12px;height:12px;"></i> Inspect CA
+            </button>
+          </div>
+        </div>
+        <div id="vampTokensGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;"></div>
+      </div>
+
+      <!-- ===== TAB 4: WALLETS ===== -->
+      <div id="tabContent-wallets" class="tab-pane hidden" style="display:none;flex-direction:column;gap:14px;">
+        <div style="display:grid;grid-template-columns:380px 1fr;gap:14px;">
+
+          <!-- Master Wallet Card -->
+          <div class="bento-card" style="padding:16px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid #1a2338;margin-bottom:12px;">
+              <h2 style="font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:7px;margin:0;">
+                <i data-lucide="key" style="width:14px;height:14px;color:#fbbf24;"></i>Master Dev Wallet
+              </h2>
+              <span style="font-size:9.5px;padding:1px 7px;background:#111827;color:#fbbf24;border-radius:4px;font-family:monospace;font-weight:700;">ACTIVE</span>
+            </div>
+            <div style="margin-bottom:9px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Public Address</label>
+              <div style="display:flex;align-items:center;gap:5px;">
+                <input id="masterAddressInput" type="text" readonly class="input-field font-mono" style="font-size:10.5px;background:#090d17;">
+                <button onclick="copyMasterAddress()" class="btn-secondary" style="padding:8px;flex-shrink:0;" title="Copy">
+                  <i data-lucide="copy" style="width:12px;height:12px;"></i>
+                </button>
+              </div>
+            </div>
+            <div style="margin-bottom:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;">Private Key (Base58)</label>
+                <button type="button" onclick="toggleRevealMasterKey()" id="btnRevealMasterKey" style="font-size:9.5px;color:#00d4ff;background:none;border:none;cursor:pointer;">Reveal</button>
+              </div>
+              <input id="masterKeyInput" type="password" readonly class="input-field font-mono" style="font-size:10.5px;background:#090d17;">
+            </div>
+            <div style="display:flex;gap:7px;padding-top:10px;border-top:1px solid #1a2338;margin-bottom:14px;">
+              <button onclick="generateNewMasterWallet()" class="btn-secondary" style="flex:1;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
+                <i data-lucide="rotate-ccw" style="width:11px;height:11px;"></i> Generate New
+              </button>
+              <button onclick="promptImportMasterKey()" class="btn-secondary" style="flex:1;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
+                <i data-lucide="log-in" style="width:11px;height:11px;"></i> Import Key
+              </button>
+            </div>
+            <div>
+              <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.07em;color:#cfd8dc;display:block;margin-bottom:7px;">1-Click Disperse SOL</span>
+              <div style="display:flex;gap:7px;margin-bottom:7px;">
+                <input id="disperseTotalSol" type="number" step="0.1" min="0.1" value="1.2" class="input-field font-mono" style="font-size:11.5px;">
+                <button onclick="executeDisperseSol()" class="btn-primary" style="padding:8px 14px;font-size:11.5px;white-space:nowrap;">Disperse</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:7px;margin-bottom:7px;">
+                <input id="disperseRandomize" type="checkbox" checked style="accent-color:#00d4ff;width:14px;height:14px;">
+                <label for="disperseRandomize" style="font-size:10.5px;color:#78909c;">Randomize amounts ±20% (Anti-Tracker)</label>
+              </div>
+              <button onclick="executeDrainSol()" class="btn-secondary" style="width:100%;padding:8px;font-size:11px;color:#f04c5e;display:flex;align-items:center;justify-content:center;gap:5px;">
+                <i data-lucide="download" style="width:12px;height:12px;"></i> Drain All Sub-Wallets to Master
+              </button>
+            </div>
+          </div>
+
+          <!-- Sub-Wallets Table -->
+          <div class="bento-card">
+            <div class="bento-header">
+              <div class="bento-title"><i data-lucide="users" style="width:13px;height:13px;color:#6c63ff;"></i> Sub-Wallets Matrix</div>
+              <div style="display:flex;align-items:center;gap:7px;">
+                <select id="subWalletCountSelect" onchange="regenerateSubWallets()" class="input-field" style="font-size:11px;padding:4px 24px 4px 7px;width:auto;">
+                  <option value="4">4 Wallets</option>
+                  <option value="6" selected>6 Wallets</option>
+                  <option value="8">8 Wallets</option>
+                  <option value="12">12 Wallets</option>
+                  <option value="16">16 Wallets</option>
+                </select>
+                <button onclick="regenerateSubWallets()" class="btn-secondary" style="padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:4px;">
+                  <i data-lucide="rotate-ccw" style="width:11px;height:11px;"></i> Regen
+                </button>
+                <button onclick="exportSubWallets()" class="btn-secondary" style="padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:4px;">
+                  <i data-lucide="download" style="width:11px;height:11px;"></i> Export
+                </button>
+              </div>
+            </div>
+            <div style="overflow-x:auto;padding:4px 6px;">
+              <table style="width:100%;font-size:10.5px;font-family:'JetBrains Mono',monospace;border-collapse:collapse;">
+                <thead>
+                  <tr style="border-bottom:1px solid #1a2338;font-size:9.5px;color:#546e7a;">
+                    <th style="padding:7px 6px;text-align:left;">#</th>
+                    <th style="padding:7px 6px;text-align:left;">Address</th>
+                    <th style="padding:7px 6px;text-align:right;">SOL Balance</th>
+                    <th style="padding:7px 6px;text-align:right;">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="subWalletsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ===== TAB 5: VOLUME BUMPER ===== -->
+      <div id="tabContent-bumper" class="tab-pane hidden" style="display:none;flex-direction:column;gap:14px;">
+        <div class="bento-card" style="padding:20px;max-width:520px;margin:0 auto;width:100%;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid #1a2338;margin-bottom:14px;">
+            <h2 style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:7px;margin:0;">
+              <i data-lucide="trending-up" style="width:14px;height:14px;color:#00c48c;"></i>Volume Bump Bot
+            </h2>
+            <span id="bumperActiveBadge" style="font-size:9.5px;padding:1px 8px;background:#111827;color:#78909c;border-radius:4px;font-family:monospace;font-weight:700;">STOPPED</span>
+          </div>
+          <p style="font-size:11.5px;color:#78909c;margin-bottom:14px;">Micro-buys from rotating sub-wallets to keep the token bumping on Pump.fun's front page feed.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+            <div>
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Buy Size (SOL)</label>
+              <input id="bumpAmountInput" type="number" step="0.005" min="0.005" value="0.01" class="input-field font-mono" style="font-size:12px;">
+            </div>
+            <div>
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Interval (Seconds)</label>
+              <input id="bumpIntervalInput" type="number" step="5" min="10" value="20" class="input-field font-mono" style="font-size:12px;">
+            </div>
+          </div>
+          <div style="display:flex;gap:9px;">
+            <button id="btnStartBumper" onclick="toggleVolumeBumper(true)" class="btn-primary" style="flex:1;padding:11px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
+              <i data-lucide="play" style="width:13px;height:13px;"></i> Start Bumping
+            </button>
+            <button id="btnStopBumper" onclick="toggleVolumeBumper(false)" class="btn-secondary" style="flex:1;padding:11px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
+              <i data-lucide="square" style="width:13px;height:13px;"></i> Stop Bumper
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toastContainer" style="position:fixed;bottom:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:7px;pointer-events:none;"></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
