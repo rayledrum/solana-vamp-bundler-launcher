@@ -13,10 +13,14 @@ const state = {
   ws: null,
 
   // Charting state (Ultra-fast timeframes down to 1s / 5s)
+  // Candles, markers, and the open candle live in chartBook, keyed by mint.
   chartTimeframe: '5s', // '1s', '5s', '15s', '30s', '1m', '5m'
+  chartMint: null,
+  chartEpoch: 0,
   candles: [],
   currentCandle: null,
   lastPrice: 0.000034,
+  tradeMarkers: [],
   curveProgressPct: 0,
   hoverCandle: null
 };
@@ -71,12 +75,18 @@ function handleWsMessage(msg) {
       document.getElementById('slotDisplay').innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
       const sbSlot = document.getElementById('sidebarSlotBadge');
       if (sbSlot) sbSlot.innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
-      // In simulation mode, add small organic tick to chart
+      // In simulation mode, add small organic tick to the coin on screen.
+      // Tag it with that mint so it cannot land on a coin selected afterwards.
       if (state.simulationMode) {
+        const mint = state.chartMint;
         const jitter = (Math.random() - 0.48) * 0.0000005;
-        const newPrice = Math.max(0.000005, state.lastPrice + jitter);
-        pushChartTick(newPrice, Math.random() * 0.1);
+        const newPrice = Math.max(0.000005, priceBaseFor(mint) + jitter);
+        pushChartTick(newPrice, Math.random() * 0.1, mint ? { mint } : {});
       }
+      break;
+
+    case 'TOKEN_TRACKED':
+      if (msg.payload && msg.payload.mint) updateActiveTokenUi(msg.payload.mint);
       break;
 
     case 'LAUNCH_STARTED':
@@ -87,13 +97,12 @@ function handleWsMessage(msg) {
     case 'LAUNCH_SUCCESS':
       logTerminal(`✅ [Bundle Landed] Mint: ${msg.payload.mint} | Slot: ${msg.payload.slot} | Jito Tip: ${msg.payload.jitoTipSol} SOL`);
       showToast(`Landed! Mint: ${msg.payload.mint.slice(0, 8)}...`, 'success');
-      state.activeToken = msg.payload.mint;
       updateActiveTokenUi(msg.payload.mint);
       loadSubWallets();
       loadLiveStats();
       switchTab('trading');
-      // Surge price candle on launch
-      pushChartTick(state.lastPrice * 1.35, 1.7);
+      // Surge price candle on the launched mint only
+      applyTradeToChart(msg.payload.mint, 'buy', 1.7, (base) => base * 1.35);
       break;
 
     case 'LAUNCH_FAILED':
@@ -104,8 +113,12 @@ function handleWsMessage(msg) {
     case 'BUY_EXECUTED':
       logTerminal(`🟢 [Manual Buy] Bought tokens for ${msg.payload.totalSpentSol} SOL across ${msg.payload.resultsCount} wallets`);
       showToast(`Bought tokens (+${msg.payload.totalSpentSol} SOL)`, 'success');
-      const buyPrice = state.lastPrice * (1 + (msg.payload.totalSpentSol * 0.05));
-      pushChartTick(buyPrice, msg.payload.totalSpentSol);
+      applyTradeToChart(
+        msg.payload.mint,
+        'buy',
+        msg.payload.totalSpentSol,
+        (base) => base * (1 + (msg.payload.totalSpentSol * 0.05))
+      );
       loadLiveStats();
       loadMasterWallet();
       loadSubWallets();
@@ -114,8 +127,12 @@ function handleWsMessage(msg) {
     case 'SELL_EXECUTED':
       logTerminal(`🔴 [Manual Sell] Sold ${msg.payload.pct}% | Recv: +${msg.payload.totalReceivedSol} SOL`);
       showToast(`Sold ${msg.payload.pct}% across bundle (+${msg.payload.totalReceivedSol} SOL)`, 'warning');
-      const sellPrice = state.lastPrice * (1 - (msg.payload.pct * 0.002));
-      pushChartTick(sellPrice, msg.payload.totalReceivedSol);
+      applyTradeToChart(
+        msg.payload.mint,
+        'sell',
+        msg.payload.totalReceivedSol,
+        (base) => base * (1 - (msg.payload.pct * 0.002))
+      );
       loadLiveStats();
       loadMasterWallet();
       loadSubWallets();
@@ -123,7 +140,7 @@ function handleWsMessage(msg) {
 
     case 'CASCADE_STEP':
       logTerminal(`🌊 [Cascade] Step ${msg.payload.step}/${msg.payload.total} executed for ${msg.payload.address.slice(0, 6)}...`);
-      pushChartTick(state.lastPrice * 0.985, 0.2);
+      applyTradeToChart(msg.payload.mint, 'sell', 0.2, (base) => base * 0.985);
       break;
 
     case 'CASCADE_COMPLETED':
@@ -147,21 +164,58 @@ function handleWsMessage(msg) {
 
     case 'BUMP_TICK':
       logTerminal(`⚡ [Bump Bot] Micro trade on ${msg.payload.wallet} (${msg.payload.solAmount} SOL)`);
-      pushChartTick(state.lastPrice * (1 + (Math.random() * 0.02 - 0.01)), msg.payload.solAmount);
+      applyTradeToChart(
+        msg.payload.mint,
+        'buy',
+        msg.payload.solAmount,
+        (base) => base * (1 + (Math.random() * 0.02 - 0.01))
+      );
       break;
   }
 }
 
 // ==================== ULTRA-FAST CANDLESTICK CHART (DOWN TO 1s / 5s) ====================
 
-const TIMEFRAME_MS = {
-  '1s': 1000,
-  '5s': 5000,
-  '15s': 15000,
-  '30s': 30000,
-  '1m': 60000,
-  '5m': 300000
-};
+const TIMEFRAME_MS = ChartBook.TIMEFRAME_MS;
+const chartBook = ChartBook.createBook();
+
+function applyChartView(opts = {}) {
+  const view = chartBook.view();
+  state.candles = view.candles;
+  state.currentCandle = view.currentCandle;
+  state.lastPrice = view.lastPrice || 0;
+  state.tradeMarkers = view.markers || [];
+  state.chartMint = view.mint;
+  state.chartEpoch = view.epoch;
+  if (!opts.keepHover) state.hoverCandle = null;
+
+  const sym = document.getElementById('chartSymbolDisplay');
+  if (sym) sym.textContent = view.mint ? view.mint.slice(0, 4).toUpperCase() : 'TOKEN';
+}
+
+function switchChartToMint(mint) {
+  if (!mint || mint === chartBook.getActiveMint()) return;
+  chartBook.activate(mint);
+  applyChartView({ keepHover: false });
+  updateChartHeaders();
+  renderCandlestickChart();
+  renderSparkline();
+}
+
+function priceBaseFor(mint) {
+  const series = mint ? chartBook.peek(mint) : null;
+  if (series && series.lastPrice > 0) return series.lastPrice;
+  if (!mint && state.lastPrice > 0) return state.lastPrice;
+  return ChartBook.BASE_PRICE;
+}
+
+// Trades without a mint are dropped. Trades for another mint are stored on
+// that mint's series and are not drawn on the coin currently on screen.
+function applyTradeToChart(mint, side, volume, priceFromBase) {
+  if (!mint || typeof priceFromBase !== 'function') return;
+  const price = priceFromBase(priceBaseFor(mint));
+  pushChartTick(price, volume || 0, { mint, side });
+}
 
 function initChart() {
   generateInitialCandles();
@@ -196,6 +250,7 @@ function initChart() {
 function setChartTimeframe(tf) {
   if (!TIMEFRAME_MS[tf]) return;
   state.chartTimeframe = tf;
+  chartBook.setTimeframe(tf);
   document.querySelectorAll('.chart-tf-btn').forEach(btn => {
     btn.classList.remove('active', 'text-cyan-400', 'bg-[#1e2a42]');
     btn.classList.add('text-slate-400');
@@ -207,17 +262,26 @@ function setChartTimeframe(tf) {
     activeBtn.classList.remove('text-slate-400');
   }
 
-  generateInitialCandles();
-  renderCandlestickChart();
+  if (chartBook.getActiveMint()) {
+    applyChartView({ keepHover: false });
+    updateChartHeaders();
+    renderCandlestickChart();
+    renderSparkline();
+  } else {
+    generateInitialCandles();
+    renderCandlestickChart();
+    renderSparkline();
+  }
   showToast(`Chart timeframe set to ${tf}`, 'info');
 }
 
 function generateInitialCandles() {
+  if (chartBook.getActiveMint()) return;
   const tfMs = TIMEFRAME_MS[state.chartTimeframe] || 5000;
   const count = 40;
   const now = Date.now();
   let basePrice = 0.000030;
-  state.candles = [];
+  const candles = [];
 
   for (let i = count; i >= 0; i--) {
     const time = now - (i * tfMs);
@@ -228,38 +292,20 @@ function generateInitialCandles() {
     const low = Math.min(open, close) - (Math.random() * 0.0000015);
     const volume = Math.random() * 0.8 + 0.1;
 
-    state.candles.push({ time, open, high, low, close, volume });
+    candles.push({ time, open, high, low, close, volume });
     basePrice = close;
   }
 
-  state.lastPrice = basePrice;
-  state.currentCandle = state.candles[state.candles.length - 1];
+  chartBook.loadDemo(candles, basePrice);
+  applyChartView({ keepHover: false });
   updateChartHeaders();
 }
 
-function pushChartTick(price, volume = 0.1) {
-  state.lastPrice = price;
-  const tfMs = TIMEFRAME_MS[state.chartTimeframe] || 5000;
-  const now = Date.now();
-
-  if (!state.currentCandle || now - state.currentCandle.time >= tfMs) {
-    state.currentCandle = {
-      time: now,
-      open: price,
-      high: price,
-      low: price,
-      close: price,
-      volume: volume
-    };
-    state.candles.push(state.currentCandle);
-    if (state.candles.length > 60) state.candles.shift();
-  } else {
-    state.currentCandle.high = Math.max(state.currentCandle.high, price);
-    state.currentCandle.low = Math.min(state.currentCandle.low, price);
-    state.currentCandle.close = price;
-    state.currentCandle.volume += volume;
-  }
-
+function pushChartTick(price, volume = 0.1, meta = {}) {
+  if (!Number.isFinite(price) || price <= 0) return;
+  const result = chartBook.pushTick(price, volume, meta);
+  if (!result.visible) return;
+  applyChartView({ keepHover: true });
   updateChartHeaders();
   renderCandlestickChart();
   renderSparkline();
@@ -268,9 +314,11 @@ function pushChartTick(price, volume = 0.1) {
 function updateChartHeaders() {
   const pDisplay = document.getElementById('chartPriceDisplay');
   const cDisplay = document.getElementById('chartChangeDisplay');
-  if (pDisplay) pDisplay.innerText = `${state.lastPrice.toFixed(6)} SOL`;
+  if (pDisplay) {
+    pDisplay.innerText = state.lastPrice > 0 ? `${state.lastPrice.toFixed(6)} SOL` : '—';
+  }
 
-  if (state.candles.length > 1) {
+  if (state.candles.length > 1 && state.candles[0].open) {
     const first = state.candles[0].open;
     const changePct = ((state.lastPrice - first) / first) * 100;
     const prefix = changePct >= 0 ? '+' : '';
@@ -280,9 +328,12 @@ function updateChartHeaders() {
         ? 'text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 font-mono font-bold'
         : 'text-[10px] px-1.5 py-0.2 rounded bg-rose-950 text-rose-300 font-mono font-bold';
     }
+  } else if (cDisplay) {
+    cDisplay.innerText = '+0.0%';
+    cDisplay.className = 'text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 font-mono font-bold';
   }
 
-  const vol = state.candles.reduce((acc, c) => acc + c.volume, 0);
+  const vol = state.candles.reduce((acc, c) => acc + (c.volume || 0), 0);
   const volEl = document.getElementById('chartVolDisplay');
   if (volEl) volEl.innerText = `${vol.toFixed(1)} SOL`;
 }
@@ -323,7 +374,12 @@ function renderCandlestickChart() {
   ctx.fillStyle = '#090d16';
   ctx.fillRect(0, 0, w, h);
 
-  if (state.candles.length === 0) return;
+  if (state.candles.length === 0) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '12px JetBrains Mono, monospace';
+    ctx.fillText('Waiting for trades', 16, Math.max(24, h / 2));
+    return;
+  }
 
   // Find min/max price and max volume
   let minP = Infinity;
@@ -359,7 +415,7 @@ function renderCandlestickChart() {
   }
 
   const slotW = chartRight / state.candles.length;
-  const candleW = Math.max(3, slotW * 0.65);
+  const candleW = Math.min(14, Math.max(3, slotW * 0.65));
 
   // Draw Candlesticks & Volume Bars
   const maPoints = [];
@@ -415,6 +471,31 @@ function renderCandlestickChart() {
     }
     ctx.stroke();
   }
+
+  // Trade markers belong to the visible mint only.
+  (state.tradeMarkers || []).forEach(marker => {
+    let idx = 0;
+    for (let i = 0; i < state.candles.length; i++) {
+      if (state.candles[i].time <= marker.time) idx = i;
+      else break;
+    }
+    const cx = idx * slotW + (slotW / 2);
+    const y = 15 + ((maxP - marker.price) / effectiveRange) * priceHeight;
+    ctx.beginPath();
+    if (marker.side === 'sell') {
+      ctx.fillStyle = '#ef4444';
+      ctx.moveTo(cx, y + 11);
+      ctx.lineTo(cx - 4.5, y + 3);
+      ctx.lineTo(cx + 4.5, y + 3);
+    } else {
+      ctx.fillStyle = '#10b981';
+      ctx.moveTo(cx, y - 11);
+      ctx.lineTo(cx - 4.5, y - 3);
+      ctx.lineTo(cx + 4.5, y - 3);
+    }
+    ctx.closePath();
+    ctx.fill();
+  });
 
   // Draw Current Price Dashed Line & Badge
   const curY = 15 + ((maxP - state.lastPrice) / effectiveRange) * priceHeight;
@@ -525,14 +606,6 @@ function renderGauge(percentage = 0) {
     } else {
       pillEl.innerText = `${effectivePct.toFixed(0)}% BONDING`;
       pillEl.className = 'text-[10px] font-bold text-[#94a3b8] font-mono';
-    }
-  }
-}
-      pillEl.innerText = 'BULLISH ▲';
-      pillEl.className = 'text-[10px] font-bold text-emerald-400 font-mono';
-    } else {
-      pillEl.innerText = 'BONDING';
-      pillEl.className = 'text-[10px] font-bold text-slate-400 font-mono';
     }
   }
 }
@@ -880,14 +953,21 @@ function toggleSelectAllRows(checked) {
 // ==================== LIVE STATS & TABLE SYNC ====================
 
 async function loadLiveStats() {
+  const requestedMint = state.activeToken;
+  const requestedEpoch = state.chartEpoch;
   try {
-    const res = await fetch('/api/trading/stats');
+    const qs = requestedMint ? `?mint=${encodeURIComponent(requestedMint)}` : '';
+    const res = await fetch(`/api/trading/stats${qs}`);
     const data = await res.json();
     const s = data.stats;
     if (!s) return;
+    // Ignore a poll that was in flight across a token switch. Applying it
+    // would put the previous coin's desk (and any follow-on ticks) on the new chart.
+    if (state.chartEpoch !== requestedEpoch || state.activeToken !== requestedMint) return;
+
+    if (s.stale) return;
 
     if (s.activeToken) {
-      state.activeToken = s.activeToken;
       updateActiveTokenUi(s.activeToken);
       state.curveProgressPct = s.curveProgressPct;
       renderGauge(s.curveProgressPct);
@@ -977,17 +1057,37 @@ function renderTradingWalletsTable(wallets) {
 
 function updateActiveTokenUi(mint) {
   if (!mint) return;
-  document.getElementById('navTrackCaInput').value = mint;
+  state.activeToken = mint;
+  const input = document.getElementById('navTrackCaInput');
+  if (input) input.value = mint;
   const link = document.getElementById('deskPumpLink');
   if (link) {
     link.href = `https://pump.fun/coin/${mint}`;
     link.innerText = `Pump.fun (${mint.slice(0, 4)}...) ↗`;
   }
+  switchChartToMint(mint);
+}
+
+function showMintChart(mint) {
+  if (mint) {
+    updateActiveTokenUi(mint);
+    return;
+  }
+  state.activeToken = null;
+  chartBook.deactivate();
+  applyChartView({ keepHover: false });
+  updateChartHeaders();
+  renderCandlestickChart();
+  renderSparkline();
+  const input = document.getElementById('navTrackCaInput');
+  if (input) input.value = '';
 }
 
 async function setTrackedTokenFromNav() {
   const mint = document.getElementById('navTrackCaInput').value.trim();
   if (!mint) return showToast('Please enter a Token Mint Address', 'warning');
+  const previous = state.chartMint;
+  updateActiveTokenUi(mint);
   try {
     const res = await fetch('/api/trading/track', {
       method: 'POST',
@@ -995,11 +1095,13 @@ async function setTrackedTokenFromNav() {
       body: JSON.stringify({ mint })
     });
     const data = await res.json();
-    state.activeToken = data.activeToken;
-    updateActiveTokenUi(data.activeToken);
+    if (!res.ok || data.error) throw new Error(data.error || 'Track failed');
+    if (state.activeToken !== mint) return;
+    updateActiveTokenUi(data.activeToken || mint);
     loadLiveStats();
     showToast(`Tracking: ${mint.slice(0, 8)}...`, 'success');
   } catch (e) {
+    if (state.activeToken === mint) showMintChart(previous);
     showToast('Failed to track CA: ' + e.message, 'error');
   }
 }
@@ -1111,6 +1213,7 @@ async function executeLaunchBundle() {
   btn.disabled = true;
   btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>PACKING JITO BUNDLE...</span>`;
 
+  const launchEpoch = state.chartEpoch;
   try {
     logTerminal(`[Metadata] Uploading ${tokenSymbol} metadata...`);
     const formData = new FormData();
@@ -1147,8 +1250,8 @@ async function executeLaunchBundle() {
 
     const launchData = await launchRes.json();
     if (launchData.success) {
-      state.activeToken = launchData.mint;
-      updateActiveTokenUi(launchData.mint);
+      const stillOnThisLaunch = state.chartEpoch === launchEpoch || state.activeToken === launchData.mint;
+      if (stillOnThisLaunch) updateActiveTokenUi(launchData.mint);
       logTerminal(`🎉 [Success] Atomic Bundle Landed! CA: ${launchData.mint}`);
       showToast(`Token launched & bundled! CA: ${launchData.mint.slice(0, 8)}...`, 'success');
       loadLiveStats();

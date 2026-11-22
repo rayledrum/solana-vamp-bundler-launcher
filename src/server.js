@@ -321,7 +321,23 @@ app.post('/api/vamp/mutate', (req, res) => {
 // Live Trading & Exit Desk
 app.get('/api/trading/stats', async (req, res) => {
   try {
+    const requested = typeof req.query.mint === 'string' && req.query.mint ? req.query.mint : null;
+    if (requested && requested !== tradingEngine.activeToken) {
+      return res.json({
+        success: true,
+        stats: {
+          activeToken: requested,
+          stale: true,
+          currentMint: tradingEngine.activeToken,
+          wallets: []
+        }
+      });
+    }
     const stats = await tradingEngine.getLiveStats();
+    if (requested && stats.activeToken !== requested) {
+      stats.stale = true;
+      stats.currentMint = tradingEngine.activeToken;
+    }
     res.json({ success: true, stats });
   } catch (err) {
     res.status(500).json({ error: err.message });
