@@ -90,6 +90,7 @@ class TradingEngine {
         signature: 'sim_' + Date.now().toString(36),
         marketCapSol: Number((15 + Math.random() * 5).toFixed(2)),
         mint,
+        simulated: true,
         timestamp: Date.now()
       });
     }, 3800);

@@ -2,8 +2,87 @@ const axios = require('axios');
 const config = require('./config');
 
 class VampScanner {
-  // Fetch trending tokens from DexScreener (Solana pairs)
+  // Live Pump.fun bonding-curve coins plus graduated PumpSwap pairs.
+  // Official pump.fun frontend APIs are Cloudflare-blocked from this host,
+  // so this uses GeckoTerminal's pump-fun and pumpswap pool lists.
+  async getPumpFunMovers(limit = 20) {
+    const SOL = 'So11111111111111111111111111111111111111112';
+    const feeds = [
+      { dexId: 'pumpfun', url: 'https://api.geckoterminal.com/api/v2/networks/solana/dexes/pump-fun/pools?page=1&include=base_token,quote_token' },
+      { dexId: 'pumpswap', url: 'https://api.geckoterminal.com/api/v2/networks/solana/dexes/pumpswap/pools?page=1&include=base_token,quote_token' }
+    ];
+    const tokens = [];
+
+    for (const feed of feeds) {
+      try {
+        const res = await axios.get(feed.url, {
+          timeout: 8000,
+          headers: { Accept: 'application/json' }
+        });
+        const included = {};
+        for (const item of res.data?.included || []) {
+          included[item.id] = item.attributes || {};
+        }
+        let added = 0;
+        for (const pool of res.data?.data || []) {
+          const rel = pool.relationships || {};
+          const base = included[rel.base_token?.data?.id] || {};
+          const quote = included[rel.quote_token?.data?.id] || {};
+          if (!base.address) continue;
+          if (quote.address && quote.address !== SOL) continue;
+          const attrs = pool.attributes || {};
+          const change = attrs.price_change_percentage || {};
+          tokens.push({
+            tokenAddress: base.address,
+            name: base.name || attrs.name || base.address.slice(0, 6),
+            symbol: base.symbol || 'PUMP',
+            description: `${base.name || 'Pump.fun coin'} · ${feed.dexId}`,
+            icon: base.image_url || '',
+            socials: {},
+            twitter: '',
+            telegram: '',
+            website: '',
+            links: [],
+            metrics: {
+              priceUsd: attrs.base_token_price_usd,
+              priceNative: attrs.base_token_price_native_currency,
+              mcap: Number(attrs.market_cap_usd || attrs.fdv_usd || 0),
+              volume24h: Number(attrs.volume_usd?.h24 || 0),
+              priceChange24h: Number(change.h24 || 0),
+              dexId: feed.dexId
+            }
+          });
+          added += 1;
+          if (added >= limit) break;
+        }
+      } catch (err) {
+        console.warn(`[VampScanner] ${feed.dexId} feed failed:`, err.message);
+      }
+    }
+    return tokens;
+  }
+
+  mergeTrendingTokens(pumpTokens, dexTokens, limit) {
+    const seen = new Set();
+    const merged = [];
+    const push = (token) => {
+      const key = token?.tokenAddress;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      merged.push(token);
+    };
+    const max = Math.max(pumpTokens.length, dexTokens.length);
+    for (let i = 0; i < max && merged.length < limit; i++) {
+      if (pumpTokens[i]) push(pumpTokens[i]);
+      if (dexTokens[i] && merged.length < limit) push(dexTokens[i]);
+    }
+    return merged;
+  }
+
+  // Fetch trending tokens from Pump.fun (via GeckoTerminal) and DexScreener
   async getTrendingSolanaTokens(limit = 15) {
+    let dexTokens = [];
+    let pumpTokens = [];
     try {
       // Query DexScreener free token profiles / latest boost pairs
       const res = await axios.get('https://api.dexscreener.com/token-profiles/latest/v1', {
@@ -62,9 +141,21 @@ class VampScanner {
         });
       }
 
-      return results;
+      dexTokens = results;
     } catch (err) {
-      console.warn('[VampScanner] Failed to fetch DexScreener trending, using fallback feed:', err.message);
+      console.warn('[VampScanner] Failed to fetch DexScreener trending:', err.message);
+    }
+
+    try {
+      pumpTokens = await this.getPumpFunMovers(limit);
+    } catch (err) {
+      console.warn('[VampScanner] Failed to fetch Pump.fun movers:', err.message);
+    }
+
+    const merged = this.mergeTrendingTokens(pumpTokens, dexTokens, Math.max(limit, 24));
+    if (merged.length > 0) return merged;
+
+    console.warn('[VampScanner] All live feeds failed, using fallback list');
       // Return curated trending Solana memecoin list as fallback
       return [
         {
@@ -95,7 +186,6 @@ class VampScanner {
           metrics: { priceUsd: '0.012', mcap: 1200000, volume24h: 420000, priceChange24h: -5.4, dexId: 'pumpfun' }
         }
       ];
-    }
   }
 
   // Inspect any token by CA or Pump.fun URL for direct Vamp Cloning

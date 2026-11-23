@@ -7,6 +7,8 @@ const state = {
   subWallets: [],
   selectedJitoTip: 0.005,
   activeToken: null,
+  chartToken: null,
+  chartEpoch: 0,
   logoFile: null,
   logoUrl: null,
   isBumping: false,
@@ -15,6 +17,10 @@ const state = {
   // Charting state (Ultra-fast timeframes down to 1s / 5s)
   chartTimeframe: '5s', // '1s', '5s', '15s', '30s', '1m', '5m'
   candles: [],
+  // Source bars/ticks. Timeframe changes regroup these instead of clearing the chart.
+  chartSamples: [],
+  // Width of the stored samples. 1000 means real 1s bars are already loaded.
+  chartSampleMs: null,
   currentCandle: null,
   lastPrice: 0.000034,
   curveProgressPct: 0,
@@ -88,11 +94,12 @@ function handleWsMessage(msg) {
       document.getElementById('slotDisplay').innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
       const sbSlot = document.getElementById('sidebarSlotBadge');
       if (sbSlot) sbSlot.innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
-      // In simulation mode, add small organic tick to chart
-      if (state.simulationMode) {
+      // Placeholder series only. A loaded coin chart is driven by its candles and trades.
+      if (state.simulationMode && !state.chartToken) {
         const jitter = (Math.random() - 0.48) * 0.0000005;
         const newPrice = Math.max(0.000005, state.lastPrice + jitter);
-        pushChartTick(newPrice, Math.random() * 0.1);
+        // Only push when no token is loaded; pass current epoch so it can be ignored after switch
+        pushChartTick(newPrice, Math.random() * 0.1, state.chartEpoch);
       }
       break;
 
@@ -118,8 +125,6 @@ function handleWsMessage(msg) {
       loadSubWallets();
       loadLiveStats();
       switchTab('trading');
-      // Surge price candle on launch
-      pushChartTick(state.lastPrice * 1.35, 1.7);
       break;
 
     case 'LAUNCH_FAILED':
@@ -131,7 +136,7 @@ function handleWsMessage(msg) {
       logTerminal(`🟢 [Manual Buy] Bought tokens for ${msg.payload.totalSpentSol} SOL across ${msg.payload.resultsCount} wallets`);
       showToast(`Bought tokens (+${msg.payload.totalSpentSol} SOL)`, 'success');
       const buyPrice = state.lastPrice * (1 + (msg.payload.totalSpentSol * 0.05));
-      pushChartTick(buyPrice, msg.payload.totalSpentSol);
+      if (state.chartToken) pushChartTick(buyPrice, msg.payload.totalSpentSol, state.chartEpoch);
       loadLiveStats();
       loadMasterWallet();
       loadSubWallets();
@@ -141,7 +146,7 @@ function handleWsMessage(msg) {
       logTerminal(`🔴 [Manual Sell] Sold ${msg.payload.pct}% | Recv: +${msg.payload.totalReceivedSol} SOL`);
       showToast(`Sold ${msg.payload.pct}% across bundle (+${msg.payload.totalReceivedSol} SOL)`, 'warning');
       const sellPrice = state.lastPrice * (1 - (msg.payload.pct * 0.002));
-      pushChartTick(sellPrice, msg.payload.totalReceivedSol);
+      if (state.chartToken) pushChartTick(sellPrice, msg.payload.totalReceivedSol, state.chartEpoch);
       loadLiveStats();
       loadMasterWallet();
       loadSubWallets();
@@ -149,7 +154,7 @@ function handleWsMessage(msg) {
 
     case 'CASCADE_STEP':
       logTerminal(`🌊 [Cascade] Step ${msg.payload.step}/${msg.payload.total} executed for ${msg.payload.address.slice(0, 6)}...`);
-      pushChartTick(state.lastPrice * 0.985, 0.2);
+      if (state.chartToken) pushChartTick(state.lastPrice * 0.985, 0.2, state.chartEpoch);
       break;
 
     case 'CASCADE_COMPLETED':
@@ -173,7 +178,7 @@ function handleWsMessage(msg) {
 
     case 'BUMP_TICK':
       logTerminal(`⚡ [Bump Bot] Micro trade on ${msg.payload.wallet} (${msg.payload.solAmount} SOL)`);
-      pushChartTick(state.lastPrice * (1 + (Math.random() * 0.02 - 0.01)), msg.payload.solAmount);
+      if (state.chartToken) pushChartTick(state.lastPrice * (1 + (Math.random() * 0.02 - 0.01)), msg.payload.solAmount, state.chartEpoch);
       break;
 
     case 'TOKEN_TRACKED':
@@ -230,7 +235,7 @@ function initChart() {
 }
 
 function setChartTimeframe(tf) {
-  if (!TIMEFRAME_MS[tf]) return;
+  if (!TIMEFRAME_MS[tf] || tf === state.chartTimeframe) return;
   state.chartTimeframe = tf;
   document.querySelectorAll('.chart-tf-btn').forEach(btn => {
     btn.classList.remove('active', 'text-cyan-400', 'bg-[#1e2a42]');
@@ -243,9 +248,183 @@ function setChartTimeframe(tf) {
     activeBtn.classList.remove('text-slate-400');
   }
 
-  generateInitialCandles();
-  renderCandlestickChart();
+  // Regroup bars already stored. Fetch only when the click asks for a finer
+  // width than we have (for example 5m history, then 1s). Do not clear first.
+  const targetMs = TIMEFRAME_MS[tf];
+  const haveMs = state.chartSampleMs || Infinity;
+  if (state.chartToken && targetMs < haveMs) {
+    loadCandlesForToken(state.chartToken, { clear: false });
+  } else if (state.chartSamples && state.chartSamples.length) {
+    rebuildDisplayCandles();
+    updateChartHeaders();
+    renderCandlestickChart();
+    renderSparkline();
+  } else if (!state.chartToken) {
+    generateInitialCandles();
+    renderCandlestickChart();
+  }
   showToast(`Chart timeframe set to ${tf}`, 'info');
+}
+
+function formatChartPrice(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  const abs = Math.abs(n);
+  if (abs === 0) return '0';
+  if (abs >= 0.01) return n.toFixed(4);
+  if (abs >= 0.0001) return n.toFixed(6);
+  if (abs >= 0.00000001) return n.toFixed(10);
+  return n.toExponential(2);
+}
+
+function clearLiveTradeTape() {
+  const chartBar = document.getElementById('chartLiveTradesBar');
+  if (chartBar) {
+    chartBar.innerHTML = '<span style="color:#546e7a;font-size:10px;">Streaming live trades from Solana &amp; Pump.fun...</span>';
+  }
+  const tapePanel = document.getElementById('txTapePanel');
+  if (tapePanel) {
+    tapePanel.innerHTML = '<div style="font-size:11px;color:#546e7a;text-align:center;padding:14px 0;">No transactions yet</div>';
+  }
+}
+
+function setChartSymbol(symbol) {
+  const el = document.getElementById('chartSymbolDisplay');
+  if (el && symbol) el.innerText = symbol;
+}
+
+function setChartSource(source) {
+  const el = document.getElementById('chartSourceDisplay');
+  if (!el) return;
+  el.textContent = source ? source : '';
+}
+
+let chartLoadSeq = 0;
+
+async function loadCandlesForToken(mint, options = {}) {
+  if (!mint) return;
+  const clear = options.clear !== false;
+  const seq = ++chartLoadSeq;
+  const requestedTf = state.chartTimeframe;
+  if (clear) {
+    state.chartEpoch = (state.chartEpoch || 0) + 1;
+    state.chartToken = mint;
+    state.chartSamples = [];
+    state.chartSampleMs = null;
+    state.candles = [];
+    state.currentCandle = null;
+    state.hoverCandle = null;
+    state.lastPrice = 0;
+    setChartSource('');
+    clearLiveTradeTape();
+    renderCandlestickChart();
+  }
+
+  try {
+    const res = await fetch(`/api/chart/candles?mint=${encodeURIComponent(mint)}&tf=${encodeURIComponent(requestedTf)}`);
+    const data = await res.json();
+    if (seq !== chartLoadSeq || (clear && state.chartToken !== mint)) return;
+    if (!clear && state.chartToken && state.chartToken !== mint) return;
+    if (!res.ok) throw new Error(data.error || 'Candle request failed');
+    setChartSymbol(data.symbol);
+    const candles = Array.isArray(data.candles) ? data.candles : [];
+    if (candles.length === 0) throw new Error('No candles');
+    state.chartToken = mint;
+    state.chartSamples = candles.map(copyChartSample);
+    state.chartSampleMs = TIMEFRAME_MS[data.servedRes] || TIMEFRAME_MS[requestedTf] || 60000;
+    state.lastPrice = candles[candles.length - 1].close;
+    setChartSource(data.source || '');
+  } catch (err) {
+    if (seq !== chartLoadSeq || (clear && state.chartToken !== mint)) return;
+    if (!clear) {
+      rebuildDisplayCandles();
+      updateChartHeaders();
+      renderCandlestickChart();
+      renderSparkline();
+      return;
+    }
+    const price = 30 / 1073000000;
+    const now = Date.now();
+    state.chartSamples = [{ time: now, open: price, high: price, low: price, close: price, volume: 0 }];
+    state.chartSampleMs = TIMEFRAME_MS[requestedTf] || 5000;
+    state.lastPrice = price;
+    setChartSource('seed');
+  }
+  if (seq !== chartLoadSeq) return;
+  rebuildDisplayCandles();
+
+  updateChartHeaders();
+  renderCandlestickChart();
+  renderSparkline();
+}
+
+const MAX_CHART_SAMPLES = 5000;
+const MAX_CHART_BARS = 180;
+
+function copyChartSample(sample) {
+  return {
+    time: Number(sample.time),
+    open: Number(sample.open),
+    high: Number(sample.high),
+    low: Number(sample.low),
+    close: Number(sample.close),
+    volume: Number(sample.volume) || 0
+  };
+}
+
+function appendChartSample(sample) {
+  if (!Array.isArray(state.chartSamples)) state.chartSamples = [];
+  state.chartSamples.push(sample);
+  if (state.chartSamples.length > MAX_CHART_SAMPLES) {
+    state.chartSamples.splice(0, state.chartSamples.length - MAX_CHART_SAMPLES);
+  }
+}
+
+// Group stored samples into the selected timeframe. Finer switches keep each
+// existing bar; coarser switches merge them. Nothing is discarded or refetched.
+function aggregateChartSamples(samples, tfMs) {
+  const buckets = [];
+  const index = new Map();
+  for (const sample of samples) {
+    const time = Number(sample.time);
+    const close = Number(sample.close);
+    if (!Number.isFinite(time) || !Number.isFinite(close)) continue;
+    const bucketTime = Math.floor(time / tfMs) * tfMs;
+    let bucket = index.get(bucketTime);
+    if (!bucket) {
+      const open = Number(sample.open);
+      const high = Number(sample.high);
+      const low = Number(sample.low);
+      bucket = {
+        time: bucketTime,
+        open: Number.isFinite(open) ? open : close,
+        high: Number.isFinite(high) ? high : close,
+        low: Number.isFinite(low) ? low : close,
+        close,
+        volume: Number(sample.volume) || 0
+      };
+      index.set(bucketTime, bucket);
+      buckets.push(bucket);
+    } else {
+      const high = Number(sample.high);
+      const low = Number(sample.low);
+      if (Number.isFinite(high)) bucket.high = Math.max(bucket.high, high);
+      if (Number.isFinite(low)) bucket.low = Math.min(bucket.low, low);
+      bucket.close = close;
+      bucket.volume += Number(sample.volume) || 0;
+    }
+  }
+  return buckets;
+}
+
+function rebuildDisplayCandles() {
+  const tfMs = TIMEFRAME_MS[state.chartTimeframe] || 5000;
+  const candles = aggregateChartSamples(state.chartSamples || [], tfMs);
+  state.candles = candles.length > MAX_CHART_BARS ? candles.slice(-MAX_CHART_BARS) : candles;
+  state.currentCandle = state.candles.length ? state.candles[state.candles.length - 1] : null;
+  if (state.currentCandle && Number.isFinite(state.currentCandle.close)) {
+    state.lastPrice = state.currentCandle.close;
+  }
 }
 
 function generateInitialCandles() {
@@ -253,8 +432,7 @@ function generateInitialCandles() {
   const count = 40;
   const now = Date.now();
   let basePrice = 0.000030;
-  state.candles = [];
-
+  const samples = [];
   for (let i = count; i >= 0; i--) {
     const time = now - (i * tfMs);
     const delta = (Math.random() - 0.48) * 0.000002;
@@ -263,39 +441,23 @@ function generateInitialCandles() {
     const high = Math.max(open, close) + (Math.random() * 0.0000015);
     const low = Math.min(open, close) - (Math.random() * 0.0000015);
     const volume = Math.random() * 0.8 + 0.1;
-
-    state.candles.push({ time, open, high, low, close, volume });
+    samples.push({ time, open, high, low, close, volume });
     basePrice = close;
   }
-
+  state.chartSamples = samples;
   state.lastPrice = basePrice;
-  state.currentCandle = state.candles[state.candles.length - 1];
+  rebuildDisplayCandles();
   updateChartHeaders();
 }
 
-function pushChartTick(price, volume = 0.1) {
-  state.lastPrice = price;
-  const tfMs = TIMEFRAME_MS[state.chartTimeframe] || 5000;
+function pushChartTick(price, volume = 0.1, expectedEpoch = null) {
+  // Ignore ticks that don't belong to the current chart generation
+  if (expectedEpoch != null && expectedEpoch !== state.chartEpoch) return;
+  if (!state.chartToken) return;
   const now = Date.now();
-
-  if (!state.currentCandle || now - state.currentCandle.time >= tfMs) {
-    state.currentCandle = {
-      time: now,
-      open: price,
-      high: price,
-      low: price,
-      close: price,
-      volume: volume
-    };
-    state.candles.push(state.currentCandle);
-    if (state.candles.length > 60) state.candles.shift();
-  } else {
-    state.currentCandle.high = Math.max(state.currentCandle.high, price);
-    state.currentCandle.low = Math.min(state.currentCandle.low, price);
-    state.currentCandle.close = price;
-    state.currentCandle.volume += volume;
-  }
-
+  appendChartSample({ time: now, open: price, high: price, low: price, close: price, volume });
+  state.lastPrice = price;
+  rebuildDisplayCandles();
   updateChartHeaders();
   renderCandlestickChart();
   renderSparkline();
@@ -304,7 +466,7 @@ function pushChartTick(price, volume = 0.1) {
 function updateChartHeaders() {
   const pDisplay = document.getElementById('chartPriceDisplay');
   const cDisplay = document.getElementById('chartChangeDisplay');
-  if (pDisplay) pDisplay.innerText = `${state.lastPrice.toFixed(6)} SOL`;
+  if (pDisplay) pDisplay.innerText = `${formatChartPrice(state.lastPrice)} SOL`;
 
   if (state.candles.length > 1) {
     const first = state.candles[0].open;
@@ -351,7 +513,7 @@ function renderCandlestickChart() {
 
   const w = rect.width;
   const h = rect.height;
-  const chartRight = w - 65;
+  const chartRight = w - 92;
   const volHeight = 35;
   const priceHeight = h - volHeight - 20;
 
@@ -391,7 +553,7 @@ function renderCandlestickChart() {
     ctx.moveTo(0, y);
     ctx.lineTo(chartRight, y);
     ctx.stroke();
-    ctx.fillText(pVal.toFixed(6), chartRight + 6, y + 3);
+    ctx.fillText(formatChartPrice(pVal), chartRight + 6, y + 3);
   }
 
   const slotW = chartRight / state.candles.length;
@@ -464,10 +626,10 @@ function renderCandlestickChart() {
 
   // Price badge on right axis
   ctx.fillStyle = '#06b6d4';
-  ctx.fillRect(chartRight + 2, curY - 8, 60, 16);
+  ctx.fillRect(chartRight + 2, curY - 8, 86, 16);
   ctx.fillStyle = '#0a0d14';
   ctx.font = 'bold 9px JetBrains Mono';
-  ctx.fillText(state.lastPrice.toFixed(6), chartRight + 4, curY + 4);
+  ctx.fillText(formatChartPrice(state.lastPrice), chartRight + 4, curY + 4);
 
   // Hover Tooltip / Crosshair
   if (state.hoverCandle) {
@@ -475,12 +637,12 @@ function renderCandlestickChart() {
     ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 1;
-    ctx.fillRect(10, 8, 220, 24);
-    ctx.strokeRect(10, 8, 220, 24);
+    ctx.fillRect(10, 8, 280, 24);
+    ctx.strokeRect(10, 8, 280, 24);
 
     ctx.fillStyle = '#e2e8f0';
     ctx.font = '9px JetBrains Mono';
-    ctx.fillText(`O:${hc.open.toFixed(6)} H:${hc.high.toFixed(6)} L:${hc.low.toFixed(6)} C:${hc.close.toFixed(6)}`, 14, 23);
+    ctx.fillText(`O:${formatChartPrice(hc.open)} H:${formatChartPrice(hc.high)} L:${formatChartPrice(hc.low)} C:${formatChartPrice(hc.close)}`, 14, 23);
   }
 }
 
@@ -1236,6 +1398,9 @@ function updateActiveTokenUi(mint) {
     link.href = `https://pump.fun/coin/${mint}`;
     link.innerText = `Pump.fun (${mint.slice(0, 4)}...) ↗`;
   }
+  if (mint !== state.chartToken) {
+    loadCandlesForToken(mint);
+  }
 }
 
 function extractSolanaAddress(input) {
@@ -1822,6 +1987,7 @@ function renderTopMovers(tokens) {
     row.onclick = () => {
       if (t.tokenAddress) {
         document.getElementById('navTrackCaInput').value = t.tokenAddress;
+        setChartSymbol(symbol);
         setTrackedTokenFromNav();
       }
     };
@@ -2246,8 +2412,19 @@ async function reclaimRentAndRewards() {
 
 // ==================== LIVE PUBLIC TRADE STREAM ====================
 
+function priceFromTrade(trade) {
+  const supply = 1000000000;
+  const mcap = Number(trade.marketCapSol);
+  if (Number.isFinite(mcap) && mcap > 0) return mcap / supply;
+  const sol = Number(trade.solAmount);
+  const tokens = Number(trade.tokenAmount);
+  if (sol > 0 && tokens > 0) return sol / tokens;
+  return null;
+}
+
 function renderTradeTick(trade) {
   if (!trade) return;
+  if (state.chartToken && trade.mint && trade.mint !== state.chartToken) return;
   const isBuy = trade.txType === 'buy';
   const color = isBuy ? '#00c48c' : '#f04c5e';
   const badgeBg = isBuy ? 'rgba(0,196,140,0.12)' : 'rgba(240,76,94,0.12)';
@@ -2304,10 +2481,16 @@ function renderTradeTick(trade) {
     }
   }
 
-  // 3. Nudge chart candle on trade
-  if (trade.solAmount > 0) {
-    const delta = isBuy ? (trade.solAmount * 0.002) : -(trade.solAmount * 0.002);
-    const updatedPrice = Math.max(0.000005, state.lastPrice * (1 + delta));
-    pushChartTick(updatedPrice, trade.solAmount);
+  // Real prints use the coin's own price. Simulated tape ticks only move the
+  // current candle so they cannot replace the loaded series with a fake price.
+  if (trade.solAmount > 0 && state.chartToken && (!trade.mint || trade.mint === state.chartToken)) {
+    const epoch = state.chartEpoch;
+    if (trade.simulated || String(trade.signature || '').startsWith('sim_')) {
+      const delta = isBuy ? (trade.solAmount * 0.002) : -(trade.solAmount * 0.002);
+      pushChartTick(Math.max(1e-12, state.lastPrice * (1 + delta)), trade.solAmount, epoch);
+    } else {
+      const tradePrice = priceFromTrade(trade);
+      if (tradePrice) pushChartTick(tradePrice, trade.solAmount, epoch);
+    }
   }
 }

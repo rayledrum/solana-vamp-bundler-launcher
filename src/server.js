@@ -347,6 +347,18 @@ app.post('/api/vamp/mutate', (req, res) => {
 });
 
 // Live Trading & Exit Desk
+app.get('/api/chart/candles', async (req, res) => {
+  try {
+    const mint = String(req.query.mint || '').trim();
+    const tf = String(req.query.tf || '1m');
+    if (!mint) return res.status(400).json({ error: 'Mint is required' });
+    const data = await pumpfun.getChartCandles(mint, tf);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/trading/stats', async (req, res) => {
   try {
     const stats = await tradingEngine.getLiveStats();

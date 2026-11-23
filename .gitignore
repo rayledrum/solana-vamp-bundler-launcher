@@ -4,3 +4,5 @@ data/wallets.json
 uploads/
 .DS_Store
 
+
+.grok/
