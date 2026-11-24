@@ -13,11 +13,20 @@ function num(name, fallback) {
   return value;
 }
 
+function websocketUrl(httpUrl) {
+  const value = String(httpUrl || '').trim();
+  if (value.startsWith('wss://') || value.startsWith('ws://')) return value;
+  if (value.startsWith('https://')) return `wss://${value.slice('https://'.length)}`;
+  if (value.startsWith('http://')) return `ws://${value.slice('http://'.length)}`;
+  return '';
+}
+
 const HELIUS_API_KEY = String(process.env.HELIUS_API_KEY || '').trim();
 const HELIUS_RPC_URL = String(process.env.HELIUS_RPC_URL || '').trim()
   || (HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : '');
 const HELIUS_WS_URL = String(process.env.HELIUS_WS_URL || '').trim()
-  || (HELIUS_API_KEY ? `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : '');
+  || (HELIUS_API_KEY ? `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : '')
+  || websocketUrl(HELIUS_RPC_URL);
 
 const PUBLIC_RPC = String(process.env.SOLANA_PUBLIC_RPC_URL || '').trim() || 'https://api.mainnet.solana.com';
 

@@ -128,6 +128,28 @@ class WalletManager {
     this.liveBalanceCache = null;
   }
 
+  noteLiveSol(address, sol) {
+    const key = this.walletList().map(wallet => wallet.publicKey.toBase58()).join('|');
+    if (!this.liveBalanceCache || this.liveBalanceCache.key !== key || !this.liveBalanceCache.values) {
+      this.liveBalanceCache = { at: Date.now(), key, values: {}, error: null };
+    }
+    this.liveBalanceCache.values[address] = sol;
+    this.liveBalanceCache.at = Date.now();
+    this.liveBalanceCache.error = null;
+  }
+
+  noteTokenBalance(address, mint, amount) {
+    if (!this.tokenNotes) this.tokenNotes = new Map();
+    this.tokenNotes.set(`${address}:${mint}`, { amount: Number(amount) || 0, at: Date.now() });
+  }
+
+  tokenBalanceOf(address, mint) {
+    if (!this.tokenNotes) return null;
+    const row = this.tokenNotes.get(`${address}:${mint}`);
+    if (!row || Date.now() - row.at > 30000) return null;
+    return row.amount;
+  }
+
   walletList() {
     return [this.masterWallet, ...this.subWallets].filter(Boolean);
   }
@@ -303,13 +325,18 @@ class WalletManager {
       let tokenBalance = 0;
 
       if (!this.simulationMode && tokenMint) {
-        try {
-          const mintPubkey = new PublicKey(tokenMint);
-          const ata = await getAssociatedTokenAddress(mintPubkey, wallet.publicKey);
-          const acc = await getAccount(this.connection, ata);
-          tokenBalance = Number(acc.amount);
-        } catch (e) {
-          tokenBalance = 0;
+        const noted = this.tokenBalanceOf(address, tokenMint);
+        if (noted != null) {
+          tokenBalance = noted;
+        } else {
+          try {
+            const mintPubkey = new PublicKey(tokenMint);
+            const ata = await getAssociatedTokenAddress(mintPubkey, wallet.publicKey);
+            const acc = await getAccount(this.connection, ata);
+            tokenBalance = Number(acc.amount);
+          } catch (e) {
+            tokenBalance = 0;
+          }
         }
       }
 
