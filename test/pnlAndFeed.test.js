@@ -62,6 +62,11 @@ test('cost basis, unrealized PnL, and realized PnL follow confirmed fills', () =
   assert.ok(Math.abs(drifted.unrealizedSol - (500 * 0.0002 - book.costBasisSol)) < 1e-12);
   assert.ok(Math.abs(drifted.pnlSol - (drifted.realizedSol + drifted.unrealizedSol)) < 1e-12);
   assert.equal(quotePosition(book, 500, null).unrealizedSol, null);
+  const unknown = quotePosition({ ...emptyBook(), costKnown: false }, 63724.256335, 0.0000001465);
+  assert.equal(unknown.costKnown, false);
+  assert.equal(unknown.pnlSol, null);
+  assert.equal(unknown.costBasisSol, null);
+  assert.ok(Math.abs(unknown.valueSol - (63724.256335 * 0.0000001465)) < 1e-8);
 });
 
 test('a simulated ticker trade is not a live price', () => {

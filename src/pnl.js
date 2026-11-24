@@ -33,11 +33,24 @@ function applySell(book, { tokensSold, solReceived }) {
 }
 
 // Holdings come from the chain. Cost basis comes from confirmed fills.
-// A missing price leaves unrealized PnL unknown instead of using a stand-in.
+// A missing price, or holdings with no recorded cost, leaves PnL unknown.
 function quotePosition(book, onChainTokens, priceSolPerToken) {
   const tokens = onChainTokens == null ? book.tokens : Math.max(0, Number(onChainTokens) || 0);
   const price = Number(priceSolPerToken);
   const priced = Number.isFinite(price) && price > 0;
+  const valueSol = priced ? tokens * price : null;
+  if (book && book.costKnown === false) {
+    return {
+      tokens,
+      costBasisSol: null,
+      realizedSol: null,
+      unrealizedSol: null,
+      pnlSol: null,
+      pnlPct: null,
+      valueSol,
+      costKnown: false
+    };
+  }
   const unrealizedSol = priced ? (tokens * price) - book.costBasisSol : null;
   const pnlSol = unrealizedSol == null ? null : book.realizedSol + unrealizedSol;
   const pnlPct = pnlSol == null || book.costBasisSol <= 0 ? null : (pnlSol / book.costBasisSol) * 100;
@@ -47,7 +60,9 @@ function quotePosition(book, onChainTokens, priceSolPerToken) {
     realizedSol: book.realizedSol,
     unrealizedSol,
     pnlSol,
-    pnlPct
+    pnlPct,
+    valueSol,
+    costKnown: true
   };
 }
 

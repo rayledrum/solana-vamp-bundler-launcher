@@ -278,6 +278,10 @@ function handleWsMessage(msg) {
       loadLiveStats();
       break;
 
+    case 'HOLDINGS_SEEDED':
+      if (!msg.payload || !msg.payload.mint || msg.payload.mint === state.activeToken) loadLiveStats();
+      break;
+
     case 'PUBLIC_TRADE':
       renderTradeTick(msg.payload);
       break;
@@ -292,6 +296,10 @@ function handleWsMessage(msg) {
 
     case 'PNL_UPDATE':
       applyPnlUpdate(msg.payload || {});
+      break;
+
+    case 'CURVE_PROGRESS':
+      paintCurve(msg.payload || {});
       break;
 
     case 'FEED_STATUS':
@@ -380,16 +388,35 @@ function paintPnl(payload) {
     if (!tr) return;
     const pnl = tr.querySelector('.pnl-amt');
     const cost = tr.querySelector('.cost-amt');
-    if (cost && row.costBasisSol != null) cost.textContent = Number(row.costBasisSol).toFixed(3);
-    if (pnl && row.pnlSol != null) {
-      const sign = row.pnlSol >= 0 ? '+' : '';
-      pnl.textContent = `${row.pnlSol >= 0 ? '▲' : '▼'} ${sign}${Number(row.pnlSol).toFixed(3)} (${sign}${Number(row.pnlPct || 0).toFixed(1)}%)`;
-      pnl.className = `pnl-amt text-[10px] font-mono ${row.pnlSol >= 0 ? 'badge-pnl-green' : 'badge-pnl-red'}`;
+    const value = tr.querySelector('.value-amt');
+    const tokens = tr.querySelector('.token-amt');
+    if (tokens && row.tokens != null) tokens.textContent = Number(row.tokens).toLocaleString();
+    if (value && row.valueSol != null) value.textContent = Number(row.valueSol).toFixed(3);
+    if (cost) cost.textContent = row.costBasisSol == null ? '—' : Number(row.costBasisSol).toFixed(3);
+    if (pnl) {
+      if (row.pnlSol == null || row.costKnown === false) {
+        pnl.textContent = '—';
+        pnl.className = 'pnl-amt text-[10px] font-mono text-slate-500';
+      } else {
+        const sign = row.pnlSol >= 0 ? '+' : '';
+        pnl.textContent = `${row.pnlSol >= 0 ? '▲' : '▼'} ${sign}${Number(row.pnlSol).toFixed(3)} (${sign}${Number(row.pnlPct || 0).toFixed(1)}%)`;
+        pnl.className = `pnl-amt text-[10px] font-mono ${row.pnlSol >= 0 ? 'badge-pnl-green' : 'badge-pnl-red'}`;
+      }
     }
   });
   const total = payload.total;
+  if (!total) return;
+  const valueDisplay = document.getElementById('deskSolValueDisplay');
+  if (valueDisplay && total.valueSol != null) valueDisplay.textContent = `${Number(total.valueSol).toFixed(4)} SOL`;
+  const invested = document.getElementById('deskInvestedDisplay');
+  if (invested) invested.textContent = total.costBasisSol == null ? '—' : `${Number(total.costBasisSol).toFixed(4)} SOL`;
   const pnlDisplay = document.getElementById('deskPnlDisplay');
-  if (!total || total.pnlSol == null || !pnlDisplay) return;
+  if (!pnlDisplay) return;
+  if (total.pnlSol == null) {
+    pnlDisplay.textContent = '—';
+    pnlDisplay.className = 'text-2xl font-mono font-extrabold text-slate-400';
+    return;
+  }
   const sign = total.pnlSol >= 0 ? '+' : '';
   pnlDisplay.textContent = `${sign}${Number(total.pnlSol).toFixed(4)} SOL (${sign}${Number(total.pnlPct || 0).toFixed(2)}%)`;
   pnlDisplay.className = total.pnlSol >= 0
@@ -540,15 +567,29 @@ function setChartTimeframe(tf) {
   showToast(`Chart timeframe set to ${tf}`, 'info');
 }
 
-function formatChartPrice(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '0';
-  const abs = Math.abs(n);
-  if (abs === 0) return '0';
-  if (abs >= 0.01) return n.toFixed(4);
-  if (abs >= 0.0001) return n.toFixed(6);
-  if (abs >= 0.00000001) return n.toFixed(10);
-  return n.toExponential(2);
+function activeChartSeries() {
+  return state.chartToken ? chartBook.peek(state.chartToken) : null;
+}
+
+function formatChartMarketCap(price, withUsd) {
+  const series = activeChartSeries();
+  const mcap = ChartScale.marketCapSol(price, ChartScale.supplyOf(series));
+  if (withUsd) return ChartScale.formatMarketCapLabel(mcap, ChartScale.solUsdOf(series));
+  return ChartScale.formatMarketCapSol(mcap);
+}
+
+function noteChartScale(mint, trade) {
+  if (!mint || !trade) return;
+  const price = Number(trade.priceSol);
+  const mcap = Number(trade.marketCapSol);
+  const patch = {};
+  if (price > 0 && mcap > 0) patch.supplyUi = mcap / price;
+  if (Number(trade.solUsd) > 0) patch.solUsd = Number(trade.solUsd);
+  if (Number(trade.supplyUi) > 0) {
+    patch.supplyUi = Number(trade.supplyUi);
+    patch.source = trade.supplySource || 'mint';
+  }
+  if (patch.supplyUi || patch.solUsd) chartBook.noteScale(mint, patch);
 }
 
 function clearLiveTradeTape() {
@@ -612,7 +653,10 @@ async function loadCandlesForToken(mint, options = {}) {
       sampleMs: TIMEFRAME_MS[data.servedRes] || TIMEFRAME_MS[requestedTf] || 60000,
       lastPrice: candles[candles.length - 1].close,
       source: data.source || '',
-      symbol: data.symbol || null
+      symbol: data.symbol || null,
+      supplyUi: Number(data.supplyUi) > 0 ? Number(data.supplyUi) : null,
+      supplySource: data.supplySource || null,
+      solUsd: Number(data.solUsd) > 0 ? Number(data.solUsd) : null
     });
     if (data.symbol) setChartSymbol(data.symbol);
   } catch (err) {
@@ -759,7 +803,7 @@ function pushChartTick(price, volume = 0.1, expectedEpoch = null, mint = null) {
 function updateChartHeaders() {
   const pDisplay = document.getElementById('chartPriceDisplay');
   const cDisplay = document.getElementById('chartChangeDisplay');
-  if (pDisplay) pDisplay.innerText = `${formatChartPrice(state.lastPrice)} SOL`;
+  if (pDisplay) pDisplay.innerText = formatChartMarketCap(state.lastPrice, true);
 
   if (state.candles.length > 1) {
     const first = state.candles[0].open;
@@ -846,7 +890,7 @@ function renderCandlestickChart() {
     ctx.moveTo(0, y);
     ctx.lineTo(chartRight, y);
     ctx.stroke();
-    ctx.fillText(formatChartPrice(pVal), chartRight + 6, y + 3);
+    ctx.fillText(formatChartMarketCap(pVal, false), chartRight + 6, y + 3);
   }
 
   const slotW = chartRight / state.candles.length;
@@ -922,7 +966,7 @@ function renderCandlestickChart() {
   ctx.fillRect(chartRight + 2, curY - 8, 86, 16);
   ctx.fillStyle = '#0a0d14';
   ctx.font = 'bold 9px JetBrains Mono';
-  ctx.fillText(formatChartPrice(state.lastPrice), chartRight + 4, curY + 4);
+  ctx.fillText(formatChartMarketCap(state.lastPrice, false), chartRight + 4, curY + 4);
 
   // Hover Tooltip / Crosshair
   if (state.hoverCandle) {
@@ -930,18 +974,40 @@ function renderCandlestickChart() {
     ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 1;
-    ctx.fillRect(10, 8, 280, 24);
-    ctx.strokeRect(10, 8, 280, 24);
+    ctx.fillRect(10, 8, 320, 24);
+    ctx.strokeRect(10, 8, 320, 24);
 
     ctx.fillStyle = '#e2e8f0';
     ctx.font = '9px JetBrains Mono';
-    ctx.fillText(`O:${formatChartPrice(hc.open)} H:${formatChartPrice(hc.high)} L:${formatChartPrice(hc.low)} C:${formatChartPrice(hc.close)}`, 14, 23);
+    ctx.fillText(ChartScale.formatOhlc(hc, ChartScale.supplyOf(activeChartSeries())), 14, 23);
   }
 }
 
 // ==================== RADIAL SPEEDOMETER GAUGE (SENTIMENT / BONDING) ====================
 
-function renderGauge(percentage = 0) {
+function paintCurve(payload) {
+  const pct = Number(payload.progressPct);
+  const complete = Boolean(payload.complete);
+  if (Number.isFinite(pct)) {
+    state.curveProgressPct = pct;
+    renderGauge(pct, complete);
+  }
+  const label = document.getElementById('migrationTargetLabel');
+  if (!label) return;
+  const sol = Number(payload.realSol);
+  const solText = Number.isFinite(sol) ? `${sol.toFixed(2)} SOL` : '— SOL';
+  if (complete) {
+    label.textContent = Number.isFinite(sol) && sol > 0
+      ? `Graduated · ${solText} in pool → PumpSwap`
+      : 'Graduated → PumpSwap';
+  } else {
+    label.textContent = Number.isFinite(sol)
+      ? `${solText} in curve → PumpSwap`
+      : 'Bonding curve → PumpSwap';
+  }
+}
+
+function renderGauge(percentage = 0, complete = false) {
   const canvas = document.getElementById('gaugeCanvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -969,8 +1035,8 @@ function renderGauge(percentage = 0) {
   ctx.stroke();
 
   // Value Arc with Gradient (Red -> Orange -> Yellow -> Green)
-  const effectivePct = percentage > 0 ? percentage : 75;
-  const pct = Math.min(100, Math.max(0, effectivePct)) / 100;
+  const effectivePct = Math.min(100, Math.max(0, Number(percentage) || 0));
+  const pct = effectivePct / 100;
   const currentAngle = startAngle + (pct * Math.PI);
 
   const grad = ctx.createLinearGradient(cx - r, cy, cx + r, cy);
@@ -1006,8 +1072,13 @@ function renderGauge(percentage = 0) {
   const valEl = document.getElementById('gaugeValueText');
   const pillEl = document.getElementById('curveSentimentPill');
   if (valEl) valEl.innerText = `${effectivePct.toFixed(0)}%`;
+  const caption = document.getElementById('gaugeCaption');
+  if (caption) caption.textContent = complete ? 'Graduated' : 'Bonding';
   if (pillEl) {
-    if (effectivePct > 70) {
+    if (complete) {
+      pillEl.innerText = 'GRADUATED → PUMPSWAP';
+      pillEl.className = 'text-[10px] font-bold text-cyan-300 font-mono';
+    } else if (effectivePct > 70) {
       pillEl.innerText = `${effectivePct.toFixed(0)}% BULLISH ▲`;
       pillEl.className = 'text-[10px] font-bold text-emerald-400 font-mono';
     } else if (effectivePct > 30) {
@@ -1612,14 +1683,24 @@ async function loadLiveStats() {
       state.activeToken = s.activeToken;
       updateActiveTokenUi(s.activeToken);
       state.curveProgressPct = s.curveProgressPct;
-      renderGauge(s.curveProgressPct);
+      paintCurve({
+        progressPct: s.curveProgressPct,
+        realSol: s.curveRealSol,
+        complete: s.curveComplete
+      });
 
       document.getElementById('deskSolValueDisplay').innerText = `${s.currentSolValue} SOL`;
-      document.getElementById('deskInvestedDisplay').innerText = `${s.totalSolInvested} SOL`;
+      document.getElementById('deskInvestedDisplay').innerText = s.totalSolInvested == null ? '—' : `${s.totalSolInvested} SOL`;
 
-      const pnlPrefix = s.pnlSol >= 0 ? '+' : '';
       const pnlDisplay = document.getElementById('deskPnlDisplay');
       const pnlBadge = document.getElementById('deskPnlStatusBadge');
+      if (s.pnlSol == null) {
+        pnlDisplay.innerText = '—';
+        pnlDisplay.className = 'text-2xl font-mono font-extrabold text-slate-400';
+        pnlBadge.className = 'badge-pnl-green';
+        pnlBadge.innerText = 'COST UNKNOWN';
+      } else {
+      const pnlPrefix = s.pnlSol >= 0 ? '+' : '';
 
       pnlDisplay.innerText = `${pnlPrefix}${s.pnlSol} SOL (${pnlPrefix}${s.pnlPct}%)`;
       if (s.pnlSol >= 0) {
@@ -1630,6 +1711,7 @@ async function loadLiveStats() {
         pnlDisplay.className = 'text-2xl font-mono font-extrabold text-rose-400';
         pnlBadge.className = 'badge-pnl-red';
         pnlBadge.innerText = '▼ DRAWDOWN';
+      }
       }
 
       if (s.dexInfo) {
@@ -1679,11 +1761,16 @@ function renderTradingWalletsTable(wallets) {
     const tr = document.createElement('tr');
     tr.className = 'border-b border-[#192235]/60 hover:bg-[#131b2b]/50 transition-colors text-xs font-mono';
 
-    const pnlSol = w.pnlSol !== undefined ? w.pnlSol : 0;
-    const pnlPct = w.pnlPct !== undefined ? w.pnlPct : 0;
-    const pnlPrefix = pnlSol >= 0 ? '+' : '';
-    const pnlClass = pnlSol >= 0 ? 'badge-pnl-green' : 'badge-pnl-red';
-    const pnlSymbol = pnlSol >= 0 ? '▲' : '▼';
+    const pnlKnown = w.pnlSol != null && Number.isFinite(Number(w.pnlSol));
+    const pnlSol = pnlKnown ? Number(w.pnlSol) : null;
+    const pnlPct = pnlKnown ? Number(w.pnlPct) : null;
+    const pnlPrefix = pnlKnown && pnlSol >= 0 ? '+' : '';
+    const pnlClass = !pnlKnown ? 'text-slate-500' : (pnlSol >= 0 ? 'badge-pnl-green' : 'badge-pnl-red');
+    const pnlSymbol = !pnlKnown ? '' : (pnlSol >= 0 ? '▲' : '▼');
+    const costText = w.solInvested == null ? '—' : Number(w.solInvested).toFixed(3);
+    const pnlText = pnlKnown
+      ? `${pnlSymbol} ${pnlPrefix}${pnlSol.toFixed(3)} (${pnlPrefix}${Number(pnlPct || 0).toFixed(1)}%)`
+      : '—';
     const isChecked = isInitial ? true : prevChecked.has(w.address);
 
     const address = String(w.address || '');
@@ -1707,8 +1794,8 @@ function renderTradingWalletsTable(wallets) {
       </td>
       <td class="py-2 px-2 text-right"><span class="sol-dual"></span></td>
       <td class="py-2 px-2 text-right text-slate-200 token-amt">${escapeHtml((Number(w.tokens) || 0).toLocaleString())}</td>
-      <td class="py-2 px-2 text-right text-slate-400 cost-amt">${escapeHtml((Number(w.solInvested) || 0).toFixed(3))}</td>
-      <td class="py-2 px-2 text-right font-semibold text-slate-200">${escapeHtml((Number(w.currentValue) || 0).toFixed(3))}</td>
+      <td class="py-2 px-2 text-right text-slate-400 cost-amt">${escapeHtml(costText)}</td>
+      <td class="py-2 px-2 text-right font-semibold text-slate-200 value-amt">${escapeHtml((Number(w.currentValue) || 0).toFixed(3))}</td>
       <td class="py-2 px-2 text-center">
         <span class="pnl-amt ${pnlClass} text-[10px] font-mono"></span>
       </td>
@@ -1744,7 +1831,7 @@ function renderTradingWalletsTable(wallets) {
     const scan = tr.querySelector('.solscan-link');
     if (safeAddress) scan.href = `https://solscan.io/account/${safeAddress}`;
     else scan.removeAttribute('href');
-    tr.querySelector('td:nth-child(7) span').textContent = `${pnlSymbol} ${pnlPrefix}${pnlSol.toFixed(3)} (${pnlPrefix}${pnlPct.toFixed(1)}%)`;
+    tr.querySelector('td:nth-child(7) span').textContent = pnlText;
     tr.querySelectorAll('[data-buy]').forEach(button => {
       button.addEventListener('click', () => executeInlineBuy(safeAddress, Number(button.dataset.buy)));
     });
@@ -2899,6 +2986,7 @@ function renderTradeTape(trades) {
 
 function applyPublicTradePrice(trade, mint) {
   if (!mint) return;
+  noteChartScale(mint, trade);
   if (trade.priceOnly && Number(trade.priceSol) > 0) {
     const epoch = mint === state.chartToken ? state.chartEpoch : null;
     pushChartTick(Number(trade.priceSol), 0, epoch, mint);
