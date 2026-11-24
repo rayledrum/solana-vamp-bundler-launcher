@@ -11,6 +11,7 @@ const {
   ValidationError
 } = require('./validation');
 const { fetchSingleVersionedTx, sendAndConfirmVersioned } = require('./portalTx');
+const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTradeFeeSol } = require('./pnl');
 
 class TradingEngine {
   constructor() {
@@ -25,6 +26,81 @@ class TradingEngine {
     this.pumpRetryTimer = null;
     this.pumpMint = null;
     this.sessionSpentSol = 0;
+    this.costBooks = new Map();
+    this.priceSol = null;
+    this.priceMint = null;
+    this.onMintChange = null;
+  }
+
+  bookKey(mint, address) {
+    return `${mint}:${address}`;
+  }
+
+  clearMintBooks(mint) {
+    const prefix = `${mint}:`;
+    for (const key of [...this.costBooks.keys()]) {
+      if (key.startsWith(prefix)) this.costBooks.delete(key);
+    }
+  }
+
+  noteFill(mint, address, fill) {
+    if (!mint || !address) return;
+    const key = this.bookKey(mint, address);
+    const book = this.costBooks.get(key) || emptyBook();
+    const next = fill.side === 'sell' ? applySell(book, fill) : applyBuy(book, fill);
+    this.costBooks.set(key, next);
+    if (!walletManager.simulationMode) this.publishPnl(mint);
+  }
+
+  noteOnChainTokens(address, mint, tokenAmount) {
+    if (!mint || mint !== this.activeToken) return;
+    const position = this.positions.get(address) || { tokens: 0, solInvested: 0 };
+    position.tokens = Math.max(0, Number(tokenAmount) || 0);
+    this.positions.set(address, position);
+    if (!walletManager.simulationMode) this.publishPnl(mint);
+  }
+
+  noteMarketPrice(mint, price, meta = {}) {
+    if (meta.simulated || walletManager.simulationMode) return;
+    if (!mint || mint !== this.activeToken) return;
+    if (!Number.isFinite(price) || price <= 0) return;
+    this.priceSol = price;
+    this.priceMint = mint;
+    this.publishPnl(mint);
+  }
+
+  publishPnl(mint) {
+    if (walletManager.simulationMode || !mint || mint !== this.activeToken) return;
+    const price = this.priceMint === mint ? this.priceSol : null;
+    const addresses = new Set(walletManager.walletList().map(wallet => wallet.publicKey.toBase58()));
+    for (const key of this.costBooks.keys()) {
+      if (key.startsWith(`${mint}:`)) addresses.add(key.slice(mint.length + 1));
+    }
+    const wallets = [];
+    let realizedSol = 0;
+    let unrealizedSol = 0;
+    let costBasisSol = 0;
+    let tokens = 0;
+    let priced = price != null;
+    for (const address of addresses) {
+      const book = this.costBooks.get(this.bookKey(mint, address)) || emptyBook();
+      const onChain = this.positions.has(address) ? this.positions.get(address).tokens : null;
+      const quote = quotePosition(book, onChain, price);
+      wallets.push({ address, ...quote });
+      realizedSol += quote.realizedSol;
+      costBasisSol += quote.costBasisSol;
+      tokens += quote.tokens;
+      if (quote.unrealizedSol == null) priced = false;
+      else unrealizedSol += quote.unrealizedSol;
+    }
+    const pnlSol = priced ? realizedSol + unrealizedSol : null;
+    const pnlPct = pnlSol == null || costBasisSol <= 0 ? null : (pnlSol / costBasisSol) * 100;
+    this.broadcast('PNL_UPDATE', {
+      mint,
+      priceSol: price,
+      wallets,
+      total: { tokens, costBasisSol, realizedSol, unrealizedSol: priced ? unrealizedSol : null, pnlSol, pnlPct }
+    });
   }
 
   setBroadcaster(fn) {
@@ -113,8 +189,11 @@ class TradingEngine {
             signature: trade.signature || '',
             marketCapSol: trade.marketCapSol || 0,
             mint,
+            simulated: false,
             timestamp: Date.now()
           });
+          const price = priceFromTrade(trade);
+          if (price) this.noteMarketPrice(mint, price, { simulated: false });
         }
       } catch (err) { /* ignore malformed feed messages */ }
     });
@@ -141,14 +220,25 @@ class TradingEngine {
   setActiveToken(mint, initialInvestments = []) {
     this.activeToken = mint;
     this.positions.clear();
+    this.clearMintBooks(mint);
+    this.priceSol = null;
+    this.priceMint = null;
     initialInvestments.forEach(item => {
       this.positions.set(item.address, {
         tokens: item.tokens,
         solInvested: item.sol
       });
+      if ((item.tokens || 0) > 0 || (item.sol || 0) > 0) {
+        this.noteFill(mint, item.address, {
+          side: 'buy',
+          tokensBought: item.tokens || 0,
+          solSpent: item.sol || 0
+        });
+      }
     });
     this.broadcast('TOKEN_TRACKED', { mint, positionsCount: initialInvestments.length });
     this.connectPumpPortal(mint);
+    if (this.onMintChange) this.onMintChange(mint);
   }
 
   async getLiveStats() {
@@ -170,6 +260,9 @@ class TradingEngine {
         role: 'Master Dev',
         address: master.address,
         solBalance: master.balance,
+        simBalance: master.simBalance,
+        liveBalance: master.liveBalance,
+        liveError: master.liveError || null,
         tokens: 0,
         solInvested: 0,
         currentValue: 0,
@@ -181,6 +274,9 @@ class TradingEngine {
           role: `Sub #${wallet.index}`,
           address: wallet.address,
           solBalance: wallet.solBalance,
+          simBalance: wallet.simBalance,
+          liveBalance: wallet.liveBalance,
+          liveError: wallet.liveError || null,
           tokens: 0,
           solInvested: 0,
           currentValue: 0,
@@ -227,6 +323,9 @@ class TradingEngine {
       role: 'Master Dev',
       address: master.address,
       solBalance: master.balance,
+      simBalance: master.simBalance,
+      liveBalance: master.liveBalance,
+      liveError: master.liveError || null,
       tokens: devPos.tokens,
       solInvested: devPos.solInvested,
       currentValue: Number(devCurrentVal.toFixed(4)),
@@ -246,6 +345,9 @@ class TradingEngine {
         role: `Sub #${wallet.index}`,
         address: wallet.address,
         solBalance: wallet.solBalance,
+        simBalance: wallet.simBalance,
+        liveBalance: wallet.liveBalance,
+        liveError: wallet.liveError || null,
         tokens: position.tokens,
         solInvested: position.solInvested,
         currentValue: Number(subVal.toFixed(4)),
@@ -339,6 +441,7 @@ class TradingEngine {
         this.sessionSpentSol += amountPerWallet;
         totalBoughtTokens += tokensOut;
         totalSpentSol += amountPerWallet;
+        this.noteFill(mint, addr, { side: 'buy', tokensBought: tokensOut, solSpent: amountPerWallet });
         this.broadcast('PUBLIC_TRADE', {
           txType: 'buy',
           solAmount: amountPerWallet,
@@ -391,6 +494,12 @@ class TradingEngine {
         this.sessionSpentSol += amountPerWallet;
         totalBoughtTokens += tokensOut;
         totalSpentSol += amountPerWallet;
+        walletManager.invalidateLiveBalances();
+        this.noteFill(mint, addr, {
+          side: 'buy',
+          tokensBought: tokensOut,
+          solSpent: amountPerWallet + knownTradeFeeSol(config.PRIORITY_FEE_SOL)
+        });
         this.broadcast('PUBLIC_TRADE', {
           txType: 'buy',
           solAmount: amountPerWallet,
@@ -481,6 +590,7 @@ class TradingEngine {
         walletManager.save();
         totalSoldTokens += tokensToSell;
         totalReceivedSol += solGained;
+        this.noteFill(mint, addr, { side: 'sell', tokensSold: tokensToSell, solReceived: solGained });
         this.broadcast('PUBLIC_TRADE', {
           txType: 'sell',
           solAmount: Number(solGained.toFixed(4)),
@@ -530,6 +640,12 @@ class TradingEngine {
         const solGained = pumpfun.calculateSellOutput(sold || tokensToSell, 15);
         totalSoldTokens += sold || tokensToSell;
         totalReceivedSol += solGained;
+        walletManager.invalidateLiveBalances();
+        this.noteFill(mint, addr, {
+          side: 'sell',
+          tokensSold: sold || tokensToSell,
+          solReceived: Math.max(0, solGained - knownTradeFeeSol(config.PRIORITY_FEE_SOL))
+        });
         this.broadcast('PUBLIC_TRADE', {
           txType: 'sell',
           solAmount: Number(solGained.toFixed(4)),

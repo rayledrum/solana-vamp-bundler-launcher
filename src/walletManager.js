@@ -29,6 +29,8 @@ class WalletManager {
     this.subWallets = [];
     this.simulationMode = options.simulationMode !== undefined ? options.simulationMode : config.SIMULATION_MODE;
     this.simulatedBalances = new Map();
+    this.liveBalanceCache = null;
+    this.liveBalanceTtlMs = options.liveBalanceTtlMs || 5000;
     if (!options.skipInit) this.init();
   }
 
@@ -122,6 +124,110 @@ class WalletManager {
     fs.chmodSync(this.dataFile, 0o600);
   }
 
+  invalidateLiveBalances() {
+    this.liveBalanceCache = null;
+  }
+
+  noteLiveSol(address, sol) {
+    const key = this.walletList().map(wallet => wallet.publicKey.toBase58()).join('|');
+    if (!this.liveBalanceCache || this.liveBalanceCache.key !== key || !this.liveBalanceCache.values) {
+      this.liveBalanceCache = { at: Date.now(), key, values: {}, error: null };
+    }
+    this.liveBalanceCache.values[address] = sol;
+    this.liveBalanceCache.at = Date.now();
+    this.liveBalanceCache.error = null;
+  }
+
+  noteTokenBalance(address, mint, amount) {
+    if (!this.tokenNotes) this.tokenNotes = new Map();
+    this.tokenNotes.set(`${address}:${mint}`, { amount: Number(amount) || 0, at: Date.now() });
+  }
+
+  tokenBalanceOf(address, mint) {
+    if (!this.tokenNotes) return null;
+    const row = this.tokenNotes.get(`${address}:${mint}`);
+    if (!row || Date.now() - row.at > 30000) return null;
+    return row.amount;
+  }
+
+  walletList() {
+    return [this.masterWallet, ...this.subWallets].filter(Boolean);
+  }
+
+  // One confirmed RPC read for every loaded wallet. A missing account is 0 SOL.
+  // A failed or timed-out RPC leaves live balances null instead of inventing them.
+  async readLiveSolMap(force = false) {
+    const wallets = this.walletList();
+    const key = wallets.map(wallet => wallet.publicKey.toBase58()).join('|');
+    const now = Date.now();
+    const cache = this.liveBalanceCache;
+    if (!force && cache && cache.key === key && (now - cache.at) < this.liveBalanceTtlMs) {
+      return cache;
+    }
+    try {
+      const infos = await Promise.race([
+        this.connection.getMultipleAccountsInfo(wallets.map(wallet => wallet.publicKey), 'confirmed'),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('RPC balance read timed out')), 8000);
+        })
+      ]);
+      if (!Array.isArray(infos)) throw new Error('RPC balance read returned an unexpected result');
+      const values = {};
+      wallets.forEach((wallet, index) => {
+        const info = infos[index];
+        const lamports = info && Number.isFinite(info.lamports) ? info.lamports : 0;
+        values[wallet.publicKey.toBase58()] = lamports / LAMPORTS_PER_SOL;
+      });
+      this.liveBalanceCache = { at: now, key, values, error: null };
+    } catch (err) {
+      this.liveBalanceCache = { at: now, key, values: null, error: err.message || 'RPC balance read failed' };
+    }
+    return this.liveBalanceCache;
+  }
+
+  simBalanceOf(address) {
+    if (this.simulatedBalances.has(address)) return Number(this.simulatedBalances.get(address));
+    if (this.simulationMode && this.masterWallet && address === this.masterWallet.publicKey.toBase58()) return 15;
+    return 0;
+  }
+
+  balanceFields(address, liveMap) {
+    const simBalance = this.simBalanceOf(address);
+    let liveBalance = null;
+    let liveError = null;
+    if (!liveMap || liveMap.error || !liveMap.values || !Object.prototype.hasOwnProperty.call(liveMap.values, address)) {
+      liveError = (liveMap && liveMap.error) || 'Live balance unavailable';
+    } else {
+      liveBalance = liveMap.values[address];
+    }
+    return {
+      simBalance,
+      liveBalance,
+      liveError,
+      balance: this.simulationMode ? simBalance : liveBalance
+    };
+  }
+
+  async balanceBook() {
+    const liveMap = await this.readLiveSolMap();
+    const rows = this.walletList().map(wallet => ({
+      address: wallet.publicKey.toBase58(),
+      ...this.balanceFields(wallet.publicKey.toBase58(), liveMap)
+    }));
+    const simBalance = rows.reduce((sum, row) => sum + row.simBalance, 0);
+    const liveKnown = rows.length > 0 && rows.every(row => row.liveBalance != null && Number.isFinite(row.liveBalance));
+    const liveBalance = liveKnown ? rows.reduce((sum, row) => sum + row.liveBalance, 0) : null;
+    return {
+      rows,
+      totals: {
+        simBalance,
+        liveBalance,
+        liveError: liveKnown ? null : ((liveMap && liveMap.error) || 'Live balance unavailable'),
+        balance: this.simulationMode ? simBalance : liveBalance
+      }
+    };
+  }
+
   async solBalanceOf(keypair) {
     const address = keypair.publicKey.toBase58();
     if (this.simulationMode) {
@@ -195,47 +301,34 @@ class WalletManager {
   }
 
   async getMasterInfo() {
-    const address = this.masterWallet.publicKey.toBase58();
-    let balance = 0;
-    if (this.simulationMode) {
-      balance = this.simulatedBalances.get(address);
-      if (balance === undefined) balance = 15.0;
-    } else {
-      try {
-        const lamports = await this.connection.getBalance(this.masterWallet.publicKey);
-        balance = lamports / LAMPORTS_PER_SOL;
-      } catch (err) {
-        console.warn('Failed to fetch real master balance, using 0:', err.message);
-      }
-    }
-
+    const book = await this.balanceBook();
+    const master = book.rows[0] || this.balanceFields(this.masterWallet.publicKey.toBase58(), { error: 'No master wallet' });
     return {
-      address,
-      balance,
-      simulation: this.simulationMode
+      address: master.address,
+      balance: master.balance,
+      simBalance: master.simBalance,
+      liveBalance: master.liveBalance,
+      liveError: master.liveError,
+      simulation: this.simulationMode,
+      totals: book.totals
     };
   }
 
   async getSubWalletsInfo(tokenMint = null) {
+    const book = await this.balanceBook();
+    const byAddress = new Map(book.rows.map(row => [row.address, row]));
     const list = [];
     for (let i = 0; i < this.subWallets.length; i++) {
       const wallet = this.subWallets[i];
       const address = wallet.publicKey.toBase58();
-      let solBalance = 0;
+      const fields = byAddress.get(address) || this.balanceFields(address, { error: 'Live balance unavailable' });
       let tokenBalance = 0;
 
-      if (this.simulationMode) {
-        solBalance = this.simulatedBalances.get(address) || 0.0;
-        tokenBalance = 0;
-      } else {
-        try {
-          const lamports = await this.connection.getBalance(wallet.publicKey);
-          solBalance = lamports / LAMPORTS_PER_SOL;
-        } catch (e) {
-          solBalance = 0;
-        }
-
-        if (tokenMint) {
+      if (!this.simulationMode && tokenMint) {
+        const noted = this.tokenBalanceOf(address, tokenMint);
+        if (noted != null) {
+          tokenBalance = noted;
+        } else {
           try {
             const mintPubkey = new PublicKey(tokenMint);
             const ata = await getAssociatedTokenAddress(mintPubkey, wallet.publicKey);
@@ -250,11 +343,15 @@ class WalletManager {
       list.push({
         index: i + 1,
         address,
-        solBalance,
+        solBalance: fields.balance,
+        simBalance: fields.simBalance,
+        liveBalance: fields.liveBalance,
+        liveError: fields.liveError,
+        balance: fields.balance,
         tokenBalance
       });
     }
-
+    list.totals = book.totals;
     return list;
   }
 
@@ -319,6 +416,7 @@ class WalletManager {
     }
 
     const sig = await sendAndConfirmTransaction(this.connection, tx, [this.masterWallet]);
+    this.invalidateLiveBalances();
     return {
       success: true,
       simulation: false,
@@ -390,6 +488,7 @@ class WalletManager {
     }
 
     const failed = results.filter(row => row.success === false);
+    this.invalidateLiveBalances();
     return {
       success: failed.length === 0,
       simulation: false,

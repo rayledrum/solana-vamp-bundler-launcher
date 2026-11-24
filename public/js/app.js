@@ -2,6 +2,10 @@
 const state = {
   currentTab: 'trading',
   simulationMode: true,
+  appWsOpen: false,
+  feedConnected: false,
+  feedSubscribed: 0,
+  lastLiveBalanceAt: 0,
   currentSlot: null,
   masterWallet: null,
   subWallets: [],
@@ -102,10 +106,17 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTrendingVampTokens();
   loadLiveStats();
 
-  // Periodic polling for stats & balances (every 3 seconds)
+  // Periodic polling for stats & balances (every 3 seconds).
+  // Live mode pushes SOL and token balances over the app socket. This poll is only
+  // the fallback, and it is how simulation still refreshes the on-chain LIVE number.
   setInterval(() => {
     loadLiveStats();
   }, 3000);
+  setInterval(() => {
+    loadMasterWallet();
+    loadSubWallets();
+  }, 20000);
+  setInterval(renderFeedStatus, 1000);
 });
 
 // ==================== REAL-TIME WEBSOCKET PIPELINE ====================
@@ -125,6 +136,8 @@ function connectWebSocket() {
   }
 
   state.ws.onopen = () => {
+    state.appWsOpen = true;
+    renderFeedStatus();
     logTerminal('[WebSocket] Connected to real-time Helius & Jito telemetry');
   };
 
@@ -142,6 +155,9 @@ function connectWebSocket() {
   };
 
   state.ws.onclose = () => {
+    state.appWsOpen = false;
+    state.feedConnected = false;
+    renderFeedStatus();
     logTerminal('[WebSocket] Connection closed. Reconnecting in 3s...');
     setTimeout(connectWebSocket, 3000);
   };
@@ -262,7 +278,139 @@ function handleWsMessage(msg) {
     case 'PUBLIC_TRADE':
       renderTradeTick(msg.payload);
       break;
+
+    case 'BALANCE_UPDATE':
+      applyLiveSolUpdate(msg.payload || {});
+      break;
+
+    case 'TOKEN_BALANCE_UPDATE':
+      applyLiveTokenUpdate(msg.payload || {});
+      break;
+
+    case 'PNL_UPDATE':
+      applyPnlUpdate(msg.payload || {});
+      break;
+
+    case 'FEED_STATUS':
+      state.feedConnected = Boolean(msg.payload && msg.payload.connected);
+      state.feedSubscribed = msg.payload ? msg.payload.subscribed : 0;
+      renderFeedStatus();
+      break;
   }
+}
+
+const uiQueue = [];
+let uiFrame = 0;
+let uiLastFlush = 0;
+
+function queueUi(fn) {
+  uiQueue.push(fn);
+  if (uiFrame) return;
+  const pump = () => {
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - uiLastFlush < 100) {
+      uiFrame = requestAnimationFrame(pump);
+      return;
+    }
+    uiLastFlush = now;
+    uiFrame = 0;
+    const batch = uiQueue.splice(0, uiQueue.length);
+    batch.forEach(run => {
+      try { run(); } catch (err) { console.error(err); }
+    });
+  };
+  uiFrame = requestAnimationFrame(pump);
+}
+
+function touchLiveStamp() {
+  state.lastLiveBalanceAt = Date.now();
+  renderFeedStatus();
+}
+
+function walletRow(address) {
+  if (state.masterWallet && state.masterWallet.address === address) return state.masterWallet;
+  return (state.subWallets || []).find(row => row.address === address) || null;
+}
+
+function applyLiveSolUpdate(payload) {
+  const row = walletRow(payload.address);
+  if (row) {
+    row.liveBalance = payload.liveBalance;
+    row.liveError = null;
+    if (!state.simulationMode) row.balance = payload.liveBalance;
+  }
+  touchLiveStamp();
+  queueUi(() => {
+    renderStoredBalances();
+    document.querySelectorAll(`[data-wallet="${payload.address}"] .sol-dual`).forEach(el => {
+      const current = walletRow(payload.address);
+      if (current) renderDualBalance(el, current);
+    });
+  });
+}
+
+function applyLiveTokenUpdate(payload) {
+  if (payload.mint && state.activeToken && payload.mint !== state.activeToken) return;
+  if (state.chartToken && payload.mint && payload.mint !== state.chartToken && payload.mint !== state.activeToken) return;
+  const row = walletRow(payload.address);
+  if (row) row.tokens = payload.tokenAmount;
+  touchLiveStamp();
+  queueUi(() => {
+    const cell = document.querySelector(`[data-wallet="${payload.address}"] .token-amt`);
+    if (cell) cell.textContent = String(Number(payload.tokenAmount) || 0);
+  });
+}
+
+function applyPnlUpdate(payload) {
+  if (state.simulationMode) return;
+  if (payload.mint && state.activeToken && payload.mint !== state.activeToken) return;
+  queueUi(() => paintPnl(payload));
+}
+
+function paintPnl(payload) {
+  (payload.wallets || []).forEach(row => {
+    const tr = document.querySelector(`[data-wallet="${row.address}"]`);
+    if (!tr) return;
+    const pnl = tr.querySelector('.pnl-amt');
+    const cost = tr.querySelector('.cost-amt');
+    if (cost && row.costBasisSol != null) cost.textContent = Number(row.costBasisSol).toFixed(3);
+    if (pnl && row.pnlSol != null) {
+      const sign = row.pnlSol >= 0 ? '+' : '';
+      pnl.textContent = `${row.pnlSol >= 0 ? '▲' : '▼'} ${sign}${Number(row.pnlSol).toFixed(3)} (${sign}${Number(row.pnlPct || 0).toFixed(1)}%)`;
+      pnl.className = `pnl-amt text-[10px] font-mono ${row.pnlSol >= 0 ? 'badge-pnl-green' : 'badge-pnl-red'}`;
+    }
+  });
+  const total = payload.total;
+  const pnlDisplay = document.getElementById('deskPnlDisplay');
+  if (!total || total.pnlSol == null || !pnlDisplay) return;
+  const sign = total.pnlSol >= 0 ? '+' : '';
+  pnlDisplay.textContent = `${sign}${Number(total.pnlSol).toFixed(4)} SOL (${sign}${Number(total.pnlPct || 0).toFixed(2)}%)`;
+  pnlDisplay.className = total.pnlSol >= 0
+    ? 'text-2xl font-mono font-extrabold text-emerald-400'
+    : 'text-2xl font-mono font-extrabold text-rose-400';
+}
+
+function renderFeedStatus() {
+  const el = document.getElementById('balanceFeedStatus');
+  if (!el) return;
+  if (state.simulationMode) {
+    el.textContent = 'sim · polled';
+    el.style.color = '#78909c';
+    el.title = 'Simulation uses the ledger immediately. On-chain LIVE balances refresh on a timer, not a socket.';
+    return;
+  }
+  const ageSec = state.lastLiveBalanceAt ? Math.round((Date.now() - state.lastLiveBalanceAt) / 1000) : null;
+  const ageText = ageSec == null ? 'no update yet' : `${ageSec}s ago`;
+  const disconnected = !state.feedConnected || !state.appWsOpen;
+  if (disconnected && (ageSec == null || ageSec > 10)) {
+    el.textContent = `stale · feed disconnected · ${ageText}`;
+    el.style.color = '#f04c5e';
+    el.title = 'No live balance update for more than 10 seconds while the feed is disconnected.';
+    return;
+  }
+  el.textContent = `live · ${ageText}`;
+  el.style.color = '#00c48c';
+  el.title = `Account socket connected (${state.feedSubscribed || 0} subscriptions).`;
 }
 
 // ==================== ULTRA-FAST CANDLESTICK CHART (DOWN TO 1s / 5s) ====================
@@ -1026,6 +1174,7 @@ function updateSimulationUi(isSim) {
     simBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded text-slate-400 hover:text-cyan-400 transition-all';
     if (banner) banner.classList.add('hidden');
   }
+  if (typeof renderStoredBalances === 'function') renderStoredBalances();
 }
 
 // ==================== MANUAL TRADING ENGINE (BUY GREEN / SELL RED) ====================
@@ -1438,6 +1587,20 @@ async function loadLiveStats() {
 
     if (s.wallets && s.wallets.length > 0) {
       renderTradingWalletsTable(s.wallets);
+      const simBalance = s.wallets.reduce((sum, row) => sum + (Number(row.simBalance) || 0), 0);
+      const liveKnown = s.wallets.every(row => row.liveBalance != null && Number.isFinite(Number(row.liveBalance)));
+      state.balanceTotals = {
+        simBalance,
+        liveBalance: liveKnown ? s.wallets.reduce((sum, row) => sum + Number(row.liveBalance), 0) : null,
+        liveError: s.wallets.map(row => row.liveError).find(Boolean) || null
+      };
+      const masterRow = s.wallets.find(row => row.role === 'Master Dev');
+      if (masterRow && state.masterWallet) {
+        state.masterWallet.simBalance = masterRow.simBalance;
+        state.masterWallet.liveBalance = masterRow.liveBalance;
+        state.masterWallet.liveError = masterRow.liveError;
+      }
+      renderStoredBalances();
     }
   } catch (e) {
     // ignore
@@ -1471,6 +1634,7 @@ function renderTradingWalletsTable(wallets) {
 
     const address = String(w.address || '');
     const safeAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) ? address : '';
+    tr.dataset.wallet = safeAddress;
     tr.innerHTML = `
       <td class="py-2 px-2" style="width:26px;">
         <input type="checkbox" class="row-checkbox" ${isChecked ? 'checked' : ''} style="accent-color:#00d4ff;width:13px;height:13px;cursor:pointer;">
@@ -1487,12 +1651,12 @@ function renderTradingWalletsTable(wallets) {
           </a>
         </div>
       </td>
-      <td class="py-2 px-2 text-right font-bold text-cyan-400">${escapeHtml((Number(w.solBalance) || 0).toFixed(3))}</td>
-      <td class="py-2 px-2 text-right text-slate-200">${escapeHtml((Number(w.tokens) || 0).toLocaleString())}</td>
-      <td class="py-2 px-2 text-right text-slate-400">${escapeHtml((Number(w.solInvested) || 0).toFixed(3))}</td>
+      <td class="py-2 px-2 text-right"><span class="sol-dual"></span></td>
+      <td class="py-2 px-2 text-right text-slate-200 token-amt">${escapeHtml((Number(w.tokens) || 0).toLocaleString())}</td>
+      <td class="py-2 px-2 text-right text-slate-400 cost-amt">${escapeHtml((Number(w.solInvested) || 0).toFixed(3))}</td>
       <td class="py-2 px-2 text-right font-semibold text-slate-200">${escapeHtml((Number(w.currentValue) || 0).toFixed(3))}</td>
       <td class="py-2 px-2 text-center">
-        <span class="${pnlClass} text-[10px] font-mono"></span>
+        <span class="pnl-amt ${pnlClass} text-[10px] font-mono"></span>
       </td>
       <td class="py-2 px-2 text-right">
         <div style="display:flex;align-items:center;justify-content:flex-end;gap:5px;">
@@ -1515,6 +1679,7 @@ function renderTradingWalletsTable(wallets) {
     const box = tr.querySelector('.row-checkbox');
     box.value = safeAddress;
     box.addEventListener('change', () => updateSelectedCount());
+    renderDualBalance(tr.querySelector('.sol-dual'), w);
     tr.querySelector('.font-bold').textContent = String(w.role || '');
     tr.querySelector('.addr-short').textContent = safeAddress ? `${safeAddress.slice(0, 4)}...${safeAddress.slice(-4)}` : '';
     tr.querySelector('.copy-addr').addEventListener('click', () => {
@@ -1762,13 +1927,68 @@ async function executeLaunchBundle() {
 
 // ==================== WALLET HELPERS ====================
 
+function formatSolAmount(value) {
+  return Number(value).toFixed(3);
+}
+
+function renderDualBalance(el, row) {
+  if (!el || !row) return;
+  const sim = Number(row.simBalance);
+  const live = row.liveBalance;
+  const liveKnown = live != null && Number.isFinite(Number(live));
+  el.replaceChildren();
+  const simEl = document.createElement('span');
+  simEl.textContent = 'SIM ' + formatSolAmount(Number.isFinite(sim) ? sim : 0) + ' SOL';
+  const sep = document.createElement('span');
+  sep.textContent = ' / ';
+  const liveEl = document.createElement('span');
+  if (liveKnown) {
+    liveEl.textContent = 'LIVE ' + formatSolAmount(live) + ' SOL';
+    liveEl.title = 'On-chain balance (confirmed)';
+  } else {
+    liveEl.textContent = 'LIVE —';
+    liveEl.title = row.liveError || 'Live balance unavailable';
+  }
+  const simMode = state.simulationMode !== false;
+  const active = simMode ? simEl : liveEl;
+  const quiet = simMode ? liveEl : simEl;
+  active.style.fontWeight = '800';
+  active.style.color = simMode ? '#00d4ff' : '#f04c5e';
+  quiet.style.opacity = '0.45';
+  el.append(simEl, sep, liveEl);
+}
+
+function totalsFromState() {
+  const rows = [];
+  if (state.masterWallet) rows.push(state.masterWallet);
+  (state.subWallets || []).forEach(row => rows.push(row));
+  if (!rows.length) return null;
+  const simBalance = rows.reduce((sum, row) => sum + (Number(row.simBalance) || 0), 0);
+  const liveKnown = rows.every(row => row.liveBalance != null && Number.isFinite(Number(row.liveBalance)));
+  return {
+    simBalance,
+    liveBalance: liveKnown ? rows.reduce((sum, row) => sum + Number(row.liveBalance), 0) : null,
+    liveError: rows.map(row => row.liveError).find(Boolean) || null
+  };
+}
+
+function renderStoredBalances() {
+  if (state.balanceTotals) renderDualBalance(document.getElementById('headerDevBalance'), state.balanceTotals);
+  else renderDualBalance(document.getElementById('headerDevBalance'), totalsFromState());
+  if (state.masterWallet) {
+    renderDualBalance(document.getElementById('masterBalanceLine'), state.masterWallet);
+    renderDualBalance(document.getElementById('disperseBalanceHint'), state.masterWallet);
+  }
+}
+
 async function loadMasterWallet() {
   try {
     const res = await apiFetch('/api/wallets/master');
     const data = await res.json();
     if (data.master) {
       state.masterWallet = data.master;
-      document.getElementById('headerDevBalance').innerText = `${data.master.balance.toFixed(3)} SOL`;
+      if (data.totals) state.balanceTotals = data.totals;
+      renderStoredBalances();
       const addrIn = document.getElementById('masterAddressInput');
       const keyIn = document.getElementById('masterKeyInput');
       if (addrIn) addrIn.value = data.master.address;
@@ -1788,6 +2008,8 @@ async function loadSubWallets() {
     const data = await res.json();
     if (data.subWallets) {
       state.subWallets = data.subWallets;
+      if (data.totals) state.balanceTotals = data.totals;
+      renderStoredBalances();
       renderSubWalletBuysInputs();
       renderSubWalletsTable();
       calculateBundleMetrics();
@@ -1809,11 +2031,12 @@ function renderSubWalletBuysInputs() {
     div.className = 'bg-[#090d16] p-1.5 rounded border border-[#192235] space-y-1';
     div.innerHTML = `
       <div class="flex justify-between items-center text-[9px] text-slate-400">
-        <span class="font-bold">#${idx + 1} (${w.address.slice(0, 4)}...)</span>
-        <span class="font-mono text-cyan-400">${w.solBalance.toFixed(2)} SOL</span>
+        <span class="font-bold">#${idx + 1} (${String(w.address || '').slice(0, 4)}...)</span>
+        <span class="sub-buy-bal font-mono"></span>
       </div>
       <input type="number" step="0.01" min="0" max="0.1" value="0" id="subBuyInput-${idx}" data-fn="bundleMetrics" data-evt="input" class="input-field py-0.5 px-1.5 text-xs font-mono font-bold text-center">
     `;
+    renderDualBalance(div.querySelector('.sub-buy-bal'), w);
     container.appendChild(div);
   });
 }
@@ -1827,6 +2050,7 @@ function renderSubWalletsTable() {
     const tr = document.createElement('tr');
     tr.className = 'border-b border-[#192235]/60 hover:bg-[#131b2b]/50 transition-colors text-xs font-mono';
     const address = String(w.address || '');
+    tr.dataset.wallet = address;
     tr.innerHTML = `
       <td class="py-2 px-2 text-slate-400">${escapeHtml(w.index)}</td>
       <td class="py-2 px-2 text-slate-200">
@@ -1837,9 +2061,10 @@ function renderSubWalletsTable() {
           </button>
         </div>
       </td>
-      <td class="py-2 px-2 text-right font-bold text-cyan-400">${escapeHtml((w.solBalance || 0).toFixed(4))} SOL</td>
+      <td class="py-2 px-2 text-right"><span class="sol-dual"></span></td>
       <td class="py-2 px-2 text-right text-[10px] text-slate-500">Export only</td>
     `;
+    renderDualBalance(tr.querySelector('.sol-dual'), w);
     tr.querySelector('span').textContent = `${address.slice(0, 8)}...${address.slice(-6)}`;
     tr.querySelector('[data-copy-address]').addEventListener('click', () => {
       navigator.clipboard.writeText(address);

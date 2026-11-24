@@ -12,6 +12,7 @@ const tradingEngine = require('./tradingEngine');
 const { createAuthMiddleware, loadOrCreateApiToken, tokenAccepted } = require('./auth');
 const { fetchHttpsImage } = require('./safeImage');
 const { applySimulationChange, ignoredModeMessage } = require('./simulationMode');
+const { LiveAccountFeed } = require('./liveFeed');
 const {
   parseStrictBoolean,
   requirePositive,
@@ -79,6 +80,32 @@ function broadcast(data) {
 }
 tradingEngine.setBroadcaster(broadcast);
 bundler.setBroadcaster(broadcast);
+
+const liveFeed = new LiveAccountFeed({
+  connection: walletManager.connection,
+  isLive: () => !walletManager.simulationMode,
+  onSol: (row) => {
+    walletManager.noteLiveSol(row.address, row.liveBalance);
+    broadcast({ type: 'BALANCE_UPDATE', payload: row });
+  },
+  onToken: (row) => {
+    walletManager.noteTokenBalance(row.address, row.mint, row.tokenAmount);
+    tradingEngine.noteOnChainTokens(row.address, row.mint, row.tokenAmount);
+    broadcast({ type: 'TOKEN_BALANCE_UPDATE', payload: row });
+  },
+  onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status })
+});
+
+function syncLiveFeed() {
+  if (walletManager.simulationMode) {
+    liveFeed.stop();
+    return;
+  }
+  liveFeed.setWallets(walletManager.walletList().map(wallet => wallet.publicKey.toBase58()));
+  liveFeed.setMint(tradingEngine.activeToken);
+  liveFeed.start();
+}
+tradingEngine.onMintChange = () => syncLiveFeed();
 
 function sendError(res, err) {
   const status = err.statusCode || (err instanceof ValidationError ? 400 : 500);
@@ -192,6 +219,7 @@ app.post('/api/settings/simulation', (req, res) => {
       hasWallets: Boolean(walletManager.masterWallet)
     });
     walletManager.setSimulationMode(next.simulationMode);
+    syncLiveFeed();
     broadcast({ type: 'SIMULATION_TOGGLED', payload: { simulation: walletManager.simulationMode } });
     res.json({ success: true, simulationMode: walletManager.simulationMode });
   } catch (err) {
@@ -220,7 +248,7 @@ app.post('/api/settings/trading', (req, res) => {
 app.get('/api/wallets/master', async (req, res) => {
   try {
     const info = await walletManager.getMasterInfo();
-    res.json({ success: true, master: info });
+    res.json({ success: true, master: info, totals: info.totals });
   } catch (err) {
     sendError(res, err);
   }
@@ -229,6 +257,7 @@ app.get('/api/wallets/master', async (req, res) => {
 app.post('/api/wallets/master/generate', async (req, res) => {
   try {
     const address = await walletManager.generateNewMaster(req.body && req.body.force === true);
+    syncLiveFeed();
     broadcast({ type: 'MASTER_UPDATED', payload: { address } });
     res.json({ success: true, address });
   } catch (err) {
@@ -241,6 +270,7 @@ app.post('/api/wallets/master/import', async (req, res) => {
     const { privateKey } = req.body || {};
     if (!privateKey) return res.status(400).json({ error: 'Private key is required' });
     const address = await walletManager.importMasterKey(privateKey, req.body.force === true);
+    syncLiveFeed();
     broadcast({ type: 'MASTER_UPDATED', payload: { address } });
     res.json({ success: true, address });
   } catch (err) {
@@ -252,7 +282,7 @@ app.get('/api/wallets/sub', async (req, res) => {
   try {
     const tokenMint = req.query.mint ? requireMint(req.query.mint) : null;
     const list = await walletManager.getSubWalletsInfo(tokenMint);
-    res.json({ success: true, count: list.length, subWallets: list });
+    res.json({ success: true, count: list.length, subWallets: list, totals: list.totals });
   } catch (err) {
     sendError(res, err);
   }
@@ -265,6 +295,7 @@ app.post('/api/wallets/sub/generate', async (req, res) => {
       return res.status(400).json({ error: 'count must be an integer from 1 to 24' });
     }
     const addresses = await walletManager.generateSubWallets(count, req.body.force === true);
+    syncLiveFeed();
     broadcast({ type: 'SUB_WALLETS_UPDATED', payload: { count: addresses.length } });
     res.json({ success: true, count: addresses.length, addresses });
   } catch (err) {
