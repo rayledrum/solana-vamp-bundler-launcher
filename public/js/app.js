@@ -102,10 +102,15 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTrendingVampTokens();
   loadLiveStats();
 
-  // Periodic polling for stats & balances (every 3 seconds)
+  // Periodic polling for stats & balances (every 3 seconds).
+  // Live on-chain balances are refreshed from the server about every 20 seconds.
   setInterval(() => {
     loadLiveStats();
   }, 3000);
+  setInterval(() => {
+    loadMasterWallet();
+    loadSubWallets();
+  }, 20000);
 });
 
 // ==================== REAL-TIME WEBSOCKET PIPELINE ====================
@@ -1026,6 +1031,7 @@ function updateSimulationUi(isSim) {
     simBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded text-slate-400 hover:text-cyan-400 transition-all';
     if (banner) banner.classList.add('hidden');
   }
+  if (typeof renderStoredBalances === 'function') renderStoredBalances();
 }
 
 // ==================== MANUAL TRADING ENGINE (BUY GREEN / SELL RED) ====================
@@ -1438,6 +1444,20 @@ async function loadLiveStats() {
 
     if (s.wallets && s.wallets.length > 0) {
       renderTradingWalletsTable(s.wallets);
+      const simBalance = s.wallets.reduce((sum, row) => sum + (Number(row.simBalance) || 0), 0);
+      const liveKnown = s.wallets.every(row => row.liveBalance != null && Number.isFinite(Number(row.liveBalance)));
+      state.balanceTotals = {
+        simBalance,
+        liveBalance: liveKnown ? s.wallets.reduce((sum, row) => sum + Number(row.liveBalance), 0) : null,
+        liveError: s.wallets.map(row => row.liveError).find(Boolean) || null
+      };
+      const masterRow = s.wallets.find(row => row.role === 'Master Dev');
+      if (masterRow && state.masterWallet) {
+        state.masterWallet.simBalance = masterRow.simBalance;
+        state.masterWallet.liveBalance = masterRow.liveBalance;
+        state.masterWallet.liveError = masterRow.liveError;
+      }
+      renderStoredBalances();
     }
   } catch (e) {
     // ignore
@@ -1487,7 +1507,7 @@ function renderTradingWalletsTable(wallets) {
           </a>
         </div>
       </td>
-      <td class="py-2 px-2 text-right font-bold text-cyan-400">${escapeHtml((Number(w.solBalance) || 0).toFixed(3))}</td>
+      <td class="py-2 px-2 text-right"><span class="sol-dual"></span></td>
       <td class="py-2 px-2 text-right text-slate-200">${escapeHtml((Number(w.tokens) || 0).toLocaleString())}</td>
       <td class="py-2 px-2 text-right text-slate-400">${escapeHtml((Number(w.solInvested) || 0).toFixed(3))}</td>
       <td class="py-2 px-2 text-right font-semibold text-slate-200">${escapeHtml((Number(w.currentValue) || 0).toFixed(3))}</td>
@@ -1515,6 +1535,7 @@ function renderTradingWalletsTable(wallets) {
     const box = tr.querySelector('.row-checkbox');
     box.value = safeAddress;
     box.addEventListener('change', () => updateSelectedCount());
+    renderDualBalance(tr.querySelector('.sol-dual'), w);
     tr.querySelector('.font-bold').textContent = String(w.role || '');
     tr.querySelector('.addr-short').textContent = safeAddress ? `${safeAddress.slice(0, 4)}...${safeAddress.slice(-4)}` : '';
     tr.querySelector('.copy-addr').addEventListener('click', () => {
@@ -1762,13 +1783,68 @@ async function executeLaunchBundle() {
 
 // ==================== WALLET HELPERS ====================
 
+function formatSolAmount(value) {
+  return Number(value).toFixed(3);
+}
+
+function renderDualBalance(el, row) {
+  if (!el || !row) return;
+  const sim = Number(row.simBalance);
+  const live = row.liveBalance;
+  const liveKnown = live != null && Number.isFinite(Number(live));
+  el.replaceChildren();
+  const simEl = document.createElement('span');
+  simEl.textContent = 'SIM ' + formatSolAmount(Number.isFinite(sim) ? sim : 0) + ' SOL';
+  const sep = document.createElement('span');
+  sep.textContent = ' / ';
+  const liveEl = document.createElement('span');
+  if (liveKnown) {
+    liveEl.textContent = 'LIVE ' + formatSolAmount(live) + ' SOL';
+    liveEl.title = 'On-chain balance (confirmed)';
+  } else {
+    liveEl.textContent = 'LIVE —';
+    liveEl.title = row.liveError || 'Live balance unavailable';
+  }
+  const simMode = state.simulationMode !== false;
+  const active = simMode ? simEl : liveEl;
+  const quiet = simMode ? liveEl : simEl;
+  active.style.fontWeight = '800';
+  active.style.color = simMode ? '#00d4ff' : '#f04c5e';
+  quiet.style.opacity = '0.45';
+  el.append(simEl, sep, liveEl);
+}
+
+function totalsFromState() {
+  const rows = [];
+  if (state.masterWallet) rows.push(state.masterWallet);
+  (state.subWallets || []).forEach(row => rows.push(row));
+  if (!rows.length) return null;
+  const simBalance = rows.reduce((sum, row) => sum + (Number(row.simBalance) || 0), 0);
+  const liveKnown = rows.every(row => row.liveBalance != null && Number.isFinite(Number(row.liveBalance)));
+  return {
+    simBalance,
+    liveBalance: liveKnown ? rows.reduce((sum, row) => sum + Number(row.liveBalance), 0) : null,
+    liveError: rows.map(row => row.liveError).find(Boolean) || null
+  };
+}
+
+function renderStoredBalances() {
+  if (state.balanceTotals) renderDualBalance(document.getElementById('headerDevBalance'), state.balanceTotals);
+  else renderDualBalance(document.getElementById('headerDevBalance'), totalsFromState());
+  if (state.masterWallet) {
+    renderDualBalance(document.getElementById('masterBalanceLine'), state.masterWallet);
+    renderDualBalance(document.getElementById('disperseBalanceHint'), state.masterWallet);
+  }
+}
+
 async function loadMasterWallet() {
   try {
     const res = await apiFetch('/api/wallets/master');
     const data = await res.json();
     if (data.master) {
       state.masterWallet = data.master;
-      document.getElementById('headerDevBalance').innerText = `${data.master.balance.toFixed(3)} SOL`;
+      if (data.totals) state.balanceTotals = data.totals;
+      renderStoredBalances();
       const addrIn = document.getElementById('masterAddressInput');
       const keyIn = document.getElementById('masterKeyInput');
       if (addrIn) addrIn.value = data.master.address;
@@ -1788,6 +1864,8 @@ async function loadSubWallets() {
     const data = await res.json();
     if (data.subWallets) {
       state.subWallets = data.subWallets;
+      if (data.totals) state.balanceTotals = data.totals;
+      renderStoredBalances();
       renderSubWalletBuysInputs();
       renderSubWalletsTable();
       calculateBundleMetrics();
@@ -1809,11 +1887,12 @@ function renderSubWalletBuysInputs() {
     div.className = 'bg-[#090d16] p-1.5 rounded border border-[#192235] space-y-1';
     div.innerHTML = `
       <div class="flex justify-between items-center text-[9px] text-slate-400">
-        <span class="font-bold">#${idx + 1} (${w.address.slice(0, 4)}...)</span>
-        <span class="font-mono text-cyan-400">${w.solBalance.toFixed(2)} SOL</span>
+        <span class="font-bold">#${idx + 1} (${String(w.address || '').slice(0, 4)}...)</span>
+        <span class="sub-buy-bal font-mono"></span>
       </div>
       <input type="number" step="0.01" min="0" max="0.1" value="0" id="subBuyInput-${idx}" data-fn="bundleMetrics" data-evt="input" class="input-field py-0.5 px-1.5 text-xs font-mono font-bold text-center">
     `;
+    renderDualBalance(div.querySelector('.sub-buy-bal'), w);
     container.appendChild(div);
   });
 }
@@ -1837,9 +1916,10 @@ function renderSubWalletsTable() {
           </button>
         </div>
       </td>
-      <td class="py-2 px-2 text-right font-bold text-cyan-400">${escapeHtml((w.solBalance || 0).toFixed(4))} SOL</td>
+      <td class="py-2 px-2 text-right"><span class="sol-dual"></span></td>
       <td class="py-2 px-2 text-right text-[10px] text-slate-500">Export only</td>
     `;
+    renderDualBalance(tr.querySelector('.sol-dual'), w);
     tr.querySelector('span').textContent = `${address.slice(0, 8)}...${address.slice(-6)}`;
     tr.querySelector('[data-copy-address]').addEventListener('click', () => {
       navigator.clipboard.writeText(address);

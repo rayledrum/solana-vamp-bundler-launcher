@@ -220,7 +220,7 @@ app.post('/api/settings/trading', (req, res) => {
 app.get('/api/wallets/master', async (req, res) => {
   try {
     const info = await walletManager.getMasterInfo();
-    res.json({ success: true, master: info });
+    res.json({ success: true, master: info, totals: info.totals });
   } catch (err) {
     sendError(res, err);
   }
@@ -252,7 +252,7 @@ app.get('/api/wallets/sub', async (req, res) => {
   try {
     const tokenMint = req.query.mint ? requireMint(req.query.mint) : null;
     const list = await walletManager.getSubWalletsInfo(tokenMint);
-    res.json({ success: true, count: list.length, subWallets: list });
+    res.json({ success: true, count: list.length, subWallets: list, totals: list.totals });
   } catch (err) {
     sendError(res, err);
   }

@@ -170,6 +170,9 @@ class TradingEngine {
         role: 'Master Dev',
         address: master.address,
         solBalance: master.balance,
+        simBalance: master.simBalance,
+        liveBalance: master.liveBalance,
+        liveError: master.liveError || null,
         tokens: 0,
         solInvested: 0,
         currentValue: 0,
@@ -181,6 +184,9 @@ class TradingEngine {
           role: `Sub #${wallet.index}`,
           address: wallet.address,
           solBalance: wallet.solBalance,
+          simBalance: wallet.simBalance,
+          liveBalance: wallet.liveBalance,
+          liveError: wallet.liveError || null,
           tokens: 0,
           solInvested: 0,
           currentValue: 0,
@@ -227,6 +233,9 @@ class TradingEngine {
       role: 'Master Dev',
       address: master.address,
       solBalance: master.balance,
+      simBalance: master.simBalance,
+      liveBalance: master.liveBalance,
+      liveError: master.liveError || null,
       tokens: devPos.tokens,
       solInvested: devPos.solInvested,
       currentValue: Number(devCurrentVal.toFixed(4)),
@@ -246,6 +255,9 @@ class TradingEngine {
         role: `Sub #${wallet.index}`,
         address: wallet.address,
         solBalance: wallet.solBalance,
+        simBalance: wallet.simBalance,
+        liveBalance: wallet.liveBalance,
+        liveError: wallet.liveError || null,
         tokens: position.tokens,
         solInvested: position.solInvested,
         currentValue: Number(subVal.toFixed(4)),
@@ -391,6 +403,7 @@ class TradingEngine {
         this.sessionSpentSol += amountPerWallet;
         totalBoughtTokens += tokensOut;
         totalSpentSol += amountPerWallet;
+        walletManager.invalidateLiveBalances();
         this.broadcast('PUBLIC_TRADE', {
           txType: 'buy',
           solAmount: amountPerWallet,
@@ -530,6 +543,7 @@ class TradingEngine {
         const solGained = pumpfun.calculateSellOutput(sold || tokensToSell, 15);
         totalSoldTokens += sold || tokensToSell;
         totalReceivedSol += solGained;
+        walletManager.invalidateLiveBalances();
         this.broadcast('PUBLIC_TRADE', {
           txType: 'sell',
           solAmount: Number(solGained.toFixed(4)),

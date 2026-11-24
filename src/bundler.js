@@ -38,7 +38,9 @@ class BundlerService {
 
     const issues = [];
     const neededDevSol = devSolBuy + jitoTipSol + 0.04;
-    if (devInfo.balance < neededDevSol) {
+    if (devInfo.balance == null || !Number.isFinite(Number(devInfo.balance))) {
+      issues.push(`Master balance unavailable${devInfo.liveError ? `: ${devInfo.liveError}` : ''}`);
+    } else if (devInfo.balance < neededDevSol) {
       issues.push(`Master Dev wallet has ${devInfo.balance.toFixed(3)} SOL, needs ${neededDevSol.toFixed(3)} SOL (Buy + Rent + Jito Tip)`);
     }
 
@@ -49,7 +51,9 @@ class BundlerService {
       if (amount > 0 && !wallet) {
         issues.push(`Sub-wallet #${i + 1} does not exist for a ${amount} SOL buy`);
       }
-      if (wallet && wallet.solBalance < amount + (amount > 0 ? 0.005 : 0)) {
+      if (wallet && (wallet.solBalance == null || !Number.isFinite(Number(wallet.solBalance)))) {
+        issues.push(`Sub-wallet #${i + 1} balance unavailable${wallet.liveError ? `: ${wallet.liveError}` : ''}`);
+      } else if (wallet && wallet.solBalance < amount + (amount > 0 ? 0.005 : 0)) {
         issues.push(`Sub-wallet #${i + 1} (${wallet.address.slice(0, 6)}...) has ${wallet.solBalance.toFixed(3)} SOL, needs ${(amount + 0.005).toFixed(3)} SOL`);
       }
     });
