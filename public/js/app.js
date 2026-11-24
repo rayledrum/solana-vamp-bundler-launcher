@@ -135,8 +135,7 @@ function handleWsMessage(msg) {
     case 'BUY_EXECUTED':
       logTerminal(`🟢 [Manual Buy] Bought tokens for ${msg.payload.totalSpentSol} SOL across ${msg.payload.resultsCount} wallets`);
       showToast(`Bought tokens (+${msg.payload.totalSpentSol} SOL)`, 'success');
-      const buyPrice = state.lastPrice * (1 + (msg.payload.totalSpentSol * 0.05));
-      if (state.chartToken) pushChartTick(buyPrice, msg.payload.totalSpentSol, state.chartEpoch);
+      applyDeskTradeTick(msg.payload.mint, msg.payload.totalSpentSol, (base) => base * (1 + (msg.payload.totalSpentSol * 0.05)));
       loadLiveStats();
       loadMasterWallet();
       loadSubWallets();
@@ -145,8 +144,7 @@ function handleWsMessage(msg) {
     case 'SELL_EXECUTED':
       logTerminal(`🔴 [Manual Sell] Sold ${msg.payload.pct}% | Recv: +${msg.payload.totalReceivedSol} SOL`);
       showToast(`Sold ${msg.payload.pct}% across bundle (+${msg.payload.totalReceivedSol} SOL)`, 'warning');
-      const sellPrice = state.lastPrice * (1 - (msg.payload.pct * 0.002));
-      if (state.chartToken) pushChartTick(sellPrice, msg.payload.totalReceivedSol, state.chartEpoch);
+      applyDeskTradeTick(msg.payload.mint, msg.payload.totalReceivedSol, (base) => base * (1 - (msg.payload.pct * 0.002)));
       loadLiveStats();
       loadMasterWallet();
       loadSubWallets();
@@ -154,7 +152,7 @@ function handleWsMessage(msg) {
 
     case 'CASCADE_STEP':
       logTerminal(`🌊 [Cascade] Step ${msg.payload.step}/${msg.payload.total} executed for ${msg.payload.address.slice(0, 6)}...`);
-      if (state.chartToken) pushChartTick(state.lastPrice * 0.985, 0.2, state.chartEpoch);
+      applyDeskTradeTick(msg.payload.mint, 0.2, (base) => base * 0.985);
       break;
 
     case 'CASCADE_COMPLETED':
@@ -178,7 +176,7 @@ function handleWsMessage(msg) {
 
     case 'BUMP_TICK':
       logTerminal(`⚡ [Bump Bot] Micro trade on ${msg.payload.wallet} (${msg.payload.solAmount} SOL)`);
-      if (state.chartToken) pushChartTick(state.lastPrice * (1 + (Math.random() * 0.02 - 0.01)), msg.payload.solAmount, state.chartEpoch);
+      applyDeskTradeTick(msg.payload.mint, msg.payload.solAmount, (base) => base * (1 + (Math.random() * 0.02 - 0.01)));
       break;
 
     case 'TOKEN_TRACKED':
@@ -203,6 +201,33 @@ const TIMEFRAME_MS = {
   '1m': 60000,
   '5m': 300000
 };
+
+const chartBook = ChartBook.createBook();
+
+function applySeriesView(series) {
+  if (!series) return;
+  state.chartSamples = series.samples;
+  state.chartSampleMs = series.sampleMs;
+  if (Number.isFinite(series.lastPrice)) state.lastPrice = series.lastPrice;
+}
+
+function priceBaseFor(mint) {
+  if (mint && mint === state.chartToken && state.lastPrice > 0) return state.lastPrice;
+  const series = mint ? chartBook.peek(mint) : null;
+  if (series && series.lastPrice > 0) return series.lastPrice;
+  return 0;
+}
+
+// Desk buy/sell/cascade/bump ticks. Missing mint, or a mint that is not on
+// screen, must not move the visible series. A known other mint keeps the
+// sample on its own slot.
+function applyDeskTradeTick(mint, volume, priceFromBase) {
+  if (!mint || typeof priceFromBase !== 'function') return;
+  const base = priceBaseFor(mint);
+  if (!(base > 0)) return;
+  const epoch = mint === state.chartToken ? state.chartEpoch : null;
+  pushChartTick(priceFromBase(base), volume || 0, epoch, mint);
+}
 
 function initChart() {
   generateInitialCandles();
@@ -301,41 +326,48 @@ function setChartSource(source) {
 
 let chartLoadSeq = 0;
 
+function bindActiveSeries(series) {
+  applySeriesView(series);
+  state.hoverCandle = null;
+  setChartSource(series && series.source ? series.source : '');
+  if (series && series.symbol) setChartSymbol(series.symbol);
+  rebuildDisplayCandles();
+  updateChartHeaders();
+  renderCandlestickChart();
+  renderSparkline();
+}
+
 async function loadCandlesForToken(mint, options = {}) {
   if (!mint) return;
   const clear = options.clear !== false;
   const seq = ++chartLoadSeq;
   const requestedTf = state.chartTimeframe;
   if (clear) {
-    state.chartEpoch = (state.chartEpoch || 0) + 1;
+    const view = chartBook.activate(mint);
+    state.chartEpoch = view.epoch;
     state.chartToken = mint;
-    state.chartSamples = [];
-    state.chartSampleMs = null;
-    state.candles = [];
-    state.currentCandle = null;
-    state.hoverCandle = null;
-    state.lastPrice = 0;
-    setChartSource('');
-    clearLiveTradeTape();
-    renderCandlestickChart();
+    if (!view.series.symbol) setChartSymbol(mint.slice(0, 4).toUpperCase());
+    bindActiveSeries(view.series);
+    renderTradeTape(view.series.trades);
   }
 
   try {
     const res = await fetch(`/api/chart/candles?mint=${encodeURIComponent(mint)}&tf=${encodeURIComponent(requestedTf)}`);
     const data = await res.json();
-    if (seq !== chartLoadSeq || (clear && state.chartToken !== mint)) return;
-    if (!clear && state.chartToken && state.chartToken !== mint) return;
+    if (seq !== chartLoadSeq || state.chartToken !== mint) return;
     if (!res.ok) throw new Error(data.error || 'Candle request failed');
-    setChartSymbol(data.symbol);
     const candles = Array.isArray(data.candles) ? data.candles : [];
     if (candles.length === 0) throw new Error('No candles');
-    state.chartToken = mint;
-    state.chartSamples = candles.map(copyChartSample);
-    state.chartSampleMs = TIMEFRAME_MS[data.servedRes] || TIMEFRAME_MS[requestedTf] || 60000;
-    state.lastPrice = candles[candles.length - 1].close;
-    setChartSource(data.source || '');
+    chartBook.replaceSeries(mint, {
+      samples: candles.map(copyChartSample),
+      sampleMs: TIMEFRAME_MS[data.servedRes] || TIMEFRAME_MS[requestedTf] || 60000,
+      lastPrice: candles[candles.length - 1].close,
+      source: data.source || '',
+      symbol: data.symbol || null
+    });
+    if (data.symbol) setChartSymbol(data.symbol);
   } catch (err) {
-    if (seq !== chartLoadSeq || (clear && state.chartToken !== mint)) return;
+    if (seq !== chartLoadSeq || state.chartToken !== mint) return;
     if (!clear) {
       rebuildDisplayCandles();
       updateChartHeaders();
@@ -345,17 +377,15 @@ async function loadCandlesForToken(mint, options = {}) {
     }
     const price = 30 / 1073000000;
     const now = Date.now();
-    state.chartSamples = [{ time: now, open: price, high: price, low: price, close: price, volume: 0 }];
-    state.chartSampleMs = TIMEFRAME_MS[requestedTf] || 5000;
-    state.lastPrice = price;
-    setChartSource('seed');
+    chartBook.replaceSeries(mint, {
+      samples: [{ time: now, open: price, high: price, low: price, close: price, volume: 0 }],
+      sampleMs: TIMEFRAME_MS[requestedTf] || 5000,
+      lastPrice: price,
+      source: 'seed'
+    });
   }
-  if (seq !== chartLoadSeq) return;
-  rebuildDisplayCandles();
-
-  updateChartHeaders();
-  renderCandlestickChart();
-  renderSparkline();
+  if (seq !== chartLoadSeq || state.chartToken !== mint) return;
+  bindActiveSeries(chartBook.peek(mint));
 }
 
 const MAX_CHART_SAMPLES = 5000;
@@ -450,13 +480,27 @@ function generateInitialCandles() {
   updateChartHeaders();
 }
 
-function pushChartTick(price, volume = 0.1, expectedEpoch = null) {
-  // Ignore ticks that don't belong to the current chart generation
-  if (expectedEpoch != null && expectedEpoch !== state.chartEpoch) return;
-  if (!state.chartToken) return;
-  const now = Date.now();
-  appendChartSample({ time: now, open: price, high: price, low: price, close: price, volume });
+function pushChartTick(price, volume = 0.1, expectedEpoch = null, mint = null) {
+  if (!Number.isFinite(price) || price <= 0) return;
+  // Placeholder heartbeats have no mint. Once a coin is loaded they must not
+  // land on it, and the loaded series is what the chart draws.
+  if (!mint) {
+    if (state.chartToken) return;
+    if (expectedEpoch != null && expectedEpoch !== state.chartEpoch) return;
+    return;
+  }
+  if (mint === state.chartToken && expectedEpoch != null && expectedEpoch !== state.chartEpoch) return;
+  const visible = chartBook.appendSample(mint, {
+    time: Date.now(),
+    open: price,
+    high: price,
+    low: price,
+    close: price,
+    volume: volume || 0
+  });
+  if (!visible) return;
   state.lastPrice = price;
+  applySeriesView(chartBook.peek(mint));
   rebuildDisplayCandles();
   updateChartHeaders();
   renderCandlestickChart();
@@ -1265,11 +1309,17 @@ async function executeMatrixSell() {
 // ==================== LIVE STATS & TABLE SYNC ====================
 
 async function loadLiveStats() {
+  const requestedMint = state.activeToken;
+  const requestedEpoch = state.chartEpoch;
   try {
-    const res = await fetch('/api/trading/stats');
+    const qs = requestedMint ? `?mint=${encodeURIComponent(requestedMint)}` : '';
+    const res = await fetch(`/api/trading/stats${qs}`);
     const data = await res.json();
     const s = data.stats;
     if (!s) return;
+    if (state.chartEpoch !== requestedEpoch || state.activeToken !== requestedMint) return;
+    if (s.stale) return;
+    if (requestedMint && s.activeToken && s.activeToken !== requestedMint) return;
 
     if (s.activeToken) {
       state.activeToken = s.activeToken;
@@ -2422,9 +2472,41 @@ function priceFromTrade(trade) {
   return null;
 }
 
+function renderTradeTape(trades) {
+  clearLiveTradeTape();
+  (trades || []).forEach((trade) => {
+    renderTradeTick(Object.assign({}, trade, { _replay: true }));
+  });
+}
+
+function applyPublicTradePrice(trade, mint) {
+  if (!mint || !(Number(trade.solAmount) > 0)) return;
+  const isBuy = trade.txType === 'buy';
+  const epoch = mint === state.chartToken ? state.chartEpoch : null;
+  if (trade.simulated || String(trade.signature || '').startsWith('sim_')) {
+    const base = priceBaseFor(mint);
+    if (!(base > 0)) return;
+    const delta = isBuy ? (trade.solAmount * 0.002) : -(trade.solAmount * 0.002);
+    pushChartTick(Math.max(1e-12, base * (1 + delta)), trade.solAmount, epoch, mint);
+  } else {
+    const tradePrice = priceFromTrade(trade);
+    if (tradePrice) pushChartTick(tradePrice, trade.solAmount, epoch, mint);
+  }
+}
+
 function renderTradeTick(trade) {
   if (!trade) return;
-  if (state.chartToken && trade.mint && trade.mint !== state.chartToken) return;
+  const mint = trade.mint || null;
+  if (!trade._replay) {
+    if (state.chartToken && (!mint || mint !== state.chartToken)) {
+      if (mint) {
+        chartBook.pushTrade(mint, trade);
+        applyPublicTradePrice(trade, mint);
+      }
+      return;
+    }
+    if (mint) chartBook.pushTrade(mint, trade);
+  }
   const isBuy = trade.txType === 'buy';
   const color = isBuy ? '#00c48c' : '#f04c5e';
   const badgeBg = isBuy ? 'rgba(0,196,140,0.12)' : 'rgba(240,76,94,0.12)';
@@ -2481,16 +2563,5 @@ function renderTradeTick(trade) {
     }
   }
 
-  // Real prints use the coin's own price. Simulated tape ticks only move the
-  // current candle so they cannot replace the loaded series with a fake price.
-  if (trade.solAmount > 0 && state.chartToken && (!trade.mint || trade.mint === state.chartToken)) {
-    const epoch = state.chartEpoch;
-    if (trade.simulated || String(trade.signature || '').startsWith('sim_')) {
-      const delta = isBuy ? (trade.solAmount * 0.002) : -(trade.solAmount * 0.002);
-      pushChartTick(Math.max(1e-12, state.lastPrice * (1 + delta)), trade.solAmount, epoch);
-    } else {
-      const tradePrice = priceFromTrade(trade);
-      if (tradePrice) pushChartTick(tradePrice, trade.solAmount, epoch);
-    }
-  }
+  if (!trade._replay) applyPublicTradePrice(trade, mint || state.chartToken);
 }

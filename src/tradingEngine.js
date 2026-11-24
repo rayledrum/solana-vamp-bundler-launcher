@@ -109,13 +109,22 @@ class TradingEngine {
     this.connectPumpPortal(mint);
   }
 
-  // Get aggregated positions and live PnL
+  // Positions for the mint that was active when the read started. A switch
+  // mid-request marks the payload stale so the client does not draw it.
   async getLiveStats() {
-    const isSim = walletManager.simulationMode;
-    const subWallets = await walletManager.getSubWalletsInfo(this.activeToken);
+    const mint = this.activeToken;
+    const subWallets = await walletManager.getSubWalletsInfo(mint);
     const master = await walletManager.getMasterInfo();
+    if (this.activeToken !== mint) {
+      return {
+        activeToken: mint,
+        stale: true,
+        currentMint: this.activeToken,
+        wallets: []
+      };
+    }
 
-    if (!this.activeToken) {
+    if (!mint) {
       const walletRows = [];
       walletRows.push({
         role: 'Master Dev',
@@ -141,6 +150,7 @@ class TradingEngine {
       }
       return {
         activeToken: null,
+        stale: false,
         totalTokens: 0,
         totalSolInvested: 0,
         currentSolValue: 0,
@@ -151,7 +161,15 @@ class TradingEngine {
       };
     }
 
-    const dexInfo = await pumpfun.getTokenDexInfo(this.activeToken);
+    const dexInfo = await pumpfun.getTokenDexInfo(mint);
+    if (this.activeToken !== mint) {
+      return {
+        activeToken: mint,
+        stale: true,
+        currentMint: this.activeToken,
+        wallets: []
+      };
+    }
 
     let totalTokens = 0;
     let totalInvested = 0;
@@ -205,7 +223,8 @@ class TradingEngine {
     const curveProgressPct = pumpfun.calculateProgress(15 + totalInvested);
 
     return {
-      activeToken: this.activeToken,
+      activeToken: mint,
+      stale: false,
       totalTokens: Math.floor(totalTokens),
       totalSolInvested: Number(totalInvested.toFixed(4)),
       currentSolValue: Number(currentSolValue.toFixed(4)),
@@ -219,7 +238,8 @@ class TradingEngine {
 
   // Execute Manual Buy on specific or all wallets
   async executeBuy({ solAmount = 0.1, walletAddresses = [] }) {
-    if (!this.activeToken) throw new Error('No active token is currently selected');
+    const mint = this.activeToken;
+    if (!mint) throw new Error('No active token is currently selected');
     const isSim = walletManager.simulationMode;
     const amountPerWallet = Math.max(0.001, parseFloat(solAmount || '0.1'));
 
@@ -232,6 +252,7 @@ class TradingEngine {
     let totalSpentSol = 0;
 
     for (const addr of targets) {
+      if (this.activeToken !== mint) break;
       const tokensOut = pumpfun.calculateBuyOutput(amountPerWallet, 15);
       totalBoughtTokens += tokensOut;
       totalSpentSol += amountPerWallet;
@@ -247,7 +268,7 @@ class TradingEngine {
         tokenAmount: Math.floor(tokensOut),
         traderPublicKey: addr.slice(0, 4) + '...' + addr.slice(-4),
         signature: 'loc_' + Date.now().toString(36),
-        mint: this.activeToken,
+        mint,
         timestamp: Date.now()
       });
 
@@ -272,7 +293,7 @@ class TradingEngine {
             const buyRes = await axios.post(`${config.PUMPPORTAL_API}/trade-local`, {
               publicKey: addr,
               action: 'buy',
-              mint: this.activeToken,
+              mint,
               denominatedInSol: 'true',
               amount: amountPerWallet,
               slippage: 15,
@@ -304,6 +325,7 @@ class TradingEngine {
     }
 
     this.broadcast('BUY_EXECUTED', {
+      mint,
       amountPerWallet,
       totalBoughtTokens: Math.floor(totalBoughtTokens),
       totalSpentSol: Number(totalSpentSol.toFixed(4)),
@@ -322,7 +344,8 @@ class TradingEngine {
 
   // Execute Percentage Sell across all or specified sub-wallets
   async executeSell({ pct = 100, walletAddresses = [] }) {
-    if (!this.activeToken) throw new Error('No active token is currently selected');
+    const mint = this.activeToken;
+    if (!mint) throw new Error('No active token is currently selected');
     const isSim = walletManager.simulationMode;
     const sellPct = Math.min(100, Math.max(1, pct)) / 100;
 
@@ -335,6 +358,7 @@ class TradingEngine {
     let totalReceivedSol = 0;
 
     for (const addr of targets) {
+      if (this.activeToken !== mint) break;
       const pos = this.positions.get(addr);
       if (!pos || pos.tokens <= 0) continue;
 
@@ -355,7 +379,7 @@ class TradingEngine {
         tokenAmount: tokensToSell,
         traderPublicKey: addr.slice(0, 4) + '...' + addr.slice(-4),
         signature: 'loc_' + Date.now().toString(36),
-        mint: this.activeToken,
+        mint,
         timestamp: Date.now()
       });
 
@@ -380,7 +404,7 @@ class TradingEngine {
             const sellRes = await axios.post(`${config.PUMPPORTAL_API}/trade-local`, {
               publicKey: addr,
               action: 'sell',
-              mint: this.activeToken,
+              mint,
               denominatedInSol: 'false',
               amount: tokensToSell,
               slippage: 20,
@@ -411,6 +435,7 @@ class TradingEngine {
     }
 
     this.broadcast('SELL_EXECUTED', {
+      mint,
       pct,
       totalSoldTokens,
       totalReceivedSol: Number(totalReceivedSol.toFixed(4)),
@@ -429,23 +454,25 @@ class TradingEngine {
 
   // Cascade Sell: staggered selling across sub-wallets with delays
   async executeCascadeSell(delayMs = 1200, pct = 100) {
-    if (!this.activeToken) throw new Error('No active token is currently selected');
+    const mint = this.activeToken;
+    if (!mint) throw new Error('No active token is currently selected');
     const addrs = Array.from(this.positions.keys()).filter(a => (this.positions.get(a)?.tokens || 0) > 0);
     
-    this.broadcast('CASCADE_STARTED', { walletsCount: addrs.length, delayMs, pct });
+    this.broadcast('CASCADE_STARTED', { mint, walletsCount: addrs.length, delayMs, pct });
 
     const stepResults = [];
     for (let i = 0; i < addrs.length; i++) {
+      if (this.activeToken !== mint) break;
       const addr = addrs[i];
       const res = await this.executeSell({ pct, walletAddresses: [addr] });
       stepResults.push(res);
-      this.broadcast('CASCADE_STEP', { step: i + 1, total: addrs.length, address: addr });
+      this.broadcast('CASCADE_STEP', { mint, step: i + 1, total: addrs.length, address: addr });
       if (i < addrs.length - 1) {
         await new Promise(r => setTimeout(r, delayMs));
       }
     }
 
-    this.broadcast('CASCADE_COMPLETED', { totalExecuted: stepResults.length });
+    this.broadcast('CASCADE_COMPLETED', { mint, totalExecuted: stepResults.length });
     return { success: true, executedCount: stepResults.length, results: stepResults };
   }
 
@@ -453,16 +480,17 @@ class TradingEngine {
   startVolumeBumper(solAmount = 0.01, intervalSeconds = 20) {
     if (this.isBumping) return;
     this.isBumping = true;
-    this.broadcast('BUMPER_STARTED', { solAmount, intervalSeconds });
+    this.broadcast('BUMPER_STARTED', { mint: this.activeToken, solAmount, intervalSeconds });
 
     this.bumpInterval = setInterval(async () => {
       try {
-        if (!this.isBumping || !this.activeToken) return;
+        const tickMint = this.activeToken;
+        if (!this.isBumping || !tickMint) return;
         const randomSub = walletManager.subWallets[Math.floor(Math.random() * walletManager.subWallets.length)];
         if (!randomSub) return;
 
-        // Micro-buy
         this.broadcast('BUMP_TICK', {
+          mint: tickMint,
           wallet: randomSub.publicKey.toBase58().slice(0, 6) + '...',
           solAmount,
           action: 'Micro Buy'
