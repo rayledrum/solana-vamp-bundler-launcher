@@ -3,7 +3,9 @@ const { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID }
 
 const CLASSIC_TOKEN_PROGRAM = TOKEN_PROGRAM_ID.toBase58();
 const TOKEN_2022_PROGRAM = TOKEN_2022_PROGRAM_ID.toBase58();
+const PUMP_SUPPLY_UI = 1_000_000_000;
 const mintProgramCache = new Map();
+const mintSupplyCache = new Map();
 
 function programFromOwner(owner) {
   const id = owner && owner.toBase58 ? owner.toBase58() : String(owner || '');
@@ -84,6 +86,26 @@ function noTokensMessage(address, mint) {
   return `No tokens found for ${address} on ${mint}. Checked Token-2022 and classic token accounts.`;
 }
 
+async function readMintSupply(connection, mint) {
+  const key = String(mint || '');
+  if (!key) return { ui: PUMP_SUPPLY_UI, decimals: 6, source: 'default' };
+  if (mintSupplyCache.has(key)) return mintSupplyCache.get(key);
+  let result = { ui: PUMP_SUPPLY_UI, decimals: 6, source: 'default' };
+  try {
+    const supply = await connection.getTokenSupply(new PublicKey(key), 'confirmed');
+    const text = supply && supply.value && (supply.value.uiAmountString != null ? supply.value.uiAmountString : supply.value.uiAmount);
+    const ui = Number(text);
+    const decimals = Number(supply && supply.value && supply.value.decimals);
+    if (Number.isFinite(ui) && ui > 0) {
+      result = { ui, decimals: Number.isFinite(decimals) ? decimals : 6, source: 'mint' };
+    }
+  } catch (err) {
+    result = { ui: PUMP_SUPPLY_UI, decimals: 6, source: 'default' };
+  }
+  mintSupplyCache.set(key, result);
+  return result;
+}
+
 async function readOwnerTokenBalance(connection, owner, mint) {
   const response = await connection.getParsedTokenAccountsByOwner(
     new PublicKey(owner),
@@ -110,6 +132,7 @@ async function readOwnerTokenBalance(connection, owner, mint) {
 module.exports = {
   CLASSIC_TOKEN_PROGRAM,
   TOKEN_2022_PROGRAM,
+  PUMP_SUPPLY_UI,
   programFromOwner,
   resolveMintTokenProgram,
   ataAddress,
@@ -117,5 +140,6 @@ module.exports = {
   solSpentFromMeta,
   tokenChangeFromMeta,
   noTokensMessage,
-  readOwnerTokenBalance
+  readOwnerTokenBalance,
+  readMintSupply
 };

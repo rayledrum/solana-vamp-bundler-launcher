@@ -14,7 +14,10 @@ const { fetchHttpsImage } = require('./safeImage');
 const { applySimulationChange, ignoredModeMessage } = require('./simulationMode');
 const { LiveAccountFeed } = require('./liveFeed');
 const { CurveFeed } = require('./curveFeed');
-const { resolveMintTokenProgram } = require('./tokenAccounts');
+const { resolveMintTokenProgram, readMintSupply } = require('./tokenAccounts');
+const { readPumpGlobal } = require('./bondingCurve');
+const { PumpSwapFeed } = require('./pumpSwap');
+const { marketCapFromFeed } = require('../public/js/chartScale');
 const {
   parseStrictBoolean,
   requirePositive,
@@ -98,6 +101,15 @@ const liveFeed = new LiveAccountFeed({
   onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status })
 });
 
+const pumpSwap = new PumpSwapFeed({
+  connection: walletManager.connection,
+  isLive: () => !walletManager.simulationMode,
+  onPrice: (tick) => tradingEngine.ingestCurvePrice(tick),
+  onTrade: (trade) => tradingEngine.ingestExternalTrade(trade),
+  onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status }),
+  supplyUi: async (mint) => (await readMintSupply(walletManager.connection, mint)).ui
+});
+
 const curveFeed = new CurveFeed({
   connection: walletManager.connection,
   programId: config.PUMP_PROGRAM_ID,
@@ -105,9 +117,25 @@ const curveFeed = new CurveFeed({
   onPrice: (tick) => tradingEngine.ingestCurvePrice(tick),
   onTrade: (trade) => tradingEngine.ingestExternalTrade(trade),
   onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status }),
+  pumpSwap,
+  readGlobal: () => readPumpGlobal(walletManager.connection),
   fetchMigratedPrice: async (mint) => {
     const info = await pumpfun.getTokenDexInfo(mint);
-    return info && info.priceNative > 0 ? info.priceNative : null;
+    if (!info || !(info.priceNative > 0)) return null;
+    const supply = await readMintSupply(walletManager.connection, mint);
+    const solUsd = info.priceUsd > 0 ? info.priceUsd / info.priceNative : null;
+    return {
+      priceSol: info.priceNative,
+      marketCapSol: marketCapFromFeed({
+        priceSol: info.priceNative,
+        supplyUi: supply.ui,
+        supplySource: supply.source,
+        solUsd,
+        fdvUsd: info.fdv,
+        marketCapUsd: info.marketCap
+      }),
+      solUsd
+    };
   }
 });
 
@@ -125,9 +153,21 @@ async function syncLiveFeed() {
       console.warn('[Tokens] Could not read mint owner program:', err.message);
     }
   }
+  if (tradingEngine.activeToken) {
+    try {
+      await tradingEngine.seedOnChainHoldings(tradingEngine.activeToken);
+    } catch (err) {
+      console.warn('[Tokens] Holding seed failed:', err.message);
+    }
+  }
   liveFeed.setWallets(walletManager.walletList().map(wallet => wallet.publicKey.toBase58()));
   liveFeed.setMint(tradingEngine.activeToken);
   liveFeed.start();
+  try {
+    await liveFeed.resync();
+  } catch (err) {
+    console.warn('[Tokens] Account resync failed:', err.message);
+  }
   curveFeed.setMint(tradingEngine.activeToken);
   curveFeed.start();
 }
@@ -521,6 +561,16 @@ app.get('/api/chart/candles', async (req, res) => {
     const mint = requireMint(req.query.mint);
     const tf = String(req.query.tf || '1m');
     const data = await pumpfun.getChartCandles(mint, tf);
+    const supply = await readMintSupply(walletManager.connection, mint);
+    data.supplyUi = supply.ui;
+    data.supplySource = supply.source;
+    data.solUsd = pumpfun.solPriceUsd();
+    data.marketCapSol = marketCapFromFeed({
+      priceSol: data.priceNative,
+      supplyUi: supply.ui,
+      supplySource: supply.source,
+      solUsd: data.solUsd
+    });
     res.json({ success: true, ...data });
   } catch (err) {
     sendError(res, err);

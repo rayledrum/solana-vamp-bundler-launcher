@@ -19,7 +19,10 @@
       lastPrice: 0,
       source: '',
       symbol: null,
-      trades: []
+      trades: [],
+      supplyUi: null,
+      supplySource: null,
+      solUsd: null
     };
   }
 
@@ -69,6 +72,23 @@
         series.lastPrice = Number(incoming.lastPrice) || 0;
         series.source = incoming.source || '';
         if (incoming.symbol) series.symbol = incoming.symbol;
+        if (Number(incoming.supplyUi) > 0 && (incoming.supplySource === 'mint' || series.supplySource !== 'mint')) {
+          series.supplyUi = Number(incoming.supplyUi);
+          series.supplySource = incoming.supplySource || 'mint';
+        }
+        if (Number(incoming.solUsd) > 0) series.solUsd = Number(incoming.solUsd);
+        return series;
+      },
+
+      noteScale(mint, patch) {
+        if (!mint || !patch) return null;
+        const series = ensure(mint);
+        const supply = Number(patch.supplyUi);
+        if (supply > 0 && (patch.source === 'mint' || series.supplySource !== 'mint')) {
+          series.supplyUi = supply;
+          series.supplySource = patch.source || series.supplySource || 'curve';
+        }
+        if (Number(patch.solUsd) > 0) series.solUsd = Number(patch.solUsd);
         return series;
       },
 

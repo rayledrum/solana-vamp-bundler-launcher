@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { PublicKey } = require('@solana/web3.js');
 const { backoffMs } = require('./subscriptionBook');
+const { DEFAULT_GLOBAL, bondingProgress, MIGRATION_DESTINATION } = require('./bondingCurve');
 
 function anchorDiscriminator(label) {
   return crypto.createHash('sha256').update(label).digest().subarray(0, 8);
@@ -134,6 +135,9 @@ class CurveFeed {
     this.onTrade = options.onTrade || (() => {});
     this.onStatus = options.onStatus || (() => {});
     this.fetchMigratedPrice = options.fetchMigratedPrice || (async () => null);
+    this.pumpSwap = options.pumpSwap || null;
+    this.readGlobal = options.readGlobal || (async () => null);
+    this.initialRealTokenRaw = null;
     this.schedule = options.schedule || ((fn, ms) => setTimeout(fn, ms));
     this.mint = null;
     this.accountSub = null;
@@ -161,6 +165,7 @@ class CurveFeed {
     this.stopped = true;
     this.clearTimer();
     this.stopMigratedPoll();
+    this.stopPumpSwap();
     this.dropSubs();
     this.emit(false);
   }
@@ -170,6 +175,7 @@ class CurveFeed {
     if (next === this.mint && (this.accountSub != null || !next)) return;
     this.dropSubs();
     this.stopMigratedPoll();
+    this.stopPumpSwap();
     this.mint = next;
     this.seen.clear();
     if (!this.stopped) this.open();
@@ -189,6 +195,7 @@ class CurveFeed {
       return;
     }
     this.pda = pda;
+    this.ensureGlobal();
     this.accountSub = this.connection.onAccountChange(
       pda,
       (info) => this.onAccount(info),
@@ -228,26 +235,44 @@ class CurveFeed {
     this.mintLogsSub = null;
   }
 
+  async ensureGlobal() {
+    if (this.initialRealTokenRaw) return;
+    try {
+      const global = await this.readGlobal();
+      if (global && global.initialRealTokenReserves) this.initialRealTokenRaw = global.initialRealTokenReserves;
+    } catch (err) { /* default stays in place */ }
+  }
+
+  curveTick(decoded, source) {
+    const initial = this.initialRealTokenRaw || DEFAULT_GLOBAL.initialRealTokenReserves;
+    const complete = Boolean(decoded.complete);
+    return {
+      mint: this.mint,
+      priceSol: decoded.priceSol,
+      marketCapSol: decoded.marketCapSol,
+      realSol: Number(decoded.realSolReserves) / 1e9,
+      progressPct: bondingProgress(decoded.realTokenReserves, initial, complete),
+      complete,
+      destination: MIGRATION_DESTINATION,
+      source,
+      simulated: false
+    };
+  }
+
   onAccount(info) {
     const decoded = decodeBondingCurve(info && info.data);
     if (!decoded || !this.mint) return;
     if (decoded.complete) {
-      this.source = 'DexScreener migrated pool';
-      this.startMigratedPoll();
-      this.emit(true);
+      if (this.pumpSwap && this.pumpSwap.running && this.pumpSwap.mint === this.mint) return;
+      this.onPrice(this.curveTick(decoded, 'Helius bonding curve'));
+      this.startPumpSwap();
       return;
     }
     this.stopMigratedPoll();
+    this.stopPumpSwap();
     this.source = 'Helius bonding curve';
     this.emit(true);
-    this.onPrice({
-      mint: this.mint,
-      priceSol: decoded.priceSol,
-      marketCapSol: decoded.marketCapSol,
-      source: this.source,
-      simulated: false,
-      complete: false
-    });
+    this.onPrice(this.curveTick(decoded, this.source));
   }
 
   onLogs(logs) {
@@ -273,18 +298,61 @@ class CurveFeed {
     }
   }
 
+  async startPumpSwap() {
+    const mint = this.mint;
+    if (!mint || this.stopped) return;
+    if (!this.pumpSwap) {
+      this.source = 'DexScreener fallback';
+      this.emit(true, 'PumpSwap feed is not configured');
+      this.startMigratedPoll();
+      return;
+    }
+    this.stopMigratedPoll();
+    this.pumpSwap.onFallback = () => {
+      if (this.stopped || this.mint !== mint) return;
+      this.source = 'DexScreener fallback';
+      this.emit(false, 'PumpSwap websocket stalled');
+      this.startMigratedPoll();
+    };
+    this.pumpSwap.onRecover = () => {
+      if (this.stopped || this.mint !== mint || !this.pumpSwap.running) return;
+      this.stopMigratedPoll();
+      this.source = 'Helius PumpSwap pool';
+      this.emit(true);
+    };
+    const ok = await this.pumpSwap.start(mint);
+    if (this.stopped || this.mint !== mint) return;
+    if (!ok) {
+      this.source = 'DexScreener fallback';
+      this.emit(true, 'PumpSwap pool not found');
+      this.startMigratedPoll();
+      return;
+    }
+    this.source = 'Helius PumpSwap pool';
+    this.emit(true);
+  }
+
+  stopPumpSwap() {
+    if (this.pumpSwap && this.pumpSwap.running) this.pumpSwap.stop();
+  }
+
   startMigratedPoll() {
     if (this.migratedTimer || this.stopped) return;
     const tick = async () => {
       if (this.stopped || !this.mint) return;
       try {
         const price = await this.fetchMigratedPrice(this.mint);
-        if (price && Number(price) > 0) {
+        const row = price && typeof price === 'object' ? price : { priceSol: Number(price) };
+        if (row && Number(row.priceSol) > 0) {
           this.onPrice({
             mint: this.mint,
-            priceSol: Number(price),
-            marketCapSol: null,
-            source: 'DexScreener migrated pool',
+            priceSol: Number(row.priceSol),
+            marketCapSol: Number(row.marketCapSol) > 0 ? Number(row.marketCapSol) : null,
+            solUsd: Number(row.solUsd) > 0 ? Number(row.solUsd) : null,
+            source: 'DexScreener fallback',
+            progressPct: 100,
+            complete: true,
+            destination: MIGRATION_DESTINATION,
             simulated: false,
             complete: true
           });

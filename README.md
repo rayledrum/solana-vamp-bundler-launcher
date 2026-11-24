@@ -27,7 +27,7 @@ A high-performance, non-custodial Solana memecoin launchpad, vampire cloner, and
 
 ### 4. 📊 Live Trading & Exit Desk
 - **Real-Time WebSocket Stream:** Displays live block slots via Helius RPC, transaction landings, and PnL updates.
-- **Bonding Curve Progress Tracker:** Visual progress bar tracking migration progress toward Raydium graduation (85 SOL threshold).
+- **Bonding Curve Progress Tracker:** Progress comes from the bonding curve's real token reserves and the `complete` flag. Graduation is PumpSwap. After graduation the chart follows the PumpSwap pool over Helius, with DexScreener only as a fallback.
 - **Cascade Exit:** Staggered auto-selling with configurable delay intervals across sub-wallets to avoid crashing your own chart in a single block.
 - **Percentage Dumps:** Sell 25%, 50%, 75%, or 100% across all or individual wallets.
 - **Panic Dump All:** Instant emergency exit across 100% of holdings.

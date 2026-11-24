@@ -18,6 +18,7 @@ const {
 const { fetchSingleVersionedTx, sendAndConfirmVersioned } = require('./portalTx');
 const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTradeFeeSol } = require('./pnl');
 const { pumpPortalFeedEvent } = require('./curveFeed');
+const { curveState, MIGRATION_DESTINATION } = require('./bondingCurve');
 
 class TradingEngine {
   constructor() {
@@ -35,7 +36,13 @@ class TradingEngine {
     this.costBooks = new Map();
     this.priceSol = null;
     this.priceMint = null;
+    this.curve = null;
+    this.simRealSol = 0;
     this.onMintChange = null;
+    this.seededMint = null;
+    this.seedPromise = null;
+    this.seedPromiseMint = null;
+    this.portalFetch = fetchSingleVersionedTx;
     this.seenTradeSigs = new Set();
     this.pumpPortalNotice = '';
   }
@@ -83,12 +90,37 @@ class TradingEngine {
     if (price) this.noteMarketPrice(mint, price, { simulated: false });
   }
 
+  noteCurve(tick) {
+    if (!tick || tick.simulated || !tick.mint || tick.mint !== this.activeToken) return;
+    const progressPct = tick.complete ? 100 : Number(tick.progressPct);
+    if (!Number.isFinite(progressPct) && !tick.complete) return;
+    this.curve = {
+      mint: tick.mint,
+      progressPct: Number.isFinite(progressPct) ? progressPct : 100,
+      realSol: Number(tick.realSol) || 0,
+      complete: Boolean(tick.complete),
+      destination: tick.destination || MIGRATION_DESTINATION,
+      source: tick.source || ''
+    };
+    this.broadcast('CURVE_PROGRESS', this.curve);
+  }
+
+  tradePool() {
+    if (walletManager.simulationMode) return 'pump';
+    if (this.curve && this.curve.mint === this.activeToken && this.curve.complete) return 'pump-amm';
+    if (this.curve && this.curve.mint === this.activeToken && this.curve.complete === false) return 'pump';
+    return 'auto';
+  }
+
   ingestCurvePrice(tick) {
-    if (!tick || tick.simulated || !(Number(tick.priceSol) > 0)) return;
+    if (!tick || tick.simulated) return;
+    this.noteCurve(tick);
+    if (!(Number(tick.priceSol) > 0)) return;
     this.broadcast('PUBLIC_TRADE', {
       mint: tick.mint,
       priceSol: tick.priceSol,
       marketCapSol: tick.marketCapSol || 0,
+      solUsd: tick.solUsd || null,
       priceOnly: true,
       simulated: false,
       source: tick.source || 'Helius bonding curve',
@@ -115,17 +147,103 @@ class TradingEngine {
     if (!mint || !address) return;
     const key = this.bookKey(mint, address);
     const book = this.costBooks.get(key) || emptyBook();
+    const position = this.positions.get(address);
+    const unknown = Boolean(position && position.costKnown === false);
     const next = fill.side === 'sell' ? applySell(book, fill) : applyBuy(book, fill);
+    next.costKnown = !unknown;
     this.costBooks.set(key, next);
+    if (position && next.costKnown) {
+      position.costKnown = true;
+      position.solInvested = next.costBasisSol;
+      this.positions.set(address, position);
+    }
     if (!walletManager.simulationMode) this.publishPnl(mint);
   }
 
   noteOnChainTokens(address, mint, tokenAmount) {
-    if (!mint || mint !== this.activeToken) return;
-    const position = this.positions.get(address) || { tokens: 0, solInvested: 0 };
-    position.tokens = Math.max(0, Number(tokenAmount) || 0);
+    this.applyOnChainBalance(address, mint, tokenAmount);
+    if (!walletManager.simulationMode && mint === this.activeToken) this.publishPnl(mint);
+  }
+
+  applyOnChainBalance(address, mint, tokenAmount) {
+    if (!mint || mint !== this.activeToken || !address) return;
+    const tokens = Math.max(0, Number(tokenAmount) || 0);
+    const key = this.bookKey(mint, address);
+    const book = this.costBooks.get(key);
+    const existing = this.positions.get(address);
+    const position = existing || { tokens: 0, solInvested: 0, costKnown: true };
+    if (!existing) {
+      if (book && book.costKnown === true) {
+        position.costKnown = true;
+        position.solInvested = book.costBasisSol;
+      } else if (tokens > 0) {
+        position.costKnown = false;
+        position.solInvested = null;
+      } else {
+        position.costKnown = true;
+        position.solInvested = 0;
+      }
+    }
+    position.tokens = tokens;
+    if (tokens <= 0 && position.costKnown === false) {
+      position.costKnown = true;
+      position.solInvested = 0;
+      this.costBooks.delete(key);
+    } else if (position.costKnown === false) {
+      position.solInvested = null;
+    } else {
+      const book = this.costBooks.get(key);
+      if (book && book.costKnown === true) position.solInvested = book.costBasisSol;
+    }
     this.positions.set(address, position);
-    if (!walletManager.simulationMode) this.publishPnl(mint);
+    walletManager.noteTokenBalance(address, mint, tokens);
+  }
+
+  seedOnChainHoldings(mint) {
+    if (walletManager.simulationMode || !mint || mint !== this.activeToken) return Promise.resolve();
+    if (this.seededMint === mint) return Promise.resolve();
+    if (this.seedPromise && this.seedPromiseMint === mint) return this.seedPromise;
+    this.seedPromiseMint = mint;
+    const run = (async () => {
+      const wallets = walletManager.walletList();
+      let failed = false;
+      await Promise.all(wallets.map(async (wallet) => {
+        const address = wallet.publicKey.toBase58();
+        try {
+          const balance = await readOwnerTokenBalance(walletManager.connection, address, mint);
+          if (this.activeToken !== mint) return;
+          const existing = this.positions.get(address);
+          if (existing && existing.costKnown === true) {
+            existing.tokens = balance.ui;
+            this.positions.set(address, existing);
+          } else {
+            const position = existing || { tokens: 0, solInvested: null, costKnown: false };
+            position.tokens = balance.ui;
+            if (balance.ui > 0) {
+              position.costKnown = false;
+              position.solInvested = null;
+            } else {
+              position.costKnown = true;
+              position.solInvested = 0;
+              position.tokens = 0;
+            }
+            this.positions.set(address, position);
+          }
+          walletManager.noteTokenBalance(address, mint, balance.ui);
+        } catch (err) {
+          failed = true;
+          console.warn(`[Tokens] ${address} ${mint} balance read failed: ${err.message}`);
+        }
+      }));
+      if (this.activeToken !== mint) return;
+      if (!failed) this.seededMint = mint;
+      this.publishPnl(mint);
+      this.broadcast('HOLDINGS_SEEDED', { mint });
+    })();
+    this.seedPromise = run.finally(() => {
+      if (this.seedPromiseMint === mint) this.seedPromise = null;
+    });
+    return this.seedPromise;
   }
 
   noteMarketPrice(mint, price, meta = {}) {
@@ -149,25 +267,40 @@ class TradingEngine {
     let unrealizedSol = 0;
     let costBasisSol = 0;
     let tokens = 0;
+    let valueSol = 0;
     let priced = price != null;
+    let unknownCost = false;
     for (const address of addresses) {
-      const book = this.costBooks.get(this.bookKey(mint, address)) || emptyBook();
-      const onChain = this.positions.has(address) ? this.positions.get(address).tokens : null;
+      const book = { ...(this.costBooks.get(this.bookKey(mint, address)) || emptyBook()) };
+      const position = this.positions.get(address);
+      if (position && position.costKnown === false) book.costKnown = false;
+      const onChain = position ? position.tokens : null;
       const quote = quotePosition(book, onChain, price);
       wallets.push({ address, ...quote });
-      realizedSol += quote.realizedSol;
-      costBasisSol += quote.costBasisSol;
       tokens += quote.tokens;
+      if (quote.valueSol == null) priced = false;
+      else valueSol += quote.valueSol;
+      if (quote.costKnown === false && quote.tokens > 0) unknownCost = true;
       if (quote.unrealizedSol == null) priced = false;
       else unrealizedSol += quote.unrealizedSol;
+      if (quote.costBasisSol != null) costBasisSol += quote.costBasisSol;
+      if (quote.realizedSol != null) realizedSol += quote.realizedSol;
     }
-    const pnlSol = priced ? realizedSol + unrealizedSol : null;
+    const pnlSol = !unknownCost && priced ? realizedSol + unrealizedSol : null;
     const pnlPct = pnlSol == null || costBasisSol <= 0 ? null : (pnlSol / costBasisSol) * 100;
     this.broadcast('PNL_UPDATE', {
       mint,
       priceSol: price,
       wallets,
-      total: { tokens, costBasisSol, realizedSol, unrealizedSol: priced ? unrealizedSol : null, pnlSol, pnlPct }
+      total: {
+        tokens,
+        costBasisSol: unknownCost ? null : costBasisSol,
+        realizedSol: unknownCost ? null : realizedSol,
+        unrealizedSol: !unknownCost && priced ? unrealizedSol : null,
+        pnlSol,
+        pnlPct,
+        valueSol: price != null ? valueSol : null
+      }
     });
   }
 
@@ -298,10 +431,15 @@ class TradingEngine {
 
   setActiveToken(mint, initialInvestments = []) {
     this.activeToken = mint;
+    this.seededMint = null;
+    this.seedPromise = null;
+    this.seedPromiseMint = null;
     this.positions.clear();
     this.clearMintBooks(mint);
     this.priceSol = null;
     this.priceMint = null;
+    this.curve = null;
+    this.simRealSol = 0;
     initialInvestments.forEach(item => {
       this.positions.set(item.address, {
         tokens: item.tokens,
@@ -376,6 +514,22 @@ class TradingEngine {
       };
     }
 
+    if (!walletManager.simulationMode) {
+      try {
+        await this.seedOnChainHoldings(mint);
+      } catch (err) {
+        console.warn('[Tokens] Holding seed failed:', err.message);
+      }
+      if (this.activeToken !== mint) {
+        return {
+          activeToken: mint,
+          stale: true,
+          currentMint: this.activeToken,
+          wallets: []
+        };
+      }
+    }
+
     const dexInfo = await pumpfun.getTokenDexInfo(mint);
     if (this.activeToken !== mint) {
       return {
@@ -390,15 +544,38 @@ class TradingEngine {
     let totalInvested = 0;
     const walletRows = [];
 
-    const devPos = this.positions.get(master.address) || { tokens: 0, solInvested: 0 };
-    totalTokens += devPos.tokens;
-    totalInvested += devPos.solInvested;
-
+    const devPos = this.positions.get(master.address) || { tokens: 0, solInvested: 0, costKnown: true };
     const livePrice = !walletManager.simulationMode && this.priceMint === mint && this.priceSol > 0 ? this.priceSol : null;
     const valueOf = (tokens) => livePrice != null ? tokens * livePrice : (walletManager.simulationMode ? pumpfun.calculateSellOutput(tokens, 15) : 0);
-    const devCurrentVal = valueOf(devPos.tokens);
-    const devPnlSol = devCurrentVal - devPos.solInvested;
-    const devPnlPct = devPos.solInvested > 0 ? (devPnlSol / devPos.solInvested) * 100 : 0;
+    const present = (address, position) => {
+      const tokens = Math.max(0, Number(position.tokens) || 0);
+      const currentValue = valueOf(tokens);
+      if (!walletManager.simulationMode) {
+        const book = { ...(this.costBooks.get(this.bookKey(mint, address)) || emptyBook()) };
+        if (position.costKnown === false) book.costKnown = false;
+        const quote = quotePosition(book, tokens, livePrice);
+        return {
+          tokens,
+          solInvested: quote.costKnown ? Number((quote.costBasisSol || 0).toFixed(4)) : null,
+          currentValue: quote.valueSol == null ? 0 : Number(quote.valueSol.toFixed(4)),
+          pnlSol: quote.pnlSol == null ? null : Number(quote.pnlSol.toFixed(4)),
+          pnlPct: quote.pnlPct == null ? null : Number(quote.pnlPct.toFixed(2))
+        };
+      }
+      const invested = Number(position.solInvested) || 0;
+      const pnlSol = currentValue - invested;
+      const pnlPct = invested > 0 ? (pnlSol / invested) * 100 : 0;
+      return {
+        tokens,
+        solInvested: Number(invested.toFixed(4)),
+        currentValue: Number(currentValue.toFixed(4)),
+        pnlSol: Number(pnlSol.toFixed(4)),
+        pnlPct: Number(pnlPct.toFixed(2))
+      };
+    };
+    const devPresented = present(master.address, devPos);
+    totalTokens += devPresented.tokens;
+    if (devPresented.solInvested != null) totalInvested += devPresented.solInvested;
 
     walletRows.push({
       role: 'Master Dev',
@@ -407,20 +584,14 @@ class TradingEngine {
       simBalance: master.simBalance,
       liveBalance: master.liveBalance,
       liveError: master.liveError || null,
-      tokens: devPos.tokens,
-      solInvested: devPos.solInvested,
-      currentValue: Number(devCurrentVal.toFixed(4)),
-      pnlSol: Number(devPnlSol.toFixed(4)),
-      pnlPct: Number(devPnlPct.toFixed(2))
+      ...devPresented
     });
 
     for (const wallet of subWallets) {
-      const position = this.positions.get(wallet.address) || { tokens: wallet.tokenBalance, solInvested: 0 };
-      totalTokens += position.tokens;
-      totalInvested += position.solInvested;
-      const subVal = valueOf(position.tokens);
-      const subPnl = subVal - position.solInvested;
-      const subPct = position.solInvested > 0 ? (subPnl / position.solInvested) * 100 : 0;
+      const position = this.positions.get(wallet.address) || { tokens: wallet.tokenBalance, solInvested: 0, costKnown: true };
+      const presented = present(wallet.address, position);
+      totalTokens += presented.tokens;
+      if (presented.solInvested != null) totalInvested += presented.solInvested;
 
       walletRows.push({
         role: `Sub #${wallet.index}`,
@@ -429,28 +600,33 @@ class TradingEngine {
         simBalance: wallet.simBalance,
         liveBalance: wallet.liveBalance,
         liveError: wallet.liveError || null,
-        tokens: position.tokens,
-        solInvested: position.solInvested,
-        currentValue: Number(subVal.toFixed(4)),
-        pnlSol: Number(subPnl.toFixed(4)),
-        pnlPct: Number(subPct.toFixed(2))
+        ...presented
       });
     }
 
-    const currentSolValue = valueOf(totalTokens);
-    const pnlSol = currentSolValue - totalInvested;
-    const pnlPct = totalInvested > 0 ? (pnlSol / totalInvested) * 100 : 0;
-    const curveProgressPct = pumpfun.calculateProgress(15 + totalInvested);
+    const unknownCost = walletRows.some(row => row.solInvested == null && row.tokens > 0);
+    const currentSolValue = walletRows.reduce((sum, row) => sum + (Number(row.currentValue) || 0), 0);
+    const pnlSol = unknownCost ? null : currentSolValue - totalInvested;
+    const pnlPct = pnlSol == null || totalInvested <= 0 ? null : (pnlSol / totalInvested) * 100;
+    const modeled = curveState(this.simRealSol);
+    const liveCurve = !walletManager.simulationMode && this.curve && this.curve.mint === mint ? this.curve : null;
+    const curveProgressPct = liveCurve ? liveCurve.progressPct : modeled.progressPct;
+    const curveRealSol = liveCurve ? liveCurve.realSol : modeled.realSol;
+    const curveComplete = liveCurve ? liveCurve.complete : modeled.complete;
+    const curveDestination = liveCurve ? liveCurve.destination : modeled.destination;
 
     return {
       activeToken: mint,
       stale: false,
       totalTokens: Math.floor(totalTokens),
-      totalSolInvested: Number(totalInvested.toFixed(4)),
+      totalSolInvested: unknownCost ? null : Number(totalInvested.toFixed(4)),
       currentSolValue: Number(currentSolValue.toFixed(4)),
-      pnlSol: Number(pnlSol.toFixed(4)),
-      pnlPct: Number(pnlPct.toFixed(2)),
+      pnlSol: pnlSol == null ? null : Number(pnlSol.toFixed(4)),
+      pnlPct: pnlPct == null ? null : Number(pnlPct.toFixed(2)),
       curveProgressPct,
+      curveRealSol,
+      curveComplete,
+      curveDestination,
       dexInfo,
       wallets: walletRows
     };
@@ -458,6 +634,10 @@ class TradingEngine {
 
   knownTargets(walletAddresses) {
     if (Array.isArray(walletAddresses) && walletAddresses.length > 0) return walletAddresses;
+    if (!walletManager.simulationMode) {
+      const loaded = walletManager.walletList().map(wallet => wallet.publicKey.toBase58());
+      if (loaded.length) return loaded;
+    }
     return Array.from(this.positions.keys());
   }
 
@@ -544,6 +724,7 @@ class TradingEngine {
         position.tokens += tokensOut;
         position.solInvested += amountPerWallet;
         this.positions.set(addr, position);
+        this.simRealSol += amountPerWallet;
         const current = walletManager.simulatedBalances.get(addr) || 0;
         walletManager.simulatedBalances.set(addr, Math.max(0, current - amountPerWallet));
         walletManager.save();
@@ -572,7 +753,7 @@ class TradingEngine {
       }
 
       try {
-        const tx = await fetchSingleVersionedTx({
+        const tx = await this.portalFetch({
           publicKey: addr,
           action: 'buy',
           mint,
@@ -580,7 +761,7 @@ class TradingEngine {
           amount: amountPerWallet,
           slippage: config.SLIPPAGE_PCT,
           priorityFee: config.PRIORITY_FEE_SOL,
-          pool: 'pump'
+          pool: this.tradePool()
         });
         tx.sign([signer]);
         const signature = await sendAndConfirmVersioned(walletManager.connection, tx);
@@ -592,9 +773,10 @@ class TradingEngine {
         const solSpent = settled && settled.solDelta != null
           ? Math.max(0, settled.solDelta)
           : amountPerWallet + knownTradeFeeSol(config.PRIORITY_FEE_SOL);
-        const position = this.positions.get(addr) || { tokens: 0, solInvested: 0 };
+        const position = this.positions.get(addr) || { tokens: 0, solInvested: 0, costKnown: true };
         position.tokens = postTokens;
-        position.solInvested += solSpent;
+        if (position.costKnown === false) position.solInvested = null;
+        else position.solInvested = (Number(position.solInvested) || 0) + solSpent;
         this.positions.set(addr, position);
         this.sessionSpentSol += solSpent;
         totalBoughtTokens += tokensOut;
@@ -690,6 +872,7 @@ class TradingEngine {
         this.positions.set(addr, position);
         const currentBal = walletManager.simulatedBalances.get(addr) || 0;
         walletManager.simulatedBalances.set(addr, currentBal + solGained);
+        this.simRealSol = Math.max(0, this.simRealSol - solGained);
         walletManager.save();
         totalSoldTokens += tokensToSell;
         totalReceivedSol += solGained;
@@ -723,7 +906,7 @@ class TradingEngine {
         }
         const sellAll = sellPct === 100;
         const tokensToSell = sellAll ? uiBalance : uiBalance * fraction;
-        const tx = await fetchSingleVersionedTx({
+        const tx = await this.portalFetch({
           publicKey: addr,
           action: 'sell',
           mint,
@@ -731,7 +914,7 @@ class TradingEngine {
           amount: sellAll ? '100%' : tokensToSell,
           slippage: config.SLIPPAGE_PCT,
           priorityFee: config.PRIORITY_FEE_SOL,
-          pool: 'pump'
+          pool: this.tradePool()
         });
         tx.sign([signer]);
         const signature = await sendAndConfirmVersioned(walletManager.connection, tx);

@@ -11,13 +11,9 @@ const {
 } = require('@solana/spl-token');
 const axios = require('axios');
 const config = require('./config');
+const { curveState, tokensOutForSol, solOutForTokens } = require('./bondingCurve');
 
-// Pump.fun Curve Constants
-const INITIAL_VIRTUAL_SOL = 30 * 1e9; // 30 SOL in lamports
-const INITIAL_VIRTUAL_TOKENS = 1073000000 * 1e6; // 1,073,000,000 tokens (6 decimals)
-const INITIAL_REAL_TOKENS = 793100000 * 1e6; // 793,100,000 tokens for sale
-const GRADUATION_SOL_THRESHOLD = 85; // 85 SOL for Raydium migration
-const TOTAL_SUPPLY = 1000000000; // 1 Billion tokens
+const TOTAL_SUPPLY = 1000000000;
 
 class PumpFunService {
   constructor() {
@@ -46,39 +42,16 @@ class PumpFunService {
 
   // Calculate tokens received for a given SOL amount (constant product AMM: x * y = k)
   calculateBuyOutput(solAmount, currentRealSol = 0) {
-    const lamports = Math.floor(solAmount * 1e9);
-    const virtualSol = Math.floor(INITIAL_VIRTUAL_SOL + (currentRealSol * 1e9));
-    const virtualTokens = Math.floor(INITIAL_VIRTUAL_TOKENS - (currentRealSol > 0 ? (INITIAL_REAL_TOKENS * (currentRealSol / GRADUATION_SOL_THRESHOLD)) : 0));
-    
-    const k = BigInt(virtualSol) * BigInt(virtualTokens);
-    const newVirtualSol = BigInt(virtualSol) + BigInt(lamports);
-    const newVirtualTokens = k / newVirtualSol;
-    const tokensOut = BigInt(virtualTokens) - newVirtualTokens;
-    
-    // Fee is 1% on pump.fun
-    const tokensAfterFee = Number(tokensOut) * 0.99;
-    return tokensAfterFee / 1e6; // return standard UI token units
+    return tokensOutForSol(solAmount, currentRealSol) * 0.99;
   }
 
-  // Calculate SOL received for selling tokens
   calculateSellOutput(tokenAmount, currentRealSol = 0) {
-    const rawTokens = BigInt(Math.floor(tokenAmount * 1e6));
-    const virtualSol = Math.floor(INITIAL_VIRTUAL_SOL + (currentRealSol * 1e9));
-    const virtualTokens = Math.floor(INITIAL_VIRTUAL_TOKENS - (currentRealSol > 0 ? (INITIAL_REAL_TOKENS * (currentRealSol / GRADUATION_SOL_THRESHOLD)) : 0));
-    
-    const k = BigInt(virtualSol) * BigInt(virtualTokens);
-    const newVirtualTokens = BigInt(virtualTokens) + rawTokens;
-    const newVirtualSol = k / newVirtualTokens;
-    const lamportsOut = BigInt(virtualSol) - newVirtualSol;
-
-    const lamportsAfterFee = Number(lamportsOut) * 0.99;
-    return lamportsAfterFee / 1e9; // in SOL
+    return solOutForTokens(tokenAmount, currentRealSol) * 0.99;
   }
 
-  // Calculate bonding curve progress %
+  // Modeled curve. Progress follows real-token reserves, and the destination is PumpSwap.
   calculateProgress(solInCurve) {
-    const pct = (solInCurve / GRADUATION_SOL_THRESHOLD) * 100;
-    return Math.min(100, Math.max(0, Number(pct.toFixed(2))));
+    return curveState(solInCurve).progressPct;
   }
 
   // Upload metadata to Pump.fun IPFS (free public endpoint)
@@ -133,6 +106,7 @@ class PumpFunService {
           priceUsd: parseFloat(pair.priceUsd || '0'),
           priceNative: parseFloat(pair.priceNative || '0'),
           marketCap: pair.marketCap || 0,
+          fdv: pair.fdv || 0,
           volume24h: pair.volume ? pair.volume.h24 : 0,
           pairAddress: pair.pairAddress,
           dexId: pair.dexId,
@@ -304,5 +278,10 @@ class PumpFunService {
     return result;
   }
 }
+
+PumpFunService.prototype.solPriceUsd = function solPriceUsd() {
+  const rate = Number(this._solUsd);
+  return rate > 0 ? rate : null;
+};
 
 module.exports = new PumpFunService();
