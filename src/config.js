@@ -89,7 +89,8 @@ const config = {
 
   DEXSCREENER_API: 'https://api.dexscreener.com/latest/dex',
   PUMPPORTAL_API: 'https://pumpportal.fun/api',
-  PUMPPORTAL_WS: 'wss://pumpportal.fun/api/data'
+  PUMPPORTAL_WS: 'wss://pumpportal.fun/api/data',
+  PUMPPORTAL_API_KEY: String(process.env.PUMPPORTAL_API_KEY || '').trim()
 };
 
 if (config.DEFAULT_JITO_TIP <= 0 || config.DEFAULT_JITO_TIP > config.MAX_JITO_TIP_SOL) {

@@ -13,6 +13,7 @@ const { createAuthMiddleware, loadOrCreateApiToken, tokenAccepted } = require('.
 const { fetchHttpsImage } = require('./safeImage');
 const { applySimulationChange, ignoredModeMessage } = require('./simulationMode');
 const { LiveAccountFeed } = require('./liveFeed');
+const { CurveFeed } = require('./curveFeed');
 const {
   parseStrictBoolean,
   requirePositive,
@@ -96,14 +97,30 @@ const liveFeed = new LiveAccountFeed({
   onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status })
 });
 
+const curveFeed = new CurveFeed({
+  connection: walletManager.connection,
+  programId: config.PUMP_PROGRAM_ID,
+  isLive: () => !walletManager.simulationMode,
+  onPrice: (tick) => tradingEngine.ingestCurvePrice(tick),
+  onTrade: (trade) => tradingEngine.ingestExternalTrade(trade),
+  onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status }),
+  fetchMigratedPrice: async (mint) => {
+    const info = await pumpfun.getTokenDexInfo(mint);
+    return info && info.priceNative > 0 ? info.priceNative : null;
+  }
+});
+
 function syncLiveFeed() {
   if (walletManager.simulationMode) {
     liveFeed.stop();
+    curveFeed.stop();
     return;
   }
   liveFeed.setWallets(walletManager.walletList().map(wallet => wallet.publicKey.toBase58()));
   liveFeed.setMint(tradingEngine.activeToken);
   liveFeed.start();
+  curveFeed.setMint(tradingEngine.activeToken);
+  curveFeed.start();
 }
 tradingEngine.onMintChange = () => syncLiveFeed();
 

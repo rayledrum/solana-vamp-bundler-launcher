@@ -146,6 +146,7 @@ class LiveAccountFeed {
 
   emitStatus() {
     this.onStatus({
+      channel: 'accounts',
       connected: !this.stopped && this.connected && this.isLive(),
       subscribed: this.current.size,
       live: this.isLive() && !this.stopped,

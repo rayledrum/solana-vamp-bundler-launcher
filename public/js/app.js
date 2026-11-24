@@ -116,7 +116,10 @@ document.addEventListener('DOMContentLoaded', () => {
     loadMasterWallet();
     loadSubWallets();
   }, 20000);
-  setInterval(renderFeedStatus, 1000);
+  setInterval(() => {
+    renderFeedStatus();
+    paintChartFeed();
+  }, 1000);
 });
 
 // ==================== REAL-TIME WEBSOCKET PIPELINE ====================
@@ -292,6 +295,10 @@ function handleWsMessage(msg) {
       break;
 
     case 'FEED_STATUS':
+      if (msg.payload && (msg.payload.channel === 'chart' || msg.payload.channel === 'pumpportal')) {
+        applyChartFeedStatus(msg.payload);
+        break;
+      }
       state.feedConnected = Boolean(msg.payload && msg.payload.connected);
       state.feedSubscribed = msg.payload ? msg.payload.subscribed : 0;
       renderFeedStatus();
@@ -388,6 +395,26 @@ function paintPnl(payload) {
   pnlDisplay.className = total.pnlSol >= 0
     ? 'text-2xl font-mono font-extrabold text-emerald-400'
     : 'text-2xl font-mono font-extrabold text-rose-400';
+}
+
+function applyChartFeedStatus(payload) {
+  if (payload.channel === 'pumpportal' && payload.message) {
+    logTerminal(`[PumpPortal] ${payload.message}`);
+    const el = document.getElementById('chartSourceDisplay');
+    if (el) el.title = payload.message;
+    return;
+  }
+  state.chartFeedConnected = payload.connected !== false;
+  state.chartFeedLabel = payload.label || 'Helius bonding curve';
+  paintChartFeed();
+}
+
+function paintChartFeed() {
+  if (state.simulationMode) return;
+  const ageSec = state.lastChartTickAt ? Math.round((Date.now() - state.lastChartTickAt) / 1000) : null;
+  const stale = !state.chartFeedConnected && (ageSec == null || ageSec > 10);
+  const label = state.chartFeedLabel || 'Helius bonding curve';
+  setChartSource(stale ? `feed: ${label} · stale` : `feed: ${label} · live`);
 }
 
 function renderFeedStatus() {
@@ -2844,7 +2871,14 @@ function renderTradeTape(trades) {
 }
 
 function applyPublicTradePrice(trade, mint) {
-  if (!mint || !(Number(trade.solAmount) > 0)) return;
+  if (!mint) return;
+  if (trade.priceOnly && Number(trade.priceSol) > 0) {
+    const epoch = mint === state.chartToken ? state.chartEpoch : null;
+    pushChartTick(Number(trade.priceSol), 0, epoch, mint);
+    state.lastChartTickAt = Date.now();
+    return;
+  }
+  if (!(Number(trade.solAmount) > 0)) return;
   const isBuy = trade.txType === 'buy';
   const epoch = mint === state.chartToken ? state.chartEpoch : null;
   if (trade.simulated || String(trade.signature || '').startsWith('sim_')) {
@@ -2861,6 +2895,10 @@ function applyPublicTradePrice(trade, mint) {
 function renderTradeTick(trade) {
   if (!trade) return;
   const mint = trade.mint || null;
+  if (trade.priceOnly) {
+    if (mint) applyPublicTradePrice(trade, mint);
+    return;
+  }
   if (!trade._replay) {
     if (state.chartToken && (!mint || mint !== state.chartToken)) {
       if (mint) {

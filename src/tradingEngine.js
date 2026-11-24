@@ -12,6 +12,7 @@ const {
 } = require('./validation');
 const { fetchSingleVersionedTx, sendAndConfirmVersioned } = require('./portalTx');
 const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTradeFeeSol } = require('./pnl');
+const { pumpPortalFeedEvent } = require('./curveFeed');
 
 class TradingEngine {
   constructor() {
@@ -30,6 +31,68 @@ class TradingEngine {
     this.priceSol = null;
     this.priceMint = null;
     this.onMintChange = null;
+    this.seenTradeSigs = new Set();
+    this.pumpPortalNotice = '';
+  }
+
+  rememberTrade(signature) {
+    if (!signature) return false;
+    if (this.seenTradeSigs.has(signature)) return true;
+    this.seenTradeSigs.add(signature);
+    if (this.seenTradeSigs.size > 500) {
+      this.seenTradeSigs.delete(this.seenTradeSigs.values().next().value);
+    }
+    return false;
+  }
+
+  notePumpPortalStatus(message, connected) {
+    if (this.pumpPortalNotice === message) return;
+    this.pumpPortalNotice = message;
+    console.warn(`[TradingEngine] PumpPortal: ${message}`);
+    this.broadcast('FEED_STATUS', {
+      channel: 'pumpportal',
+      connected: Boolean(connected),
+      message,
+      label: 'PumpPortal'
+    });
+  }
+
+  ingestExternalTrade(trade) {
+    if (!trade || trade.simulated) return;
+    if (trade.signature && this.rememberTrade(trade.signature)) return;
+    const mint = trade.mint || this.activeToken;
+    this.broadcast('PUBLIC_TRADE', {
+      txType: trade.txType || 'buy',
+      solAmount: Number(trade.solAmount) || 0,
+      tokenAmount: Number(trade.tokenAmount) || 0,
+      traderPublicKey: trade.traderPublicKey || trade.user || 'Unknown',
+      signature: trade.signature || '',
+      marketCapSol: trade.marketCapSol || 0,
+      priceSol: trade.priceSol || null,
+      mint,
+      simulated: false,
+      source: trade.source || 'helius',
+      timestamp: trade.timestamp || Date.now()
+    });
+    const price = Number(trade.priceSol) > 0 ? Number(trade.priceSol) : priceFromTrade(trade);
+    if (price) this.noteMarketPrice(mint, price, { simulated: false });
+  }
+
+  ingestCurvePrice(tick) {
+    if (!tick || tick.simulated || !(Number(tick.priceSol) > 0)) return;
+    this.broadcast('PUBLIC_TRADE', {
+      mint: tick.mint,
+      priceSol: tick.priceSol,
+      marketCapSol: tick.marketCapSol || 0,
+      priceOnly: true,
+      simulated: false,
+      source: tick.source || 'Helius bonding curve',
+      txType: 'buy',
+      solAmount: 0,
+      tokenAmount: 0,
+      timestamp: Date.now()
+    });
+    this.noteMarketPrice(tick.mint, tick.priceSol, { simulated: false });
   }
 
   bookKey(mint, address) {
@@ -163,9 +226,17 @@ class TradingEngine {
 
   openPumpSocket(mint) {
     if (this.pumpMint !== mint) return;
+    const apiKey = String(config.PUMPPORTAL_API_KEY || '').trim();
+    if (!apiKey) {
+      if (!walletManager.simulationMode) {
+        this.notePumpPortalStatus('PumpPortal trade stream needs PUMPPORTAL_API_KEY. Chart prices come from the Helius bonding curve.', false);
+      }
+      return;
+    }
     let socket;
+    const url = `${config.PUMPPORTAL_WS}?api-key=${encodeURIComponent(apiKey)}`;
     try {
-      socket = new WebSocket(config.PUMPPORTAL_WS);
+      socket = new WebSocket(url);
     } catch (err) {
       this.schedulePumpReconnect(mint, err.message);
       return;
@@ -180,21 +251,24 @@ class TradingEngine {
     socket.on('message', (data) => {
       try {
         const trade = JSON.parse(data.toString());
-        if (trade && (trade.txType || trade.solAmount)) {
-          this.broadcast('PUBLIC_TRADE', {
-            txType: (trade.txType || 'buy').toLowerCase(),
-            solAmount: parseFloat(trade.solAmount || 0),
-            tokenAmount: parseFloat(trade.tokenAmount || 0),
-            traderPublicKey: trade.traderPublicKey || trade.user || 'Unknown',
-            signature: trade.signature || '',
-            marketCapSol: trade.marketCapSol || 0,
-            mint,
-            simulated: false,
-            timestamp: Date.now()
-          });
-          const price = priceFromTrade(trade);
-          if (price) this.noteMarketPrice(mint, price, { simulated: false });
+        const event = pumpPortalFeedEvent(trade);
+        if (event && event.type === 'FEED_STATUS') {
+          this.notePumpPortalStatus(event.payload.message, false);
+          return;
         }
+        if (!event || event.type !== 'PUBLIC_TRADE') return;
+        this.ingestExternalTrade({
+          txType: (trade.txType || 'buy').toLowerCase(),
+          solAmount: parseFloat(trade.solAmount || 0),
+          tokenAmount: parseFloat(trade.tokenAmount || 0),
+          traderPublicKey: trade.traderPublicKey || trade.user || 'Unknown',
+          signature: trade.signature || '',
+          marketCapSol: trade.marketCapSol || 0,
+          mint,
+          simulated: false,
+          source: 'PumpPortal',
+          timestamp: Date.now()
+        });
       } catch (err) { /* ignore malformed feed messages */ }
     });
     socket.on('error', (err) => {
