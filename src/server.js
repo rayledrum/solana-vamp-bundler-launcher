@@ -11,6 +11,7 @@ const pumpfun = require('./pumpfun');
 const tradingEngine = require('./tradingEngine');
 const { createAuthMiddleware, loadOrCreateApiToken, tokenAccepted } = require('./auth');
 const { fetchHttpsImage } = require('./safeImage');
+const { applySimulationChange, ignoredModeMessage } = require('./simulationMode');
 const {
   parseStrictBoolean,
   requirePositive,
@@ -158,7 +159,6 @@ app.get('/api/status', async (req, res) => {
     res.json({
       success: true,
       simulationMode: walletManager.simulationMode,
-      liveTradingAllowed: config.LIVE_TRADING,
       rpcHealthy,
       currentSlot: slot,
       heliusConfigured: config.HELIUS_CONFIGURED,
@@ -185,19 +185,15 @@ app.post('/api/settings/simulation', (req, res) => {
     if (enabled === null) {
       return res.status(400).json({ error: 'enabled must be a boolean (true or false)' });
     }
-    if (enabled === false) {
-      if (!config.LIVE_TRADING) {
-        return res.status(403).json({
-          error: 'Live trading is locked. Set LIVE_TRADING=true in .env and restart. Create fresh wallets first; the previously published master and sub-wallets are leaked and must not be funded.'
-        });
-      }
-      if (confirm !== true) {
-        return res.status(400).json({ error: 'Switching to live mode requires confirm: true' });
-      }
-    }
-    walletManager.setSimulationMode(enabled);
+    const next = applySimulationChange({
+      enabled,
+      confirm,
+      heliusConfigured: config.HELIUS_CONFIGURED,
+      hasWallets: Boolean(walletManager.masterWallet)
+    });
+    walletManager.setSimulationMode(next.simulationMode);
     broadcast({ type: 'SIMULATION_TOGGLED', payload: { simulation: walletManager.simulationMode } });
-    res.json({ success: true, simulationMode: walletManager.simulationMode, liveTradingAllowed: config.LIVE_TRADING });
+    res.json({ success: true, simulationMode: walletManager.simulationMode });
   } catch (err) {
     sendError(res, err);
   }
@@ -565,7 +561,8 @@ server.listen(PORT, config.HOST, () => {
   console.log('SOLANA VAMP LAUNCHER & BUNDLER DESK');
   console.log(`URL: http://${config.HOST}:${PORT}`);
   console.log(`Helius RPC: ${config.HELIUS_CONFIGURED ? 'configured from .env' : 'not configured'}`);
-  console.log(`Mode: ${walletManager.simulationMode ? 'SIMULATION (default)' : 'LIVE MAINNET'}`);
-  console.log(`Live unlock: ${config.LIVE_TRADING ? 'LIVE_TRADING=true' : 'off'}`);
+  const ignored = ignoredModeMessage();
+  if (ignored) console.log(ignored);
+  console.log('Mode: SIMULATION (live mode is the dashboard switch and is not saved)');
   console.log('=======================================================');
 });

@@ -149,6 +149,21 @@ function connectWebSocket() {
 
 function handleWsMessage(msg) {
   switch (msg.type) {
+    case 'CONNECTED':
+      if (msg.payload && typeof msg.payload.simulation === 'boolean') {
+        state.simulationMode = msg.payload.simulation;
+        updateSimulationUi(state.simulationMode);
+      }
+      break;
+
+    case 'SIMULATION_TOGGLED':
+      state.simulationMode = Boolean(msg.payload && msg.payload.simulation);
+      updateSimulationUi(state.simulationMode);
+      loadMasterWallet();
+      loadSubWallets();
+      loadLiveStats();
+      break;
+
     case 'HEARTBEAT':
       state.currentSlot = msg.payload.slot;
       document.getElementById('slotDisplay').innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
@@ -971,7 +986,7 @@ async function loadStatus() {
 async function toggleSimulation(enable) {
   const simulationOn = enable === true;
   if (!simulationOn) {
-    const accepted = window.confirm('Switch to LIVE MAINNET? Real SOL can be spent. LIVE_TRADING=true must already be set in .env. Create fresh wallets first. The published master FLAgPA3VzRhAC8auZAoS4FNeqah4vKuf5CEL49i2SMcy and its sub-wallets are leaked and must never be funded.');
+    const accepted = window.confirm('Switch to live mode? Real SOL will be spent on mainnet. This is not saved: a restart returns to simulation. Create fresh wallets first. The published master FLAgPA3VzRhAC8auZAoS4FNeqah4vKuf5CEL49i2SMcy and its sub-wallets are leaked and must never be funded.');
     if (!accepted) return;
   }
   try {
@@ -1000,15 +1015,16 @@ function updateSimulationUi(isSim) {
   const simBtn = document.getElementById('modeSimBtn');
   const liveBtn = document.getElementById('modeLiveBtn');
   const banner = document.getElementById('simBanner');
+  if (!simBtn || !liveBtn) return;
 
   if (isSim) {
     simBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded transition-all bg-cyan-500/20 text-cyan-400 border border-cyan-500/30';
     liveBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded text-slate-400 hover:text-rose-400 transition-all';
-    banner.classList.remove('hidden');
+    if (banner) banner.classList.remove('hidden');
   } else {
     liveBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded transition-all bg-rose-500/20 text-rose-400 border border-rose-500/30';
     simBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded text-slate-400 hover:text-cyan-400 transition-all';
-    banner.classList.add('hidden');
+    if (banner) banner.classList.add('hidden');
   }
 }
 

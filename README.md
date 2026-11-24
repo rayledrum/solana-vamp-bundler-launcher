@@ -53,7 +53,7 @@ This desk runs on **100% free or free-tier connections**:
 ```bash
 cp .env.example .env
 ```
-Set `API_TOKEN` (or leave it blank and copy the token the server prints once). Set `HELIUS_API_KEY` before any live use. Leave `LIVE_TRADING` unset or `false`.
+Set `API_TOKEN` (or leave it blank and copy the token the server prints once). Set `HELIUS_API_KEY` or `HELIUS_RPC_URL` before using the dashboard switch to go live. `LIVE_TRADING` and `SIMULATION_MODE` are ignored.
 
 The master wallet `FLAgPA3VzRhAC8auZAoS4FNeqah4vKuf5CEL49i2SMcy` and the six sub-wallets that were published with the old public build are leaked. Delete `data/wallets.json` if it came from that build, generate fresh wallets, and never fund the leaked ones.
 
@@ -64,5 +64,5 @@ npm start
 The desk binds to `127.0.0.1` unless `HOST` is set. Every `/api` route and the WebSocket require `Authorization: Bearer <API_TOKEN>`. The page asks for that token once per browser session.
 
 ### 3. Testing in Simulation Mode
-The launcher starts in **simulation** unless `LIVE_TRADING=true`. Mock balances let you exercise disperse, vamp, bundle preview, and drain without sending transactions. Switching the UI to live requires that environment flag and an explicit confirmation. Spend is capped by `MAX_SOL_PER_TRADE` (0.1), `MAX_SOL_PER_SESSION` (0.5), and `MAX_JITO_TIP_SOL` (0.01) unless you change `.env`.
+The launcher always starts in **simulation**, including after a restart. Live mode is not read from `.env` and is not saved. The dashboard switch is the only control: it asks you to confirm because real SOL will be spent, and the server rejects the switch when no Helius RPC is configured or no wallets are loaded. Switching back to simulation does not ask again. Spend is capped by `MAX_SOL_PER_TRADE` (0.1), `MAX_SOL_PER_SESSION` (0.5), and `MAX_JITO_TIP_SOL` (0.01) unless you change `.env`.
 
