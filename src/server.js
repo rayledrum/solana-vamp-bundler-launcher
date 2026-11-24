@@ -23,7 +23,6 @@ const {
   requirePositive,
   requireSolTradeAmount,
   requireSellPct,
-  requireBumperInterval,
   requirePublicKey,
   requireMint,
   requireLaunchAmounts,
@@ -98,7 +97,10 @@ const liveFeed = new LiveAccountFeed({
     tradingEngine.noteOnChainTokens(row.address, row.mint, row.tokenAmount);
     broadcast({ type: 'TOKEN_BALANCE_UPDATE', payload: row });
   },
-  onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status })
+  onStatus: (status) => {
+    tradingEngine.noteChartFeed(status);
+    broadcast({ type: 'FEED_STATUS', payload: status });
+  }
 });
 
 const pumpSwap = new PumpSwapFeed({
@@ -106,7 +108,10 @@ const pumpSwap = new PumpSwapFeed({
   isLive: () => !walletManager.simulationMode,
   onPrice: (tick) => tradingEngine.ingestCurvePrice(tick),
   onTrade: (trade) => tradingEngine.ingestExternalTrade(trade),
-  onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status }),
+  onStatus: (status) => {
+    tradingEngine.noteChartFeed(status);
+    broadcast({ type: 'FEED_STATUS', payload: status });
+  },
   supplyUi: async (mint) => (await readMintSupply(walletManager.connection, mint)).ui
 });
 
@@ -116,7 +121,10 @@ const curveFeed = new CurveFeed({
   isLive: () => !walletManager.simulationMode,
   onPrice: (tick) => tradingEngine.ingestCurvePrice(tick),
   onTrade: (trade) => tradingEngine.ingestExternalTrade(trade),
-  onStatus: (status) => broadcast({ type: 'FEED_STATUS', payload: status }),
+  onStatus: (status) => {
+    tradingEngine.noteChartFeed(status);
+    broadcast({ type: 'FEED_STATUS', payload: status });
+  },
   pumpSwap,
   readGlobal: () => readPumpGlobal(walletManager.connection),
   fetchMigratedPrice: async (mint) => {
@@ -639,24 +647,24 @@ app.post('/api/trading/cascade-sell', withMutationLock(async (req, res) => {
 
 app.post('/api/trading/bumper/start', (req, res) => {
   try {
-    const solAmount = requireSolTradeAmount(req.body && req.body.solAmount);
-    const intervalSeconds = requireBumperInterval(req.body && req.body.intervalSeconds);
-    tradingEngine.startVolumeBumper(solAmount, intervalSeconds);
+    const body = req.body || {};
+    const solAmount = requireSolTradeAmount(body.solAmount);
+    const stats = tradingEngine.startVolumeBumper(solAmount, body);
     res.json({
       success: true,
       bumping: true,
-      simulated: true,
-      note: 'Volume bumper is simulation-only and does not submit transactions.'
+      simulated: walletManager.simulationMode,
+      ...stats
     });
   } catch (err) {
     sendError(res, err);
   }
 });
 
-app.post('/api/trading/bumper/stop', (req, res) => {
+app.post('/api/trading/bumper/stop', async (req, res) => {
   try {
-    tradingEngine.stopVolumeBumper();
-    res.json({ success: true, bumping: false, simulated: true });
+    const stats = await tradingEngine.stopVolumeBumper();
+    res.json({ success: true, bumping: false, simulated: walletManager.simulationMode, ...stats });
   } catch (err) {
     sendError(res, err);
   }

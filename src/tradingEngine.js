@@ -19,6 +19,7 @@ const { fetchSingleVersionedTx, sendAndConfirmVersioned } = require('./portalTx'
 const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTradeFeeSol } = require('./pnl');
 const { pumpPortalFeedEvent } = require('./curveFeed');
 const { curveState, MIGRATION_DESTINATION } = require('./bondingCurve');
+const { createRoundTripStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
 
 class TradingEngine {
   constructor() {
@@ -69,25 +70,53 @@ class TradingEngine {
     });
   }
 
-  ingestExternalTrade(trade) {
-    if (!trade || trade.simulated) return;
-    if (trade.signature && this.rememberTrade(trade.signature)) return;
+  fillLabel(side, sol, address) {
+    const master = walletManager.masterWallet && walletManager.masterWallet.publicKey.toBase58();
+    const who = address && address === master ? 'DEV' : 'BOT';
+    const verb = side === 'sell' ? 'SELL' : 'BUY';
+    const amount = Number(sol);
+    return `${who} ${verb} ${Number.isFinite(amount) ? amount.toFixed(4) : '0.0000'}`;
+  }
+
+  tradePayload(trade, own) {
     const mint = trade.mint || this.activeToken;
-    this.broadcast('PUBLIC_TRADE', {
-      txType: trade.txType || 'buy',
-      solAmount: Number(trade.solAmount) || 0,
+    const solAmount = Number(trade.solAmount) || 0;
+    const txType = trade.txType || 'buy';
+    const address = trade.traderPublicKey || trade.user || '';
+    return {
+      txType,
+      solAmount,
       tokenAmount: Number(trade.tokenAmount) || 0,
-      traderPublicKey: trade.traderPublicKey || trade.user || 'Unknown',
+      traderPublicKey: address || 'Unknown',
       signature: trade.signature || '',
       marketCapSol: trade.marketCapSol || 0,
       priceSol: trade.priceSol || null,
       mint,
       simulated: false,
       source: trade.source || 'helius',
+      own: Boolean(own),
+      label: own ? (trade.label || this.fillLabel(txType, solAmount, address)) : '',
       timestamp: trade.timestamp || Date.now()
-    });
+    };
+  }
+
+  ingestExternalTrade(trade) {
+    if (!trade || trade.simulated) return;
+    const signature = trade.signature || '';
+    const own = Boolean(trade.own) || (signature && this.ownTrades && this.ownTrades.has(signature));
+    if (signature && own) {
+      if (!this.ownTrades) this.ownTrades = new Map();
+      this.ownTrades.set(signature, trade.label || this.fillLabel(trade.txType, trade.solAmount, trade.traderPublicKey || trade.user));
+      if (this.ownTrades.size > 200) this.ownTrades.delete(this.ownTrades.keys().next().value);
+    }
+    if (signature && this.rememberTrade(signature)) {
+      if (own) this.broadcast('PUBLIC_TRADE', this.tradePayload(trade, true));
+      return;
+    }
+    const payload = this.tradePayload(trade, own);
+    this.broadcast('PUBLIC_TRADE', payload);
     const price = Number(trade.priceSol) > 0 ? Number(trade.priceSol) : priceFromTrade(trade);
-    if (price) this.noteMarketPrice(mint, price, { simulated: false });
+    if (price) this.noteMarketPrice(payload.mint, price, { simulated: false });
   }
 
   noteCurve(tick) {
@@ -112,8 +141,16 @@ class TradingEngine {
     return 'auto';
   }
 
+  noteChartFeed(status) {
+    if (!status || (status.channel && status.channel !== 'chart')) return;
+    this.chartFeedConnected = status.connected !== false;
+    if (this.chartFeedConnected) this.chartFeedAt = Date.now();
+  }
+
   ingestCurvePrice(tick) {
     if (!tick || tick.simulated) return;
+    this.chartFeedAt = Date.now();
+    this.chartFeedConnected = true;
     this.noteCurve(tick);
     if (!(Number(tick.priceSol) > 0)) return;
     this.broadcast('PUBLIC_TRADE', {
@@ -736,10 +773,12 @@ class TradingEngine {
           txType: 'buy',
           solAmount: amountPerWallet,
           tokenAmount: tokensOut,
-          traderPublicKey: addr.slice(0, 4) + '...' + addr.slice(-4),
+          traderPublicKey: addr,
           signature: 'sim_' + Date.now().toString(36),
           mint,
           simulated: true,
+          own: true,
+          label: this.fillLabel('buy', amountPerWallet, addr),
           confirmed: true,
           timestamp: Date.now()
         });
@@ -792,6 +831,8 @@ class TradingEngine {
           traderPublicKey: addr,
           signature,
           mint,
+          own: true,
+          label: this.fillLabel('buy', solSpent, addr),
           simulated: false,
           source: 'wallet'
         });
@@ -881,10 +922,12 @@ class TradingEngine {
           txType: 'sell',
           solAmount: Number(solGained.toFixed(4)),
           tokenAmount: tokensToSell,
-          traderPublicKey: addr.slice(0, 4) + '...' + addr.slice(-4),
+          traderPublicKey: addr,
           signature: 'sim_' + Date.now().toString(36),
           mint,
           simulated: true,
+          own: true,
+          label: this.fillLabel('sell', solGained, addr),
           confirmed: true,
           timestamp: Date.now()
         });
@@ -940,6 +983,8 @@ class TradingEngine {
           traderPublicKey: addr,
           signature,
           mint,
+          own: true,
+          label: this.fillLabel('sell', solReceived, addr),
           simulated: false,
           source: 'wallet'
         });
@@ -1023,49 +1068,255 @@ class TradingEngine {
     });
   }
 
-  startVolumeBumper(solAmount, intervalSeconds) {
-    if (!walletManager.simulationMode) {
-      throw new ValidationError('Volume bumper is simulation-only. It does not submit trades.');
+  walletSol(address) {
+    if (walletManager.simulationMode) return walletManager.simBalanceOf(address);
+    const values = walletManager.liveBalanceCache && walletManager.liveBalanceCache.values;
+    if (!values || values[address] == null || !Number.isFinite(Number(values[address]))) return null;
+    return Number(values[address]);
+  }
+
+  bumpSubWallets(amount) {
+    const reserve = this.bumpLimits ? this.bumpLimits.reserveSol : 0;
+    const need = amount + reserve;
+    return walletManager.subWallets
+      .map(wallet => wallet.publicKey.toBase58())
+      .filter(address => {
+        const sol = this.walletSol(address);
+        return sol != null && sol >= need;
+      });
+  }
+
+  canBumpBuy() {
+    const limits = this.bumpLimits;
+    if (!this.isBumping || !limits) return false;
+    if ((this.bumpCycles || 0) > limits.maxCycles) return false;
+    if ((this.bumpNetSol || 0) + this.bumpSol > limits.sessionBudget + 1e-9) return false;
+    if ((this.bumpErrors || 0) >= limits.maxErrors) return false;
+    return true;
+  }
+
+  bumpSnapshot() {
+    return {
+      cycles: this.bumpCycles || 0,
+      volumeSol: Number((this.bumpVolumeSol || 0).toFixed(4)),
+      netSolCost: Number((this.bumpNetSol || 0).toFixed(4)),
+      lastAction: this.bumpLastAction || '',
+      lastError: this.bumpLastError || '',
+      lastTx: this.bumpLastTx || '',
+      strategy: this.bumpStrategy ? this.bumpStrategy.name : 'round-trip',
+      simulated: walletManager.simulationMode
+    };
+  }
+
+  noteBumpAction(action) {
+    const result = action.result || {};
+    const signature = (result.results || []).map(row => row && row.txSignature).find(Boolean);
+    if (signature) this.bumpLastTx = signature;
+    if (!result.success) {
+      this.bumpLastError = result.error || `${action.side} failed`;
+      return `${action.side.toUpperCase()} failed`;
     }
+    if (action.side === 'buy') {
+      this.bumpVolumeSol += this.bumpSol;
+      this.bumpNetSol += this.bumpSol;
+      return `BUY ${this.bumpSol.toFixed(4)}`;
+    }
+    const received = Number(result.totalReceivedSol) || 0;
+    this.bumpVolumeSol += received;
+    this.bumpNetSol -= received;
+    return `SELL ${received.toFixed(4)}`;
+  }
+
+  bumpStopReason() {
+    if (this.curve && this.curve.mint === this.activeToken && this.curve.complete) return 'Coin graduated. Bumper stopped.';
+    if (!walletManager.simulationMode) {
+      const since = this.chartFeedAt || this.bumpStartedAt || 0;
+      const stallMs = (this.bumpLimits && this.bumpLimits.stallSeconds || 30) * 1000;
+      if (since && Date.now() - since > stallMs) return 'Chart feed stalled. Bumper stopped.';
+    }
+    if (this.bumpLimits && (this.bumpNetSol || 0) >= this.bumpLimits.sessionBudget - 1e-9) {
+      return 'Session SOL budget reached. Bumper stopped.';
+    }
+    if (this.bumpLimits && (this.bumpCycles || 0) >= this.bumpLimits.maxCycles) {
+      return 'Max cycles reached. Bumper stopped.';
+    }
+    if (this.bumpLimits && (this.bumpErrors || 0) >= this.bumpLimits.maxErrors) {
+      return 'Too many consecutive errors. Bumper stopped.';
+    }
+    return '';
+  }
+
+  async flattenBump() {
+    if (!this.bumpStrategy || typeof this.bumpStrategy.closeOpen !== 'function') return [];
+    const actions = await this.bumpStrategy.closeOpen(this);
+    const notes = actions.map(action => this.noteBumpAction(action));
+    if (notes.length) this.bumpLastAction = `Stop · ${notes.join(' · ')}`;
+    return actions;
+  }
+
+  async runBumpCycle() {
+    if (this.bumpBusy || !this.isBumping) return null;
+    this.bumpBusy = true;
+    const mint = this.activeToken;
+    const amount = this.bumpSol;
+    const simulated = walletManager.simulationMode;
+    try {
+      if (!mint) throw new ValidationError('No active token is currently selected');
+      if (!this.bumpStrategy) this.bumpStrategy = createRoundTripStrategy(this.bumpLimits || {});
+      const phase = this.bumpPhase || 'buy';
+      const early = phase === 'buy' ? this.bumpStopReason() : '';
+      if (early && (this.bumpCycles || 0) > 0) {
+        this.isBumping = false;
+        this.clearBumpTimer();
+        this.bumpLastError = early;
+        this.bumpStopRequested = true;
+        const payload = { mint, solAmount: amount, simulated, actions: [], error: early, ...this.bumpSnapshot() };
+        this.broadcast('BUMP_TICK', payload);
+        return payload;
+      }
+      if (phase === 'buy') this.bumpCycles = (this.bumpCycles || 0) + 1;
+      const outcome = await this.bumpStrategy.onCycle({
+        engine: this,
+        phase: this.bumpPhase || 'buy',
+        cycle: this.bumpCycles,
+        solAmount: amount,
+        mint
+      });
+      const actions = outcome.actions || [];
+      const failed = actions.filter(action => !action.result || !action.result.success);
+      if (failed.length) this.bumpErrors = (this.bumpErrors || 0) + 1;
+      else if (actions.length) this.bumpErrors = 0;
+      const notes = actions.map(action => this.noteBumpAction(action));
+      this.bumpLastAction = notes.length ? notes.join(' · ') : 'No sub-wallet above the SOL reserve';
+      if (!failed.length) this.bumpLastError = '';
+      const reason = this.bumpStopReason();
+      if (reason) {
+        this.isBumping = false;
+        this.clearBumpTimer();
+        this.bumpLastError = reason;
+        this.bumpStopRequested = true;
+      }
+      const payload = {
+        mint,
+        solAmount: amount,
+        simulated,
+        actions,
+        error: this.bumpLastError,
+        ...this.bumpSnapshot()
+      };
+      this.broadcast('BUMP_TICK', payload);
+      if (this.isBumping) this.armBump(this.nextBumpPhase(actions));
+      return payload;
+    } catch (err) {
+      this.bumpErrors = (this.bumpErrors || 0) + 1;
+      this.bumpLastAction = 'Cycle failed';
+      this.bumpLastError = err.message || 'Volume cycle failed';
+      if ((this.bumpErrors || 0) >= (this.bumpLimits && this.bumpLimits.maxErrors || 3)) {
+        this.isBumping = false;
+        this.clearBumpTimer();
+        this.bumpLastError = 'Too many consecutive errors. Bumper stopped.';
+        this.bumpStopRequested = true;
+      }
+      const payload = {
+        mint,
+        solAmount: amount,
+        simulated,
+        error: this.bumpLastError,
+        actions: [],
+        ...this.bumpSnapshot()
+      };
+      this.broadcast('BUMP_TICK', payload);
+      if (this.isBumping) this.armBump('buy');
+      console.warn('[VolumeBumper]', this.bumpLastError);
+      return payload;
+    } finally {
+      this.bumpBusy = false;
+      if (this.bumpStopRequested) {
+        this.bumpStopRequested = false;
+        await this.flattenBump();
+        this.broadcast('BUMPER_STOPPED', this.bumpSnapshot());
+      }
+    }
+  }
+
+  nextBumpPhase(actions) {
+    const bought = (actions || []).some(action => action.side === 'buy' && action.result && action.result.success);
+    return bought ? 'sell' : 'buy';
+  }
+
+  randomDelayMs() {
+    return delayMs(this.bumpLimits, this.bumpRng || Math.random);
+  }
+
+  armBump(phase) {
+    if (!this.isBumping) return;
+    this.clearBumpTimer();
+    const ms = this.randomDelayMs();
+    this.bumpPhase = phase;
+    const fire = () => {
+      this.bumpTimer = null;
+      if (!this.isBumping) return null;
+      return this.runBumpCycle().catch(err => console.warn('[VolumeBumper]', err.message));
+    };
+    this.bumpTimer = this.bumpSchedule(fire, ms);
+  }
+
+  clearBumpTimer() {
+    if (this.bumpTimer) {
+      clearTimeout(this.bumpTimer);
+      this.bumpTimer = null;
+    }
+  }
+
+  startVolumeBumper(solAmount, options = {}) {
     const amount = requireSolTradeAmount(solAmount);
-    const interval = requireBumperInterval(intervalSeconds);
-    if (this.isBumping) return;
+    const limits = readBumpLimits(options, amount);
+    if (this.isBumping) return this.bumpSnapshot();
     if (!this.activeToken) throw new ValidationError('No active token is currently selected');
+    if (!walletManager.subWallets.length) throw new ValidationError('No sub-wallets are loaded');
     this.isBumping = true;
+    this.bumpSol = amount;
+    this.bumpLimits = limits;
+    this.bumpRng = options.rng || Math.random;
+    this.bumpSchedule = options.schedule || ((fn, ms) => setTimeout(fn, ms));
+    this.bumpCycles = 0;
+    this.bumpVolumeSol = 0;
+    this.bumpNetSol = 0;
+    this.bumpErrors = 0;
+    this.bumpLastTx = '';
+    this.bumpLastAction = 'Starting';
+    this.bumpLastError = '';
+    this.bumpStartedAt = Date.now();
+    this.bumpStopRequested = false;
+    this.bumpPhase = 'buy';
+    this.bumpStrategy = options.strategy || createRoundTripStrategy(options);
+    const simulated = walletManager.simulationMode;
     this.broadcast('BUMPER_STARTED', {
       mint: this.activeToken,
       solAmount: amount,
-      intervalSeconds: interval,
-      simulated: true,
-      note: 'Simulation only. No transaction is submitted.'
+      simulated,
+      limits,
+      ...this.bumpSnapshot()
     });
-
-    this.bumpInterval = setInterval(() => {
-      try {
-        const tickMint = this.activeToken;
-        if (!this.isBumping || !tickMint || !walletManager.simulationMode) return;
-        const randomSub = walletManager.subWallets[Math.floor(Math.random() * walletManager.subWallets.length)];
-        if (!randomSub) return;
-        this.broadcast('BUMP_TICK', {
-          mint: tickMint,
-          wallet: randomSub.publicKey.toBase58().slice(0, 6) + '...',
-          solAmount: amount,
-          action: 'Simulated micro-buy (no transaction)',
-          simulated: true
-        });
-      } catch (err) {
-        console.warn('[VolumeBumper] Tick error:', err.message);
-      }
-    }, interval * 1000);
+    this.armBump('buy');
+    return this.bumpSnapshot();
   }
 
-  stopVolumeBumper() {
+  async stopVolumeBumper() {
+    const wasRunning = this.isBumping || this.bumpTimer || (this.bumpStrategy && this.bumpStrategy.open && this.bumpStrategy.open.length);
     this.isBumping = false;
-    if (this.bumpInterval) {
-      clearInterval(this.bumpInterval);
-      this.bumpInterval = null;
+    this.clearBumpTimer();
+    if (!wasRunning) return this.bumpSnapshot();
+    if (this.bumpBusy) {
+      this.bumpStopRequested = true;
+      this.bumpLastAction = 'Stopping';
+      while (this.bumpBusy) await new Promise(resolve => setTimeout(resolve, 15));
+      return this.bumpSnapshot();
     }
-    this.broadcast('BUMPER_STOPPED', { simulated: true });
+    this.bumpLastAction = 'Stopped';
+    await this.flattenBump();
+    this.broadcast('BUMPER_STOPPED', this.bumpSnapshot());
+    return this.bumpSnapshot();
   }
 }
 

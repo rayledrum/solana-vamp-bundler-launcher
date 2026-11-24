@@ -268,8 +268,22 @@ function handleWsMessage(msg) {
       loadSubWallets();
       break;
 
+    case 'BUMPER_STARTED':
+      paintBumper(msg.payload || {}, true);
+      logTerminal(`[Bump] Started ${msg.payload.simulated ? 'simulation' : 'live'} cycles of ${msg.payload.solAmount} SOL on ${msg.payload.mint}`);
+      break;
+
+    case 'BUMPER_STOPPED':
+      paintBumper(msg.payload || {}, false);
+      logTerminal('[Bump] Stopped');
+      break;
+
     case 'BUMP_TICK':
-      logTerminal(`[Bump Bot] SIMULATION ONLY, no transaction submitted. ${msg.payload.wallet} (${msg.payload.solAmount} SOL)`);
+      paintBumper(msg.payload || {}, true);
+      logBumpTick(msg.payload || {});
+      loadLiveStats();
+      loadMasterWallet();
+      loadSubWallets();
       break;
 
     case 'TOKEN_TRACKED':
@@ -967,6 +981,14 @@ function renderCandlestickChart() {
   ctx.fillStyle = '#0a0d14';
   ctx.font = 'bold 9px JetBrains Mono';
   ctx.fillText(formatChartMarketCap(state.lastPrice, false), chartRight + 4, curY + 4);
+
+  drawTradeMarkers(ctx, {
+    candles: state.candles,
+    slotW,
+    maxP,
+    effectiveRange,
+    priceHeight
+  });
 
   // Hover Tooltip / Crosshair
   if (state.hoverCandle) {
@@ -2866,27 +2888,84 @@ function handleLogoSelect(e) {
   reader.readAsDataURL(file);
 }
 
+function paintBumper(payload, running) {
+  const badge = document.getElementById('bumperActiveBadge');
+  const cycles = document.getElementById('bumperCycles');
+  const volume = document.getElementById('bumperVolume');
+  const last = document.getElementById('bumperLast');
+  const net = document.getElementById('bumperNet');
+  if (cycles) cycles.textContent = String(payload.cycles || 0);
+  if (volume) volume.textContent = Number(payload.volumeSol || 0).toFixed(4);
+  if (net) net.textContent = Number(payload.netSolCost || 0).toFixed(4);
+  if (last) {
+    const tx = payload.lastTx ? ` · ${payload.lastTx.slice(0, 8)}…` : '';
+    last.textContent = `${payload.lastError || payload.lastAction || (running ? 'Running' : 'Idle')}${payload.lastError ? '' : tx}`;
+    last.style.color = payload.lastError ? '#fb7185' : '#cbd5e1';
+  }
+  if (!badge) return;
+  const active = running !== false && !payload.stopped;
+  badge.textContent = active ? 'BUMPING ACTIVE' : 'STOPPED';
+  badge.className = active
+    ? 'text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold animate-pulse'
+    : 'text-[10px] px-1.5 py-0.2 rounded bg-[#131a29] text-slate-400 font-mono';
+}
+
+function logBumpTick(payload) {
+  const wallet = payload.wallet ? `${payload.wallet.slice(0, 4)}...${payload.wallet.slice(-4)}` : 'wallet';
+  if (payload.error) {
+    logTerminal(`[Bump] ${payload.lastAction || 'Cycle failed'}: ${payload.error}`);
+    showToast(`Bump failed: ${payload.error}`, 'error');
+    return;
+  }
+  const mode = payload.simulated ? 'SIM' : 'LIVE';
+  logTerminal(`[Bump] ${mode} cycle ${payload.cycles}: ${payload.lastAction || 'trade'} via ${wallet}. Volume ${Number(payload.volumeSol || 0).toFixed(4)} SOL, net ${Number(payload.netSolCost || 0).toFixed(4)} SOL`);
+  const rows = (payload.actions || []).flatMap(action => (action.result && action.result.results) || []);
+  rows.forEach(row => {
+    if (row && row.txSignature) logTerminal(`[Bump] Confirmed https://solscan.io/tx/${row.txSignature}`);
+  });
+}
+
 async function toggleVolumeBumper(start) {
   try {
-    const badge = document.getElementById('bumperActiveBadge');
     if (start) {
-      const solAmount = parseFloat(document.getElementById('bumpAmountInput').value || '0.01');
-      const intervalSeconds = parseInt(document.getElementById('bumpIntervalInput').value || '20', 10);
-      await apiFetch('/api/trading/bumper/start', {
+      const num = (id, fallback) => {
+        const raw = document.getElementById(id);
+        const value = raw ? parseFloat(raw.value) : fallback;
+        return Number.isFinite(value) ? value : fallback;
+      };
+      const solAmount = num('bumpAmountInput', 0.01);
+      const res = await apiFetch('/api/trading/bumper/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ solAmount, intervalSeconds })
+        body: JSON.stringify({
+          solAmount,
+          maxPerTrade: num('bumpMaxTradeInput', 0.01),
+          sessionBudget: num('bumpBudgetInput', 0.05),
+          maxCycles: num('bumpMaxCyclesInput', 10),
+          reserveSol: num('bumpReserveInput', 0.02),
+          minDelaySeconds: num('bumpMinDelayInput', 3),
+          maxDelaySeconds: num('bumpMaxDelayInput', 10),
+          maxErrors: num('bumpMaxErrorsInput', 3)
+        })
       });
-      badge.innerText = 'BUMPING ACTIVE';
-      badge.className = 'text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold animate-pulse';
-      showToast('Volume bumper started', 'success');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) throw new Error(data.error || 'Volume bumper did not start');
+      paintBumper(data, true);
+      showToast(data.simulated ? 'Volume bumper started in simulation' : 'Volume bumper started. Live round trips are capped.', 'success');
     } else {
-      await apiFetch('/api/trading/bumper/stop', { method: 'POST' });
-      badge.innerText = 'STOPPED';
-      badge.className = 'text-[10px] px-1.5 py-0.2 rounded bg-[#131a29] text-slate-400 font-mono';
+      const res = await apiFetch('/api/trading/bumper/stop', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) throw new Error(data.error || 'Volume bumper did not stop');
+      paintBumper(data, false);
       showToast('Volume bumper stopped', 'info');
     }
   } catch (err) {
+    const last = document.getElementById('bumperLast');
+    if (last) {
+      last.textContent = err.message;
+      last.style.color = '#fb7185';
+    }
+    logTerminal(`[Bump] ${err.message}`);
     showToast('Bumper error: ' + err.message, 'error');
   }
 }
@@ -3007,6 +3086,78 @@ function applyPublicTradePrice(trade, mint) {
   }
 }
 
+function tradeIsOwn(trade) {
+  if (!trade) return false;
+  if (trade.own) return true;
+  const who = String(trade.traderPublicKey || trade.user || '');
+  if (!who) return false;
+  if (state.masterWallet && who === state.masterWallet.address) return true;
+  return (state.subWallets || []).some(row => row.address === who);
+}
+
+function ownMarkerLabel(trade) {
+  if (trade && trade.label) return String(trade.label);
+  const who = state.masterWallet && trade && trade.traderPublicKey === state.masterWallet.address ? 'DEV' : 'BOT';
+  const side = trade && trade.txType === 'sell' ? 'SELL' : 'BUY';
+  return `${who} ${side} ${Number(trade && trade.solAmount || 0).toFixed(4)}`;
+}
+
+function visibleTradeMarkers() {
+  const series = state.chartToken ? chartBook.peek(state.chartToken) : null;
+  const tfMs = TIMEFRAME_MS[state.chartTimeframe] || 5000;
+  const prepared = ((series && series.trades) || []).map(trade => {
+    const own = tradeIsOwn(trade);
+    return Object.assign({}, trade, { own, label: own ? ownMarkerLabel(trade) : '' });
+  });
+  return ChartBook.buildMarkers(prepared, { tfMs, minSol: ChartBook.MIN_PUBLIC_SOL });
+}
+
+function drawTradeMarkers(ctx, view) {
+  const markers = visibleTradeMarkers();
+  if (!markers.length || !view.candles.length) return;
+  const index = new Map();
+  view.candles.forEach((candle, i) => index.set(candle.time, i));
+  const stacks = new Map();
+  markers.forEach(marker => {
+    const slot = index.get(marker.bucket);
+    if (slot == null) return;
+    const key = `${slot}:${marker.txType}:${marker.own ? 'own' : 'pub'}`;
+    const n = stacks.get(key) || 0;
+    stacks.set(key, n + 1);
+    const candle = view.candles[slot];
+    const cx = slot * view.slotW + (view.slotW / 2);
+    const anchor = marker.txType === 'sell' ? candle.high : candle.low;
+    const y = 15 + ((view.maxP - anchor) / view.effectiveRange) * view.priceHeight;
+    const shift = n * (marker.own ? 14 : 8);
+    const tip = marker.txType === 'sell' ? y - 8 - shift : y + 8 + shift;
+    const size = marker.own ? 7 : 4;
+    ctx.beginPath();
+    if (marker.txType === 'buy') {
+      ctx.moveTo(cx, tip + size);
+      ctx.lineTo(cx - size, tip - size);
+      ctx.lineTo(cx + size, tip - size);
+    } else {
+      ctx.moveTo(cx, tip - size);
+      ctx.lineTo(cx - size, tip + size);
+      ctx.lineTo(cx + size, tip + size);
+    }
+    ctx.closePath();
+    ctx.fillStyle = marker.own
+      ? (marker.txType === 'buy' ? '#fbbf24' : '#fb7185')
+      : (marker.txType === 'buy' ? '#34d399' : '#f87171');
+    ctx.fill();
+    if (marker.own && marker.label) {
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      const width = ctx.measureText(marker.label).width + 8;
+      const boxY = marker.txType === 'sell' ? tip - 16 : tip + 4;
+      ctx.fillStyle = 'rgba(8, 12, 22, 0.92)';
+      ctx.fillRect(cx - width / 2, boxY, width, 13);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(marker.label, cx - width / 2 + 4, boxY + 10);
+    }
+  });
+}
+
 function renderTradeTick(trade) {
   if (!trade) return;
   const mint = trade.mint || null;
@@ -3081,4 +3232,5 @@ function renderTradeTick(trade) {
   }
 
   if (!trade._replay) applyPublicTradePrice(trade, mint || state.chartToken);
+  if (!trade._replay && (!mint || mint === state.chartToken)) renderCandlestickChart();
 }

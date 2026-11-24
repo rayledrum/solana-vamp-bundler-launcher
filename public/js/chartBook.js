@@ -10,7 +10,10 @@
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const MAX_SAMPLES = 5000;
-  const MAX_TRADES = 30;
+  const MAX_TRADES = 240;
+  const MIN_PUBLIC_SOL = 0.001;
+  const PUBLIC_MARKER_CAP = 40;
+  const OWN_MARKER_CAP = 40;
 
   function emptySeries() {
     return {
@@ -104,16 +107,76 @@
       },
 
       pushTrade(mint, trade) {
-        if (!mint || !trade) return false;
+        if (!mint || !trade || trade.priceOnly) return false;
         const series = ensure(mint);
+        const signature = String(trade.signature || '');
+        if (signature) {
+          const existing = series.trades.find(row => row.signature === signature);
+          if (existing) {
+            if (trade.own) {
+              existing.own = true;
+              if (trade.label) existing.label = trade.label;
+            }
+            return mint === activeMint;
+          }
+        }
         series.trades.push(trade);
         if (series.trades.length > MAX_TRADES) {
-          series.trades.splice(0, series.trades.length - MAX_TRADES);
+          const overflow = series.trades.length - MAX_TRADES;
+          let dropped = 0;
+          series.trades = series.trades.filter(row => {
+            if (dropped >= overflow || row.own) return true;
+            dropped += 1;
+            return false;
+          });
         }
         return mint === activeMint;
       }
     };
   }
 
-  return { createBook, MAX_SAMPLES, MAX_TRADES };
+  function markerTimeMs(trade) {
+    const time = Number(trade && trade.timestamp);
+    if (!Number.isFinite(time) || time <= 0) return null;
+    return time < 1e12 ? time * 1000 : time;
+  }
+
+  function buildMarkers(trades, options) {
+    const tfMs = Math.max(1, Number(options && options.tfMs) || 5000);
+    const minSol = Number(options && options.minSol);
+    const floor = Number.isFinite(minSol) ? minSol : MIN_PUBLIC_SOL;
+    const publicCap = Number(options && options.publicCap) || PUBLIC_MARKER_CAP;
+    const ownCap = Number(options && options.ownCap) || OWN_MARKER_CAP;
+    const own = [];
+    const pub = [];
+    (trades || []).forEach(trade => {
+      if (!trade || trade.priceOnly) return;
+      const timeMs = markerTimeMs(trade);
+      if (timeMs == null) return;
+      const sol = Number(trade.solAmount) || 0;
+      const row = {
+        timeMs,
+        bucket: Math.floor(timeMs / tfMs) * tfMs,
+        txType: trade.txType === 'sell' ? 'sell' : 'buy',
+        sol,
+        own: Boolean(trade.own),
+        label: trade.own ? String(trade.label || '') : '',
+        signature: String(trade.signature || '')
+      };
+      if (row.own) own.push(row);
+      else if (sol >= floor) pub.push(row);
+    });
+    return own.slice(-ownCap).concat(pub.slice(-publicCap)).sort((a, b) => a.timeMs - b.timeMs || a.signature.localeCompare(b.signature));
+  }
+
+  return {
+    createBook,
+    buildMarkers,
+    markerTimeMs,
+    MAX_SAMPLES,
+    MAX_TRADES,
+    MIN_PUBLIC_SOL,
+    PUBLIC_MARKER_CAP,
+    OWN_MARKER_CAP
+  };
 });
