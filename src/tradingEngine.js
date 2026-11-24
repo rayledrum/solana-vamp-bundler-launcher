@@ -19,7 +19,7 @@ const { fetchSingleVersionedTx, sendAndConfirmVersioned } = require('./portalTx'
 const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTradeFeeSol } = require('./pnl');
 const { pumpPortalFeedEvent } = require('./curveFeed');
 const { curveState, MIGRATION_DESTINATION } = require('./bondingCurve');
-const { createRoundTripStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
+const { createVolumeStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
 
 class TradingEngine {
   constructor() {
@@ -467,6 +467,7 @@ class TradingEngine {
   }
 
   setActiveToken(mint, initialInvestments = []) {
+    if (mint !== this.activeToken) this.haltBumper('Stopped: token changed', { broadcast: true });
     this.activeToken = mint;
     this.seededMint = null;
     this.seedPromise = null;
@@ -873,8 +874,9 @@ class TradingEngine {
     });
   }
 
-  async executeSell({ pct, walletAddresses = [] }) {
-    const mint = this.activeToken;
+  async executeSell({ pct, walletAddresses = [], mint: mintOverride, fromBumper = false } = {}) {
+    const mint = mintOverride || this.activeToken;
+    const pinned = Boolean(mintOverride);
     if (!mint) throw new ValidationError('No active token is currently selected');
     const sellPct = requireSellPct(pct);
     const fraction = sellPct / 100;
@@ -887,7 +889,7 @@ class TradingEngine {
     let failures = 0;
 
     for (const addr of targets) {
-      if (this.activeToken !== mint) break;
+      if (!pinned && this.activeToken !== mint) break;
       const signer = walletManager.resolveSigner(addr);
       if (!signer) {
         failures += 1;
@@ -1014,7 +1016,7 @@ class TradingEngine {
       resultsCount: successCount
     });
 
-    return this.tradeError({
+    const result = this.tradeError({
       success: failures === 0 && successCount > 0,
       simulation: isSim,
       pct: sellPct,
@@ -1022,10 +1024,15 @@ class TradingEngine {
       totalReceivedSol: Number(totalReceivedSol.toFixed(4)),
       results
     });
+    if (!fromBumper && sellPct === 100 && this.bumperActiveOn(mint)) {
+      await this.haltBumper('Stopped: user sold out');
+    }
+    return result;
   }
 
   async executeCascadeSell(delayMs = 1200, pct = 100) {
     const mint = this.activeToken;
+    if (this.bumperActiveOn(mint)) await this.haltBumper('Stopped: user sold out');
     if (!mint) throw new ValidationError('No active token is currently selected');
     const sellPct = requireSellPct(pct);
     const delay = Number(delayMs);
@@ -1146,9 +1153,12 @@ class TradingEngine {
     return '';
   }
 
-  async flattenBump() {
+  async flattenBump(sellMint) {
     if (!this.bumpStrategy || typeof this.bumpStrategy.closeOpen !== 'function') return [];
+    const previous = this.bumpMint;
+    if (sellMint) this.bumpMint = sellMint;
     const actions = await this.bumpStrategy.closeOpen(this);
+    this.bumpMint = previous;
     const notes = actions.map(action => this.noteBumpAction(action));
     if (notes.length) this.bumpLastAction = `Stop · ${notes.join(' · ')}`;
     return actions;
@@ -1205,7 +1215,7 @@ class TradingEngine {
         ...this.bumpSnapshot()
       };
       this.broadcast('BUMP_TICK', payload);
-      if (this.isBumping) this.armBump(this.nextBumpPhase(actions));
+      if (this.isBumping) this.armBump(this.nextBumpPhase());
       return payload;
     } catch (err) {
       this.bumpErrors = (this.bumpErrors || 0) + 1;
@@ -1239,9 +1249,38 @@ class TradingEngine {
     }
   }
 
-  nextBumpPhase(actions) {
-    const bought = (actions || []).some(action => action.side === 'buy' && action.result && action.result.success);
-    return bought ? 'sell' : 'buy';
+  bumperActiveOn(mint) {
+    const tracked = this.bumpMint;
+    if (!tracked || (mint && tracked !== mint)) return false;
+    const open = this.bumpStrategy && this.bumpStrategy.open && this.bumpStrategy.open.length;
+    return Boolean(this.isBumping || open);
+  }
+
+  haltBumper(reason, options = {}) {
+    if (!this.bumperActiveOn(this.bumpMint || this.activeToken) && !this.isBumping) return Promise.resolve(this.bumpSnapshot());
+    const sellMint = this.bumpMint || this.activeToken;
+    this.isBumping = false;
+    this.clearBumpTimer();
+    this.bumpLastError = reason;
+    this.bumpLastAction = reason;
+    if (this.bumpBusy) {
+      this.bumpStopRequested = true;
+      return Promise.resolve(this.bumpSnapshot());
+    }
+    this.bumpBusy = true;
+    return this.flattenBump(sellMint).finally(() => {
+      this.bumpBusy = false;
+    }).then(() => {
+      if (options.broadcast !== false) this.broadcast('BUMPER_STOPPED', this.bumpSnapshot());
+      return this.bumpSnapshot();
+    });
+  }
+
+  nextBumpPhase() {
+    if (this.bumpStrategy && typeof this.bumpStrategy.nextPhase === 'function') {
+      return this.bumpStrategy.nextPhase();
+    }
+    return 'buy';
   }
 
   randomDelayMs() {
@@ -1289,7 +1328,10 @@ class TradingEngine {
     this.bumpStartedAt = Date.now();
     this.bumpStopRequested = false;
     this.bumpPhase = 'buy';
-    this.bumpStrategy = options.strategy || createRoundTripStrategy(options);
+    this.bumpMint = this.activeToken;
+    this.bumpStrategy = options.strategy && typeof options.strategy.onCycle === 'function'
+      ? options.strategy
+      : createVolumeStrategy({ ...options, ...limits, rng: this.bumpRng });
     const simulated = walletManager.simulationMode;
     this.broadcast('BUMPER_STARTED', {
       mint: this.activeToken,

@@ -2939,6 +2939,8 @@ async function toggleVolumeBumper(start) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           solAmount,
+          strategy: (document.getElementById('bumpStrategyInput') || {}).value || 'random',
+          maxOpen: num('bumpMaxOpenInput', 4),
           maxPerTrade: num('bumpMaxTradeInput', 0.01),
           sessionBudget: num('bumpBudgetInput', 0.05),
           maxCycles: num('bumpMaxCyclesInput', 10),

@@ -937,6 +937,17 @@
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
             <div>
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Strategy</label>
+              <select id="bumpStrategyInput" class="input-field font-mono" style="font-size:12px;">
+                <option value="random" selected>Random</option>
+                <option value="round-trip">Round trip</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Max open positions</label>
+              <input id="bumpMaxOpenInput" type="number" step="1" min="1" max="24" value="4" class="input-field font-mono" style="font-size:12px;">
+            </div>
+            <div>
               <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Buy Size (SOL)</label>
               <input id="bumpAmountInput" type="number" step="0.005" min="0.005" value="0.01" class="input-field font-mono" style="font-size:12px;">
             </div>
