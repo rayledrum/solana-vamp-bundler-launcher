@@ -6,6 +6,8 @@ const path = require('path');
 process.env.WALLETS_FILE = path.join(os.tmpdir(), `bump-wallets-${process.pid}.json`);
 const walletManager = require('../src/walletManager');
 const tradingEngine = require('../src/tradingEngine');
+const { chooseBumpSide, createRandomStrategy } = require('../src/volumeStrategy');
+const realSell = tradingEngine.executeSell.bind(tradingEngine);
 
 function addresses() {
   return walletManager.subWallets.map(wallet => wallet.publicKey.toBase58());
@@ -174,6 +176,7 @@ test('delay bounds are random between min and max and rejected outside them', as
     maxCycles: 2,
     sessionBudget: 0.2,
     schedule: clock.schedule,
+    strategy: 'round-trip',
     rng: () => roll++ === 0 ? 0 : 1
   });
   assert.equal(clock.delays[0], 3000);
@@ -198,4 +201,109 @@ test('a buy above the per-trade cap is refused before any trade', () => {
     /per-trade cap/
   );
   assert.equal(tradingEngine.isBumping, false);
+});
+
+test('random weighting must buy with no lots and must sell at the open cap', () => {
+  assert.equal(chooseBumpSide(0, 4, () => 0.99), 'buy');
+  assert.equal(chooseBumpSide(4, 4, () => 0), 'sell');
+  assert.equal(chooseBumpSide(2, 4, () => 0.49), 'sell');
+  assert.equal(chooseBumpSide(2, 4, () => 0.5), 'buy');
+});
+
+test('random strategy stops opening lots at the cap and can close one partially', async () => {
+  const a = 'WalletA';
+  const b = 'WalletB';
+  const sells = [];
+  const rolls = [0, 0.9, 0, 0, 0];
+  let cursor = 0;
+  const rng = () => rolls[Math.min(cursor++, rolls.length - 1)];
+  const engine = {
+    isBumping: true,
+    activeToken: 'Mint',
+    positions: new Map(),
+    canBumpBuy: () => true,
+    bumpSubWallets: () => [a, b],
+    async executeBuy({ walletAddresses }) {
+      const address = walletAddresses[0];
+      const position = engine.positions.get(address) || { tokens: 0 };
+      position.tokens += 1000;
+      engine.positions.set(address, position);
+      return { success: true, results: [{ tokensBought: 1000, address }] };
+    },
+    async executeSell({ pct, walletAddresses }) {
+      sells.push({ pct, address: walletAddresses[0] });
+      const position = engine.positions.get(walletAddresses[0]);
+      if (position) position.tokens = Math.max(0, position.tokens * (1 - pct / 100));
+      return { success: true, totalReceivedSol: 0.002, results: [] };
+    }
+  };
+  const strategy = createRandomStrategy({ maxOpen: 2, rng });
+  await strategy.onCycle({ engine, solAmount: 0.01, mint: 'Mint' });
+  await strategy.onCycle({ engine, solAmount: 0.01, mint: 'Mint' });
+  assert.equal(strategy.open.length, 2);
+  const third = await strategy.onCycle({ engine, solAmount: 0.01, mint: 'Mint' });
+  assert.equal(third.actions[0].side, 'sell');
+  assert.equal(strategy.open.length, 2);
+  assert.ok(strategy.open.some(row => row.tokensBought > 0 && row.tokensBought < 1000));
+  assert.ok(sells[0].pct >= 25 && sells[0].pct < 100);
+  const full = createRandomStrategy({ maxOpen: 1, rng: () => 1 });
+  full.open.push({ address: a, tokensBought: 1000, mint: 'Mint' });
+  engine.positions.set(a, { tokens: 1000 });
+  await full.onCycle({ engine, solAmount: 0.01, mint: 'Mint' });
+  assert.equal(full.open.length, 0);
+});
+
+test('a 100% manual sell, cascade, panic, and mint change stop the bumper', async () => {
+  async function openLot() {
+    quiet();
+    const calls = mockTrades();
+    const clock = manualClock();
+    tradingEngine.connectPumpPortal = () => {};
+    tradingEngine.startVolumeBumper(0.01, {
+      reserveSol: 0,
+      strategy: 'round-trip',
+      minDelaySeconds: 1,
+      maxDelaySeconds: 1,
+      maxCycles: 10,
+      sessionBudget: 0.5,
+      schedule: clock.schedule,
+      rng: () => 0
+    });
+    await clock.fire();
+    return { calls, bought: calls.buys[0].address };
+  }
+
+  const manual = await openLot();
+  tradingEngine.executeSell = realSell;
+  const other = addresses().find(address => address !== manual.bought);
+  await tradingEngine.executeSell({ pct: 50, walletAddresses: [other] });
+  assert.equal(tradingEngine.isBumping, true);
+  await tradingEngine.executeSell({ pct: 100, walletAddresses: [other] });
+  assert.equal(tradingEngine.isBumping, false);
+  assert.equal(tradingEngine.bumpLastError, 'Stopped: user sold out');
+  assert.equal(tradingEngine.bumpLastError, 'Stopped: user sold out');
+  const left = tradingEngine.positions.get(manual.bought);
+  assert.ok(!left || left.tokens === 0);
+
+  const cascade = await openLot();
+  tradingEngine.executeSell = realSell;
+  await tradingEngine.executeCascadeSell(0, 100);
+  assert.equal(tradingEngine.isBumping, false);
+  assert.equal(tradingEngine.bumpLastError, 'Stopped: user sold out');
+  const cascadeLeft = tradingEngine.positions.get(cascade.bought);
+  assert.ok(!cascadeLeft || cascadeLeft.tokens === 0);
+
+  const panic = await openLot();
+  tradingEngine.executeSell = realSell;
+  await tradingEngine.executeSell({ pct: 100 });
+  assert.equal(tradingEngine.isBumping, false);
+  assert.equal(tradingEngine.bumpLastError, 'Stopped: user sold out');
+
+  const switched = await openLot();
+  tradingEngine.setActiveToken('OtherMint', []);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(tradingEngine.isBumping, false);
+  assert.equal(tradingEngine.bumpLastError, 'Stopped: token changed');
+  assert.equal(tradingEngine.activeToken, 'OtherMint');
+  assert.ok(switched.calls.sells.some(row => row.address === switched.bought));
 });
