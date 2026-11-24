@@ -31,8 +31,68 @@ const state = {
   trendingTokens: []
 };
 
+const API_TOKEN_STORAGE = 'svarogApiToken';
+
+function getApiToken() {
+  let token = sessionStorage.getItem(API_TOKEN_STORAGE);
+  if (!token) {
+    token = window.prompt('Enter the API token printed by the server (or stored in data/api-token):');
+    if (token) {
+      token = token.trim();
+      sessionStorage.setItem(API_TOKEN_STORAGE, token);
+    }
+  }
+  return token || '';
+}
+
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set('Authorization', 'Bearer ' + getApiToken());
+  const response = await window.fetch(url, Object.assign({}, options, { headers }));
+  if (response.status === 401) {
+    sessionStorage.removeItem(API_TOKEN_STORAGE);
+    showToast('API token was rejected. Reload the page and enter it again.', 'error');
+  }
+  return response;
+}
+
+function bindShellActions() {
+  const call = (el, event) => {
+    const name = el.dataset.fn;
+    const arg = el.dataset.arg;
+    if (name === 'toggleSimulation') return toggleSimulation(arg === 'true');
+    if (name === 'toggleVolumeBumper') return toggleVolumeBumper(arg === 'true');
+    if (name === 'refreshMovers') return loadTrendingVampTokens();
+    if (name === 'copyInput') {
+      const input = document.getElementById(arg);
+      return copyToClipboard(input ? input.value : '', el.dataset.arg2 || 'CA');
+    }
+    if (name === 'clickLogo') return document.getElementById('logoFile').click();
+    if (name === 'delayInput') return handleDelayInputChange(el.value);
+    if (name === 'toggleSelectAll') return toggleSelectAllRows(el.checked);
+    if (name === 'logoSelect') return handleLogoSelect(event);
+    if (name === 'bundleMetrics') return calculateBundleMetrics();
+    const fn = window[name];
+    if (typeof fn !== 'function') return;
+    if (arg === undefined) return fn();
+    if (/^-?\d+(\.\d+)?$/.test(arg)) return fn(Number(arg));
+    return fn(arg);
+  };
+  const route = (eventName) => (event) => {
+    const el = event.target.closest('[data-fn]');
+    if (!el) return;
+    if ((el.dataset.evt || 'click') !== eventName) return;
+    call(el, event);
+  };
+  document.addEventListener('click', route('click'));
+  document.addEventListener('input', route('input'));
+  document.addEventListener('change', route('change'));
+}
+
 // Initialize App
 document.addEventListener('DOMContentLoaded', () => {
+  getApiToken();
+  bindShellActions();
   if (window.lucide) lucide.createIcons();
   initChart();
   connectWebSocket();
@@ -53,8 +113,8 @@ document.addEventListener('DOMContentLoaded', () => {
 function connectWebSocket() {
   const isHttp = window.location.protocol === 'http:' || window.location.protocol === 'https:';
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = (isHttp && window.location.host) ? window.location.host : 'localhost:3000';
-  const wsUrl = `${protocol}//${host}`;
+  const host = (isHttp && window.location.host) ? window.location.host : '127.0.0.1:3000';
+  const wsUrl = `${protocol}//${host}/?token=${encodeURIComponent(getApiToken())}`;
 
   try {
     state.ws = new WebSocket(wsUrl);
@@ -175,8 +235,7 @@ function handleWsMessage(msg) {
       break;
 
     case 'BUMP_TICK':
-      logTerminal(`⚡ [Bump Bot] Micro trade on ${msg.payload.wallet} (${msg.payload.solAmount} SOL)`);
-      applyDeskTradeTick(msg.payload.mint, msg.payload.solAmount, (base) => base * (1 + (Math.random() * 0.02 - 0.01)));
+      logTerminal(`[Bump Bot] SIMULATION ONLY, no transaction submitted. ${msg.payload.wallet} (${msg.payload.solAmount} SOL)`);
       break;
 
     case 'TOKEN_TRACKED':
@@ -352,7 +411,7 @@ async function loadCandlesForToken(mint, options = {}) {
   }
 
   try {
-    const res = await fetch(`/api/chart/candles?mint=${encodeURIComponent(mint)}&tf=${encodeURIComponent(requestedTf)}`);
+    const res = await apiFetch(`/api/chart/candles?mint=${encodeURIComponent(mint)}&tf=${encodeURIComponent(requestedTf)}`);
     const data = await res.json();
     if (seq !== chartLoadSeq || state.chartToken !== mint) return;
     if (!res.ok) throw new Error(data.error || 'Candle request failed');
@@ -897,7 +956,7 @@ function switchTab(tabId) {
 
 async function loadStatus() {
   try {
-    const res = await fetch('/api/status');
+    const res = await apiFetch('/api/status');
     const data = await res.json();
     state.simulationMode = data.simulationMode;
     updateSimulationUi(state.simulationMode);
@@ -910,19 +969,28 @@ async function loadStatus() {
 }
 
 async function toggleSimulation(enable) {
+  const simulationOn = enable === true;
+  if (!simulationOn) {
+    const accepted = window.confirm('Switch to LIVE MAINNET? Real SOL can be spent. LIVE_TRADING=true must already be set in .env. Create fresh wallets first. The published master FLAgPA3VzRhAC8auZAoS4FNeqah4vKuf5CEL49i2SMcy and its sub-wallets are leaked and must never be funded.');
+    if (!accepted) return;
+  }
   try {
-    const res = await fetch('/api/settings/simulation', {
+    const res = await apiFetch('/api/settings/simulation', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: enable })
+      body: JSON.stringify({ enabled: simulationOn, confirm: !simulationOn })
     });
     const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Mode change refused', 'error');
+      return;
+    }
     state.simulationMode = data.simulationMode;
     updateSimulationUi(state.simulationMode);
     loadMasterWallet();
     loadSubWallets();
     loadLiveStats();
-    showToast(`Switched to ${enable ? 'SIMULATION MODE' : 'LIVE MAINNET'}`, enable ? 'info' : 'warning');
+    showToast(`Switched to ${simulationOn ? 'SIMULATION MODE' : 'LIVE MAINNET'}`, simulationOn ? 'info' : 'warning');
   } catch (e) {
     showToast('Failed to toggle mode: ' + e.message, 'error');
   }
@@ -985,7 +1053,7 @@ async function executeManualBuy() {
   btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>BUYING...</span>`;
 
   try {
-    const res = await fetch('/api/trading/buy', {
+    const res = await apiFetch('/api/trading/buy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ solAmount, walletAddresses })
@@ -1026,7 +1094,7 @@ async function executeManualSell() {
   btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>SELLING...</span>`;
 
   try {
-    const res = await fetch('/api/trading/sell', {
+    const res = await apiFetch('/api/trading/sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pct, walletAddresses })
@@ -1052,7 +1120,7 @@ async function executeManualSell() {
 async function executeInlineBuy(address, solAmount = 0.1) {
   try {
     showToast(`Buying ${solAmount} SOL for ${address.slice(0, 6)}...`, 'info');
-    const res = await fetch('/api/trading/buy', {
+    const res = await apiFetch('/api/trading/buy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ solAmount, walletAddresses: [address] })
@@ -1068,7 +1136,7 @@ async function executeInlineBuy(address, solAmount = 0.1) {
 async function executeInlineSell(address, pct = 100) {
   try {
     showToast(`Selling ${pct}% from ${address.slice(0, 6)}...`, 'info');
-    const res = await fetch('/api/trading/sell', {
+    const res = await apiFetch('/api/trading/sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pct, walletAddresses: [address] })
@@ -1085,7 +1153,7 @@ async function executeCascadeExit() {
   if (!confirm('CASCADE EXIT: Staggered sell across sub-wallets with delays?')) return;
   try {
     showToast('Starting Cascade Exit...', 'info');
-    const res = await fetch('/api/trading/cascade-sell', {
+    const res = await apiFetch('/api/trading/cascade-sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ delayMs: 800, pct: 100 })
@@ -1102,7 +1170,7 @@ async function executePanicDumpAll() {
   if (!confirm('PANIC DUMP ALL: Emergency exit 100% of all tokens across all wallets immediately?')) return;
   try {
     showToast('PANIC DUMPING ALL HOLDINGS...', 'warning');
-    const res = await fetch('/api/trading/sell', {
+    const res = await apiFetch('/api/trading/sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pct: 100 })
@@ -1218,7 +1286,7 @@ async function executeMatrixBuy() {
       // Step 1: Dev buys immediately
       logTerminal(`[Multi-Buy] Dev wallet executing ${solAmount} SOL in 1st block...`);
       showToast(`Dev buy sent! Delaying ${delaySec}s before sub-wallets buy...`, 'info');
-      await fetch('/api/trading/buy', {
+      await apiFetch('/api/trading/buy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ solAmount, walletAddresses: [state.masterWallet.address] })
@@ -1230,7 +1298,7 @@ async function executeMatrixBuy() {
 
       // Step 3: Sub-wallets buy
       logTerminal(`[Multi-Buy] Firing ${subTargets.length} sub-wallets buy after ${delaySec}s delay...`);
-      const res = await fetch('/api/trading/buy', {
+      const res = await apiFetch('/api/trading/buy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ solAmount, walletAddresses: subTargets })
@@ -1239,7 +1307,7 @@ async function executeMatrixBuy() {
       showToast(`Delayed Multi-Buy Complete! (+${data.totalTokensBought || ''} tokens)`, 'success');
     } else {
       // Simultaneous buy across all target wallets
-      const res = await fetch('/api/trading/buy', {
+      const res = await apiFetch('/api/trading/buy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ solAmount, walletAddresses })
@@ -1281,7 +1349,7 @@ async function executeMatrixSell() {
     btn.innerHTML = `<i data-lucide="loader" class="w-3 h-3 animate-spin"></i><span>SELLING...</span>`;
   }
   try {
-    const res = await fetch('/api/trading/sell', {
+    const res = await apiFetch('/api/trading/sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pct, walletAddresses })
@@ -1313,7 +1381,7 @@ async function loadLiveStats() {
   const requestedEpoch = state.chartEpoch;
   try {
     const qs = requestedMint ? `?mint=${encodeURIComponent(requestedMint)}` : '';
-    const res = await fetch(`/api/trading/stats${qs}`);
+    const res = await apiFetch(`/api/trading/stats${qs}`);
     const data = await res.json();
     const s = data.stats;
     if (!s) return;
@@ -1385,51 +1453,69 @@ function renderTradingWalletsTable(wallets) {
     const pnlSymbol = pnlSol >= 0 ? '▲' : '▼';
     const isChecked = isInitial ? true : prevChecked.has(w.address);
 
+    const address = String(w.address || '');
+    const safeAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) ? address : '';
     tr.innerHTML = `
       <td class="py-2 px-2" style="width:26px;">
-        <input type="checkbox" value="${w.address}" class="row-checkbox" onchange="updateSelectedCount()" ${isChecked ? 'checked' : ''} style="accent-color:#00d4ff;width:13px;height:13px;cursor:pointer;">
+        <input type="checkbox" class="row-checkbox" ${isChecked ? 'checked' : ''} style="accent-color:#00d4ff;width:13px;height:13px;cursor:pointer;">
       </td>
       <td class="py-2 px-2">
         <div style="display:flex;align-items:center;gap:5px;">
-          <span class="font-bold ${isDev ? 'text-amber-400' : 'text-slate-300'}" style="font-size:11px;">${w.role}</span>
-          <span style="color:#546e7a;font-size:10px;">${w.address.slice(0, 4)}...${w.address.slice(-4)}</span>
-          <button onclick="navigator.clipboard.writeText('${w.address}'); showToast('Copied ${w.role} address', 'info')" style="background:none;border:none;color:#546e7a;cursor:pointer;padding:1px;display:flex;align-items:center;" title="Copy Address">
+          <span class="font-bold ${isDev ? 'text-amber-400' : 'text-slate-300'}" style="font-size:11px;"></span>
+          <span class="addr-short" style="color:#546e7a;font-size:10px;"></span>
+          <button type="button" class="copy-addr" style="background:none;border:none;color:#546e7a;cursor:pointer;padding:1px;display:flex;align-items:center;" title="Copy Address">
             <i data-lucide="copy" style="width:11px;height:11px;"></i>
           </button>
-          <a href="https://solscan.io/account/${w.address}" target="_blank" rel="noopener" style="color:#546e7a;display:flex;align-items:center;text-decoration:none;" title="View on Solscan">
+          <a class="solscan-link" target="_blank" rel="noopener noreferrer" style="color:#546e7a;display:flex;align-items:center;text-decoration:none;" title="View on Solscan">
             <i data-lucide="external-link" style="width:10px;height:10px;"></i>
           </a>
         </div>
       </td>
-      <td class="py-2 px-2 text-right font-bold text-cyan-400">${(w.solBalance || 0).toFixed(3)}</td>
-      <td class="py-2 px-2 text-right text-slate-200">${(w.tokens || 0).toLocaleString()}</td>
-      <td class="py-2 px-2 text-right text-slate-400">${(w.solInvested || 0).toFixed(3)}</td>
-      <td class="py-2 px-2 text-right font-semibold text-slate-200">${(w.currentValue || 0).toFixed(3)}</td>
+      <td class="py-2 px-2 text-right font-bold text-cyan-400">${escapeHtml((Number(w.solBalance) || 0).toFixed(3))}</td>
+      <td class="py-2 px-2 text-right text-slate-200">${escapeHtml((Number(w.tokens) || 0).toLocaleString())}</td>
+      <td class="py-2 px-2 text-right text-slate-400">${escapeHtml((Number(w.solInvested) || 0).toFixed(3))}</td>
+      <td class="py-2 px-2 text-right font-semibold text-slate-200">${escapeHtml((Number(w.currentValue) || 0).toFixed(3))}</td>
       <td class="py-2 px-2 text-center">
-        <span class="${pnlClass} text-[10px] font-mono">
-          ${pnlSymbol} ${pnlPrefix}${pnlSol.toFixed(3)} (${pnlPrefix}${pnlPct.toFixed(1)}%)
-        </span>
+        <span class="${pnlClass} text-[10px] font-mono"></span>
       </td>
       <td class="py-2 px-2 text-right">
         <div style="display:flex;align-items:center;justify-content:flex-end;gap:5px;">
-          <!-- Svarog Quick Buy Chips -->
           <div style="display:flex;align-items:center;gap:2px;background:rgba(0,196,140,0.06);padding:2px 3px;border-radius:5px;border:1px solid rgba(0,196,140,0.2);">
             <span style="font-size:8px;font-weight:800;color:#00c48c;padding:0 2px;">BUY</span>
-            <button onclick="executeInlineBuy('${w.address}', 0.05)" class="btn-quick-buy" style="font-size:9px;padding:1px 4px;" title="Buy 0.05 SOL">+0.05</button>
-            <button onclick="executeInlineBuy('${w.address}', 0.1)"  class="btn-quick-buy" style="font-size:9px;padding:1px 4px;" title="Buy 0.10 SOL">+0.1</button>
-            <button onclick="executeInlineBuy('${w.address}', 0.25)" class="btn-quick-buy" style="font-size:9px;padding:1px 4px;" title="Buy 0.25 SOL">+0.25</button>
+            <button type="button" class="btn-quick-buy" data-buy="0.02" style="font-size:9px;padding:1px 4px;">+0.02</button>
+            <button type="button" class="btn-quick-buy" data-buy="0.05" style="font-size:9px;padding:1px 4px;">+0.05</button>
+            <button type="button" class="btn-quick-buy" data-buy="0.1" style="font-size:9px;padding:1px 4px;">+0.1</button>
           </div>
-          <!-- Svarog Quick Sell Chips -->
           <div style="display:flex;align-items:center;gap:2px;background:rgba(240,76,94,0.06);padding:2px 3px;border-radius:5px;border:1px solid rgba(240,76,94,0.2);">
             <span style="font-size:8px;font-weight:800;color:#f04c5e;padding:0 2px;">SELL</span>
-            <button onclick="executeInlineSell('${w.address}', 25)"  class="btn-quick-sell" style="font-size:9px;padding:1px 4px;" title="Sell 25%">25%</button>
-            <button onclick="executeInlineSell('${w.address}', 50)"  class="btn-quick-sell" style="font-size:9px;padding:1px 4px;" title="Sell 50%">50%</button>
-            <button onclick="executeInlineSell('${w.address}', 75)"  class="btn-quick-sell" style="font-size:9px;padding:1px 4px;" title="Sell 75%">75%</button>
-            <button onclick="executeInlineSell('${w.address}', 100)" class="btn-quick-sell" style="font-size:9px;padding:1px 4px;background:rgba(240,76,94,0.22);font-weight:800;" title="Dump 100%">100%</button>
+            <button type="button" class="btn-quick-sell" data-sell="25" style="font-size:9px;padding:1px 4px;">25%</button>
+            <button type="button" class="btn-quick-sell" data-sell="50" style="font-size:9px;padding:1px 4px;">50%</button>
+            <button type="button" class="btn-quick-sell" data-sell="75" style="font-size:9px;padding:1px 4px;">75%</button>
+            <button type="button" class="btn-quick-sell" data-sell="100" style="font-size:9px;padding:1px 4px;background:rgba(240,76,94,0.22);font-weight:800;">100%</button>
           </div>
         </div>
       </td>
     `;
+    const box = tr.querySelector('.row-checkbox');
+    box.value = safeAddress;
+    box.addEventListener('change', () => updateSelectedCount());
+    tr.querySelector('.font-bold').textContent = String(w.role || '');
+    tr.querySelector('.addr-short').textContent = safeAddress ? `${safeAddress.slice(0, 4)}...${safeAddress.slice(-4)}` : '';
+    tr.querySelector('.copy-addr').addEventListener('click', () => {
+      if (!safeAddress) return;
+      navigator.clipboard.writeText(safeAddress);
+      showToast(`Copied ${w.role || 'wallet'} address`, 'info');
+    });
+    const scan = tr.querySelector('.solscan-link');
+    if (safeAddress) scan.href = `https://solscan.io/account/${safeAddress}`;
+    else scan.removeAttribute('href');
+    tr.querySelector('td:nth-child(7) span').textContent = `${pnlSymbol} ${pnlPrefix}${pnlSol.toFixed(3)} (${pnlPrefix}${pnlPct.toFixed(1)}%)`;
+    tr.querySelectorAll('[data-buy]').forEach(button => {
+      button.addEventListener('click', () => executeInlineBuy(safeAddress, Number(button.dataset.buy)));
+    });
+    tr.querySelectorAll('[data-sell]').forEach(button => {
+      button.addEventListener('click', () => executeInlineSell(safeAddress, Number(button.dataset.sell)));
+    });
     tbody.appendChild(tr);
   });
 
@@ -1445,8 +1531,9 @@ function updateActiveTokenUi(mint) {
   if (chartCa) chartCa.value = mint;
   const link = document.getElementById('deskPumpLink');
   if (link) {
-    link.href = `https://pump.fun/coin/${mint}`;
-    link.innerText = `Pump.fun (${mint.slice(0, 4)}...) ↗`;
+    const safeMint = externalMint(mint);
+    link.href = safeMint ? `https://pump.fun/coin/${safeMint}` : '#';
+    link.innerText = safeMint ? `Pump.fun (${safeMint.slice(0, 4)}...) ↗` : 'Pump.fun';
   }
   if (mint !== state.chartToken) {
     loadCandlesForToken(mint);
@@ -1477,7 +1564,7 @@ async function setTrackedTokenFromNav() {
   if (!mint) return showToast('Please enter a Token Mint Address or Pump.fun URL', 'warning');
   document.getElementById('navTrackCaInput').value = mint;
   try {
-    const res = await fetch('/api/trading/track', {
+    const res = await apiFetch('/api/trading/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mint })
@@ -1513,7 +1600,7 @@ function randomizeSubBuys() {
   state.subWallets.forEach((_, idx) => {
     const el = document.getElementById(`subBuyInput-${idx}`);
     if (el) {
-      const base = 0.2;
+      const base = 0.05;
       const jitter = (Math.random() * 0.16) - 0.08;
       el.value = Math.max(0.05, Number((base + jitter).toFixed(3)));
     }
@@ -1559,7 +1646,7 @@ async function runPreflightCheck() {
     const devSolBuy = parseFloat(document.getElementById('devSolBuy').value || '0.5');
     const subWalletBuys = state.subWallets.map((_, i) => parseFloat(document.getElementById(`subBuyInput-${i}`)?.value || '0'));
 
-    const res = await fetch('/api/launch/preflight', {
+    const res = await apiFetch('/api/launch/preflight', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1614,14 +1701,14 @@ async function executeLaunchBundle() {
       formData.append('imageUrl', state.vampedImageUrl);
     }
 
-    const metaRes = await fetch('/api/launch/upload-meta', { method: 'POST', body: formData });
+    const metaRes = await apiFetch('/api/launch/upload-meta', { method: 'POST', body: formData });
     const metaData = await metaRes.json();
     const metadataUri = metaData.metadataUri;
 
     const devSolBuy = parseFloat(document.getElementById('devSolBuy').value || '0.5');
     const subWalletBuys = state.subWallets.map((_, i) => parseFloat(document.getElementById(`subBuyInput-${i}`)?.value || '0'));
 
-    const launchRes = await fetch('/api/launch/execute', {
+    const launchRes = await apiFetch('/api/launch/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1661,7 +1748,7 @@ async function executeLaunchBundle() {
 
 async function loadMasterWallet() {
   try {
-    const res = await fetch('/api/wallets/master');
+    const res = await apiFetch('/api/wallets/master');
     const data = await res.json();
     if (data.master) {
       state.masterWallet = data.master;
@@ -1669,7 +1756,10 @@ async function loadMasterWallet() {
       const addrIn = document.getElementById('masterAddressInput');
       const keyIn = document.getElementById('masterKeyInput');
       if (addrIn) addrIn.value = data.master.address;
-      if (keyIn) keyIn.value = data.master.privateKey;
+      if (keyIn) {
+        keyIn.value = '';
+        keyIn.placeholder = 'Hidden. Private keys are only available from Export.';
+      }
     }
   } catch (e) {
     console.error('Failed to load master wallet:', e);
@@ -1678,7 +1768,7 @@ async function loadMasterWallet() {
 
 async function loadSubWallets() {
   try {
-    const res = await fetch('/api/wallets/sub');
+    const res = await apiFetch('/api/wallets/sub');
     const data = await res.json();
     if (data.subWallets) {
       state.subWallets = data.subWallets;
@@ -1706,7 +1796,7 @@ function renderSubWalletBuysInputs() {
         <span class="font-bold">#${idx + 1} (${w.address.slice(0, 4)}...)</span>
         <span class="font-mono text-cyan-400">${w.solBalance.toFixed(2)} SOL</span>
       </div>
-      <input type="number" step="0.05" min="0" value="0.2" id="subBuyInput-${idx}" oninput="calculateBundleMetrics()" class="input-field py-0.5 px-1.5 text-xs font-mono font-bold text-center">
+      <input type="number" step="0.01" min="0" max="0.1" value="0" id="subBuyInput-${idx}" data-fn="bundleMetrics" data-evt="input" class="input-field py-0.5 px-1.5 text-xs font-mono font-bold text-center">
     `;
     container.appendChild(div);
   });
@@ -1720,23 +1810,25 @@ function renderSubWalletsTable() {
   state.subWallets.forEach(w => {
     const tr = document.createElement('tr');
     tr.className = 'border-b border-[#192235]/60 hover:bg-[#131b2b]/50 transition-colors text-xs font-mono';
+    const address = String(w.address || '');
     tr.innerHTML = `
-      <td class="py-2 px-2 text-slate-400">${w.index}</td>
+      <td class="py-2 px-2 text-slate-400">${escapeHtml(w.index)}</td>
       <td class="py-2 px-2 text-slate-200">
         <div class="flex items-center space-x-1.5">
-          <span>${w.address.slice(0, 8)}...${w.address.slice(-6)}</span>
-          <button onclick="navigator.clipboard.writeText('${w.address}'); showToast('Copied address', 'info')" class="text-slate-500 hover:text-cyan-400">
+          <span></span>
+          <button type="button" class="text-slate-500 hover:text-cyan-400" data-copy-address="1">
             <i data-lucide="copy" class="w-3 h-3"></i>
           </button>
         </div>
       </td>
-      <td class="py-2 px-2 text-right font-bold text-cyan-400">${w.solBalance.toFixed(4)} SOL</td>
-      <td class="py-2 px-2 text-right">
-        <button onclick="copyWalletSecret('${w.privateKey}')" class="text-[10px] text-slate-400 hover:text-slate-200 px-2 py-0.5 rounded bg-[#131a29]">
-          Copy Key
-        </button>
-      </td>
+      <td class="py-2 px-2 text-right font-bold text-cyan-400">${escapeHtml((w.solBalance || 0).toFixed(4))} SOL</td>
+      <td class="py-2 px-2 text-right text-[10px] text-slate-500">Export only</td>
     `;
+    tr.querySelector('span').textContent = `${address.slice(0, 8)}...${address.slice(-6)}`;
+    tr.querySelector('[data-copy-address]').addEventListener('click', () => {
+      navigator.clipboard.writeText(address);
+      showToast('Copied address', 'info');
+    });
     tbody.appendChild(tr);
   });
 
@@ -1749,7 +1841,7 @@ async function executeDisperseSol() {
 
   try {
     showToast(`Dispersing ${totalSol} SOL to sub-wallets...`, 'info');
-    const res = await fetch('/api/wallets/disperse', {
+    const res = await apiFetch('/api/wallets/disperse', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ totalSol, randomize })
@@ -1771,7 +1863,7 @@ async function executeDrainSol() {
   if (!confirm('Drain all remaining SOL from all sub-wallets back to Master Dev wallet?')) return;
   try {
     showToast('Draining sub-wallets...', 'info');
-    const res = await fetch('/api/wallets/drain', { method: 'POST' });
+    const res = await apiFetch('/api/wallets/drain', { method: 'POST' });
     const data = await res.json();
     if (data.success) {
       showToast(`Reclaimed ${data.drainedSol} SOL to Master!`, 'success');
@@ -1783,15 +1875,29 @@ async function executeDrainSol() {
   }
 }
 
+async function confirmedWalletPost(url, body) {
+  const send = (payload) => apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  let res = await send(body);
+  let data = await res.json().catch(() => ({}));
+  if (res.status === 409) {
+    const force = window.confirm(`${data.error || 'This wallet has a SOL balance.'}\n\nReplace it anyway? A backup is written, but funds on the old key do not move with it.`);
+    if (!force) throw new Error(data.error || 'Replacement cancelled');
+    res = await send(Object.assign({}, body, { force: true }));
+    data = await res.json().catch(() => ({}));
+  }
+  if (!res.ok) throw new Error(data.error || 'Wallet request failed');
+  return data;
+}
+
 async function regenerateSubWallets() {
   const count = parseInt(document.getElementById('subWalletCountSelect').value, 10);
+  if (!window.confirm('Replace the sub-wallets? A timestamped backup is saved under data/backups. Export the current keys first if they hold funds.')) return;
   try {
-    const res = await fetch('/api/wallets/sub/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ count })
-    });
-    await res.json();
+    await confirmedWalletPost('/api/wallets/sub/generate', { count });
     loadSubWallets();
     showToast(`Generated ${count} bundle sub-wallets`, 'info');
   } catch (e) {
@@ -1823,9 +1929,15 @@ function toggleRevealMasterKey() {
 }
 
 async function exportAllWalletKeys() {
+  if (!window.confirm('Export private keys to a JSON download? Anyone with that file controls the wallets.')) return;
   try {
-    const res = await fetch('/api/wallets/export');
+    const res = await apiFetch('/api/wallets/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true })
+    });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Export refused');
     const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1840,10 +1952,9 @@ async function exportAllWalletKeys() {
 window.exportSubWallets = exportAllWalletKeys;
 
 async function generateNewMasterWallet() {
-  if (!confirm('Generate a new Master Dev Wallet? Make sure you backed up the current key!')) return;
+  if (!window.confirm('Generate a new Master Dev Wallet? A timestamped backup is saved, and the current key will stop being used. Export it first.')) return;
   try {
-    const res = await fetch('/api/wallets/master/generate', { method: 'POST' });
-    await res.json();
+    await confirmedWalletPost('/api/wallets/master/generate', {});
     loadMasterWallet();
     showToast('New Master Dev Wallet generated!', 'success');
   } catch (e) {
@@ -1852,24 +1963,115 @@ async function generateNewMasterWallet() {
 }
 
 async function promptImportMasterKey() {
-  const key = prompt('Paste your Solana Master Dev Wallet Private Key (Base58 or JSON Byte Array):');
+  if (!window.confirm('Importing a master key replaces the current one. A backup is written first. Continue only if the current key is backed up.')) return;
+  const key = window.prompt('Paste the Solana master private key (base58 or a JSON byte array):');
   if (!key) return;
   try {
-    const res = await fetch('/api/wallets/master/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ privateKey: key })
-    });
-    const data = await res.json();
-    if (data.success) {
-      loadMasterWallet();
-      showToast('Master wallet imported successfully!', 'success');
-    } else {
-      throw new Error(data.error);
-    }
+    await confirmedWalletPost('/api/wallets/master/import', { privateKey: key });
+    loadMasterWallet();
+    showToast('Master wallet imported successfully!', 'success');
   } catch (e) {
     showToast('Import error: ' + e.message, 'error');
   }
+}
+
+
+function externalMint(value) {
+  const text = String(value || '').trim();
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(text) ? text : '';
+}
+
+function addHttpsLink(parent, href, label) {
+  const safe = typeof safeHttpsUrl === 'function' ? safeHttpsUrl(href) : '';
+  if (!safe) return;
+  const link = document.createElement('a');
+  link.href = safe;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = label;
+  link.style.cssText = 'color:#7dd3fc;font-size:10px;text-decoration:none;';
+  parent.appendChild(link);
+}
+
+function fillTrendingCard(card, token) {
+  const metrics = token.metrics || {};
+  const mint = externalMint(token.tokenAddress);
+  const icon = typeof safeHttpsUrl === 'function' ? safeHttpsUrl(token.icon) : '';
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;gap:8px;align-items:center;';
+  const dex = document.createElement('span');
+  dex.style.cssText = 'font-family:monospace;font-size:9.5px;color:#64748b;text-transform:uppercase;';
+  dex.textContent = String(metrics.dexId || 'Pump.fun');
+  const socials = document.createElement('button');
+  socials.type = 'button';
+  socials.textContent = 'Socials';
+  socials.style.cssText = 'background:none;border:1px solid rgba(0,212,255,0.25);color:#00d4ff;font-size:9.5px;border-radius:4px;padding:2px 6px;cursor:pointer;';
+  socials.addEventListener('click', () => { if (mint) inspectAndPopupSocials(mint); });
+  head.append(dex, socials);
+
+  const identity = document.createElement('div');
+  identity.style.cssText = 'display:flex;gap:8px;align-items:center;';
+  const imgWrap = document.createElement('div');
+  imgWrap.style.cssText = 'width:40px;height:40px;border-radius:8px;overflow:hidden;background:#090d16;border:1px solid #192235;display:flex;align-items:center;justify-content:center;color:#64748b;';
+  if (icon) {
+    const img = document.createElement('img');
+    img.src = icon;
+    img.alt = '';
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+    imgWrap.appendChild(img);
+  } else {
+    imgWrap.textContent = '◎';
+  }
+  const titles = document.createElement('div');
+  const name = document.createElement('h4');
+  name.className = 'font-bold text-xs text-slate-100 truncate';
+  name.textContent = String(token.name || 'Unknown');
+  const symbol = document.createElement('span');
+  symbol.className = 'text-[11px] font-mono font-bold text-cyan-400 block';
+  symbol.textContent = String(token.symbol || '');
+  titles.append(name, symbol);
+  identity.append(imgWrap, titles);
+
+  const caRow = document.createElement('div');
+  caRow.style.cssText = 'display:flex;justify-content:space-between;gap:6px;background:#060810;padding:3px 7px;border-radius:4px;border:1px solid #161f33;font-size:9.5px;font-family:monospace;';
+  const caText = document.createElement('span');
+  caText.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  caText.textContent = mint || 'Invalid address';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.textContent = 'Copy';
+  copy.style.cssText = 'background:none;border:none;color:#00d4ff;cursor:pointer;font-size:9.5px;';
+  copy.addEventListener('click', () => copyToClipboard(mint, (token.symbol || 'token') + ' CA'));
+  caRow.append(caText, copy);
+
+  const desc = document.createElement('p');
+  desc.className = 'text-[10px] text-slate-400 line-clamp-2';
+  desc.textContent = String(token.description || 'No description provided.');
+
+  const stats = document.createElement('div');
+  stats.className = 'text-[9px] font-mono bg-[#090d16] p-1.5 rounded border border-[#192235]';
+  stats.textContent = 'MCap $' + Number(metrics.mcap || 0).toLocaleString() + '   24h $' + Number(metrics.volume24h || 0).toLocaleString();
+
+  const links = document.createElement('div');
+  links.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+  addHttpsLink(links, token.twitter || (token.socials && token.socials.twitter), 'Twitter');
+  addHttpsLink(links, token.telegram || (token.socials && token.socials.telegram), 'Telegram');
+  addHttpsLink(links, token.website || (token.socials && token.socials.website), 'Website');
+
+  const actions = document.createElement('div');
+  actions.className = 'flex gap-1.5 pt-1';
+  const vamp = document.createElement('button');
+  vamp.type = 'button';
+  vamp.className = 'btn-primary text-[10px] flex-1 py-1';
+  vamp.textContent = 'Vamp This';
+  vamp.addEventListener('click', () => { if (mint) vampDirect(mint); });
+  const spin = document.createElement('button');
+  spin.type = 'button';
+  spin.className = 'btn-secondary text-[10px] flex-1 py-1';
+  spin.textContent = '2.0 Spin';
+  spin.addEventListener('click', () => { if (mint) vampMutate2(mint); });
+  actions.append(vamp, spin);
+  card.append(head, identity, caRow, desc, stats, links, actions);
 }
 
 // ==================== VAMP CLONER AUXILIARIES ====================
@@ -1881,7 +2083,7 @@ async function loadTrendingVampTokens() {
   }
 
   try {
-    const res = await fetch('/api/vamp/trending');
+    const res = await apiFetch('/api/vamp/trending');
     const data = await res.json();
     state.trendingTokens = data.tokens || [];
 
@@ -1900,88 +2102,7 @@ async function loadTrendingVampTokens() {
         const hasSocials = !!(twitter || telegram || website);
         const socialCount = [twitter, telegram, website].filter(Boolean).length;
 
-        card.innerHTML = `
-          <!-- Top Card Status & Socials Badge -->
-          <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;border-bottom:1px solid #161f33;font-size:9.5px;">
-            <span style="font-family:monospace;font-weight:700;color:#64748b;text-transform:uppercase;">${m.dexId || 'Pump.fun'}</span>
-            ${hasSocials ? `
-              <div class="relative group" style="cursor:pointer;" onclick="inspectAndPopupSocials('${t.tokenAddress}')">
-                <div style="display:flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.25);font-size:9.5px;color:#00d4ff;font-weight:700;">
-                  <i data-lucide="share-2" style="width:10px;height:10px;"></i>
-                  <span>Socials (${socialCount})</span>
-                  <div style="display:flex;align-items:center;gap:3px;margin-left:2px;">
-                    ${twitter ? `<span title="Twitter / X: ${twitter}" style="color:#38bdf8;font-size:9.5px;font-weight:800;">𝕏</span>` : ''}
-                    ${telegram ? `<span title="Telegram: ${telegram}" style="color:#00d4ff;font-size:9.5px;">✈</span>` : ''}
-                    ${website ? `<span title="Website: ${website}" style="color:#a78bfa;font-size:9.5px;">🌐</span>` : ''}
-                  </div>
-                </div>
-                <!-- Hover Dropdown -->
-                <div class="hidden group-hover:flex absolute right-0 top-full mt-1 z-30 flex-col gap-1.5 p-2 rounded-lg bg-[#0d1322] border border-[#233554] shadow-2xl min-w-[200px] text-[10.5px] font-mono pointer-events-auto backdrop-blur" onclick="event.stopPropagation()">
-                  <div style="font-size:9px;font-weight:800;text-transform:uppercase;color:#78909c;letter-spacing:0.06em;padding-bottom:3px;border-bottom:1px solid #1a253d;display:flex;align-items:center;justify-content:space-between;">
-                    <span>Verified Socials</span>
-                    <span style="color:#00d4ff;">${socialCount} Active</span>
-                  </div>
-                  ${twitter ? `
-                    <a href="${twitter}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;color:#38bdf8;text-decoration:none;padding:3px 6px;border-radius:4px;background:#090e1a;border:1px solid #1c2b45;font-size:10px;">
-                      <span style="display:flex;align-items:center;gap:5px;"><strong>𝕏</strong> Twitter / X</span>
-                      <span style="font-size:9px;color:#64748b;">Visit ↗</span>
-                    </a>` : ''}
-                  ${telegram ? `
-                    <a href="${telegram}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;color:#00d4ff;text-decoration:none;padding:3px 6px;border-radius:4px;background:#090e1a;border:1px solid #1c2b45;font-size:10px;">
-                      <span style="display:flex;align-items:center;gap:5px;"><strong>✈</strong> Telegram</span>
-                      <span style="font-size:9px;color:#64748b;">Join ↗</span>
-                    </a>` : ''}
-                  ${website ? `
-                    <a href="${website}" target="_blank" style="display:flex;align-items:center;justify-content:space-between;color:#a78bfa;text-decoration:none;padding:3px 6px;border-radius:4px;background:#090e1a;border:1px solid #1c2b45;font-size:10px;">
-                      <span style="display:flex;align-items:center;gap:5px;"><strong>🌐</strong> Website</span>
-                      <span style="font-size:9px;color:#64748b;">Open ↗</span>
-                    </a>` : ''}
-                  <button onclick="inspectAndPopupSocials('${t.tokenAddress}')" style="margin-top:2px;width:100%;padding:4px;border-radius:4px;background:#141f36;border:1px solid #233554;color:#cfd8dc;font-size:9.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;">
-                    <i data-lucide="eye" style="width:10px;height:10px;"></i> Full Inspect Popup
-                  </button>
-                </div>
-              </div>
-            ` : `
-              <div class="relative group" style="cursor:pointer;" onclick="inspectAndPopupSocials('${t.tokenAddress}')">
-                <span style="display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;background:rgba(100,116,139,0.08);border:1px solid rgba(100,116,139,0.2);font-size:9px;color:#64748b;" title="No social links detected on this coin (click to inspect)">
-                  <span style="width:5px;height:5px;border-radius:50%;background:#64748b;display:inline-block;"></span> No Socials
-                </span>
-              </div>
-            `}
-          </div>
-
-          <div class="flex items-center space-x-2.5">
-            <div class="w-10 h-10 rounded-lg bg-[#090d16] border border-[#192235] flex items-center justify-center overflow-hidden flex-shrink-0">
-              ${t.icon ? `<img src="${t.icon}" class="w-full h-full object-cover">` : `<i data-lucide="coins" class="w-5 h-5 text-slate-500"></i>`}
-            </div>
-            <div class="overflow-hidden flex-1">
-              <h4 class="font-bold text-xs text-slate-100 truncate">${t.name}</h4>
-              <span class="text-[11px] font-mono font-bold text-cyan-400 block">${t.symbol}</span>
-            </div>
-          </div>
-
-          <!-- Token CA Display with 1-Click Copy -->
-          <div style="display:flex;align-items:center;justify-content:space-between;background:#060810;padding:3px 7px;border-radius:4px;border:1px solid #161f33;font-size:9.5px;font-family:'JetBrains Mono',monospace;">
-            <span style="color:#78909c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:175px;" title="${t.tokenAddress}">${t.tokenAddress}</span>
-            <button onclick="copyToClipboard('${t.tokenAddress}', '${t.symbol} CA')" style="background:none;border:none;color:#00d4ff;cursor:pointer;display:flex;align-items:center;gap:3px;font-size:9.5px;padding:1px 4px;font-weight:700;" title="1-Click Copy CA">
-              <i data-lucide="copy" style="width:11px;height:11px;"></i> Copy
-            </button>
-          </div>
-
-          <p class="text-[10px] text-slate-400 line-clamp-2 h-7">${t.description || 'No description provided.'}</p>
-          <div class="grid grid-cols-2 gap-1.5 text-[9px] font-mono bg-[#090d16] p-1.5 rounded border border-[#192235]">
-            <div><span class="text-slate-500">MCap:</span> <span class="text-slate-200 font-bold">$${(m.mcap || 0).toLocaleString()}</span></div>
-            <div><span class="text-slate-500">24h Vol:</span> <span class="text-slate-200 font-bold">$${(m.volume24h || 0).toLocaleString()}</span></div>
-          </div>
-          <div class="flex gap-1.5 pt-1">
-            <button onclick="vampDirect('${t.tokenAddress}')" class="btn-primary text-[10px] flex-1 py-1 flex items-center justify-center space-x-1">
-              <i data-lucide="skull" class="w-3 h-3"></i><span>Vamp This</span>
-            </button>
-            <button onclick="vampMutate2('${t.tokenAddress}')" class="btn-secondary text-[10px] flex-1 py-1 flex items-center justify-center space-x-1">
-              <span>2.0 Spin</span>
-            </button>
-          </div>
-        `;
+        fillTrendingCard(card, t);
         container.appendChild(card);
       });
     }
@@ -1989,7 +2110,10 @@ async function loadTrendingVampTokens() {
     if (window.lucide) lucide.createIcons();
   } catch (err) {
     if (container) {
-      container.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-rose-400">Failed to load trending tokens: ${err.message}</div>`;
+      const fail = document.createElement('div');
+      fail.className = 'col-span-full py-8 text-center text-xs text-rose-400';
+      fail.textContent = 'Failed to load trending tokens: ' + err.message;
+      container.replaceChildren(fail);
     }
   }
 }
@@ -2014,14 +2138,14 @@ function renderTopMovers(tokens) {
   panel.innerHTML = '';
   sorted.forEach(t => {
     const m = t.metrics || {};
-    const change = m.priceChange24h !== undefined ? parseFloat(m.priceChange24h) : 12.5;
+    const change = Number.isFinite(parseFloat(m.priceChange24h)) ? parseFloat(m.priceChange24h) : 0;
     const isUp = change >= 0;
     const color = isUp ? '#00c48c' : '#f04c5e';
     const bgSoft = isUp ? 'rgba(0,196,140,0.1)' : 'rgba(240,76,94,0.1)';
     const symbol = t.symbol || 'TOKEN';
     const name = t.name || t.tokenAddress?.slice(0, 6) || 'Meme';
-    const price = m.priceUsd ? `$${Number(m.priceUsd) < 0.001 ? Number(m.priceUsd).toFixed(6) : Number(m.priceUsd).toFixed(4)}` : `$0.000034`;
-    const mcap = m.mcap ? `$${Math.round(m.mcap).toLocaleString()}` : '$35.2K';
+    const price = Number(m.priceUsd) > 0 ? ('$' + (Number(m.priceUsd) < 0.001 ? Number(m.priceUsd).toFixed(6) : Number(m.priceUsd).toFixed(4))) : '—';
+    const mcap = Number(m.mcap) > 0 ? ('$' + Math.round(Number(m.mcap)).toLocaleString()) : '—';
 
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:6px;transition:all 0.15s;cursor:pointer;background:#090d17;border:1px solid #1a2338;gap:8px;';
@@ -2035,39 +2159,59 @@ function renderTopMovers(tokens) {
       row.style.borderColor = '#1a2338';
     };
     row.onclick = () => {
-      if (t.tokenAddress) {
-        document.getElementById('navTrackCaInput').value = t.tokenAddress;
-        setChartSymbol(symbol);
-        setTrackedTokenFromNav();
-      }
+      const mint = externalMint(t.tokenAddress);
+      if (!mint) return;
+      document.getElementById('navTrackCaInput').value = mint;
+      setChartSymbol(String(symbol || ''));
+      setTrackedTokenFromNav();
     };
 
-    row.innerHTML = `
-      <div style="display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden;">
-        <div style="width:22px;height:22px;border-radius:5px;background:#111827;border:1px solid #1a2338;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
-          ${t.icon ? `<img src="${t.icon}" style="width:100%;height:100%;object-fit:cover;" onerror="this.remove()">` : `<span style="font-size:8.5px;font-weight:800;color:#00d4ff;">${symbol.slice(0, 2)}</span>`}
-        </div>
-        <div style="min-width:0;overflow:hidden;">
-          <div style="font-size:11px;font-weight:800;color:#cfd8dc;line-height:1.2;display:flex;align-items:center;gap:4px;white-space:nowrap;">
-            <span style="color:#00d4ff;">${symbol}</span>
-            <span style="font-size:9px;color:#546e7a;font-weight:400;overflow:hidden;text-overflow:ellipsis;">${name}</span>
-          </div>
-          <div style="font-size:9px;color:#78909c;font-family:monospace;">${mcap}</div>
-        </div>
-      </div>
-      <div style="text-align:right;flex-shrink:0;">
-        <div style="font-size:10px;font-weight:700;font-family:monospace;color:#cfd8dc;">${price}</div>
-        <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;">
-          <span style="font-size:8.5px;font-weight:800;font-family:monospace;padding:1px 4px;border-radius:4px;background:${bgSoft};color:${color};">
-            ${isUp ? '▲ +' : '▼ '}${Number(change).toFixed(1)}%
-          </span>
-          <button onclick="event.stopPropagation(); copyToClipboard('${t.tokenAddress}', '${symbol} CA')" style="background:none;border:none;color:#78909c;cursor:pointer;padding:1px 2px;display:flex;align-items:center;" title="Copy ${symbol} CA">
-            <i data-lucide="copy" style="width:11px;height:11px;"></i>
-          </button>
-        </div>
-      </div>
-    `;
-    panel.appendChild(row);
+    const icon = typeof safeHttpsUrl === 'function' ? safeHttpsUrl(t.icon) : '';
+    const mint = externalMint(t.tokenAddress);
+    const left = document.createElement('div');
+    left.style.cssText = 'display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden;';
+    const badge = document.createElement('div');
+    badge.style.cssText = 'width:22px;height:22px;border-radius:5px;background:#111827;border:1px solid #1a2338;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8.5px;font-weight:800;color:#00d4ff;';
+    if (icon) {
+      const img = document.createElement('img');
+      img.src = icon;
+      img.alt = '';
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+      badge.appendChild(img);
+    } else {
+      badge.textContent = String(symbol).slice(0, 2);
+    }
+    const meta = document.createElement('div');
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:11px;font-weight:800;color:#00d4ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    title.textContent = String(symbol) + '  ' + String(name);
+    const cap = document.createElement('div');
+    cap.style.cssText = 'font-size:9px;color:#78909c;font-family:monospace;';
+    cap.textContent = mcap;
+    meta.append(title, cap);
+    left.append(badge, meta);
+    const right = document.createElement('div');
+    right.style.cssText = 'text-align:right;flex-shrink:0;';
+    const priceEl = document.createElement('div');
+    priceEl.style.cssText = 'font-size:10px;font-weight:700;font-family:monospace;color:#cfd8dc;';
+    priceEl.textContent = price;
+    const changeRow = document.createElement('div');
+    changeRow.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:4px;';
+    const changeEl = document.createElement('span');
+    changeEl.style.cssText = 'font-size:8.5px;font-weight:800;font-family:monospace;padding:1px 4px;border-radius:4px;background:' + bgSoft + ';color:' + color + ';';
+    changeEl.textContent = (isUp ? '▲ +' : '▼ ') + Number(change).toFixed(1) + '%';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.textContent = 'Copy';
+    copyBtn.style.cssText = 'background:none;border:none;color:#78909c;cursor:pointer;font-size:9px;';
+    copyBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      copyToClipboard(mint, String(symbol) + ' CA');
+    });
+    changeRow.append(changeEl, copyBtn);
+    right.append(priceEl, changeRow);
+    row.append(left, right);
+        panel.appendChild(row);
   });
 }
 window.renderTopMovers = renderTopMovers;
@@ -2078,117 +2222,92 @@ async function inspectAndPopupSocials(address) {
   const modal = document.getElementById('socialInspectModal');
   const body = document.getElementById('socialInspectModalBody');
   if (!modal || !body) return;
-
+  const mint = externalMint(address);
   modal.style.display = 'flex';
-  body.innerHTML = `
-    <div style="padding:28px 0;text-align:center;font-size:11px;font-family:monospace;color:#78909c;">
-      <i data-lucide="loader" style="width:18px;height:18px;margin:0 auto 10px;display:block;" class="animate-spin"></i>
-      Fetching live socials &amp; metadata for ${address.slice(0, 8)}...
-    </div>
-  `;
-  if (window.lucide) lucide.createIcons();
+  body.replaceChildren();
+  const loading = document.createElement('div');
+  loading.style.cssText = 'padding:28px 0;text-align:center;font-size:11px;font-family:monospace;color:#78909c;';
+  loading.textContent = 'Fetching metadata for ' + (mint ? mint.slice(0, 8) : 'an invalid address') + '...';
+  body.appendChild(loading);
+  if (!mint) return;
 
   try {
-    const res = await fetch(`/api/vamp/inspect/${address}`);
+    const res = await apiFetch('/api/vamp/inspect/' + encodeURIComponent(mint));
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Inspect failed');
     const token = data.token || {};
+    body.replaceChildren();
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex;gap:12px;align-items:center;margin-bottom:12px;';
+    const iconWrap = document.createElement('div');
+    iconWrap.style.cssText = 'width:48px;height:48px;border-radius:8px;background:#090d16;border:1px solid #1a253d;overflow:hidden;display:flex;align-items:center;justify-content:center;';
+    const icon = typeof safeHttpsUrl === 'function' ? safeHttpsUrl(token.icon) : '';
+    if (icon) {
+      const img = document.createElement('img');
+      img.src = icon;
+      img.alt = '';
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+      iconWrap.appendChild(img);
+    }
+    const titles = document.createElement('div');
+    const name = document.createElement('h3');
+    name.style.cssText = 'font-size:14px;font-weight:800;color:#f1f5f9;margin:0 0 2px;';
+    name.textContent = String(token.name || 'Unknown');
+    const symbol = document.createElement('div');
+    symbol.style.cssText = 'font-size:11.5px;font-weight:800;font-family:monospace;color:#00d4ff;';
+    symbol.textContent = String(token.symbol || 'TOKEN') + '   MCap $' + Number(token.marketCap || 0).toLocaleString();
+    titles.append(name, symbol);
+    top.append(iconWrap, titles);
 
-    const twitter = token.twitter || token.socials?.twitter || '';
-    const telegram = token.telegram || token.socials?.telegram || '';
-    const website = token.website || token.socials?.website || '';
-    const hasSocials = !!(twitter || telegram || website);
+    const ca = document.createElement('div');
+    ca.style.cssText = 'background:#090d16;padding:6px 9px;border-radius:6px;border:1px solid #1a253d;display:flex;justify-content:space-between;gap:8px;margin-bottom:12px;font-family:monospace;font-size:10.5px;';
+    const caText = document.createElement('span');
+    caText.textContent = mint;
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    copy.style.cssText = 'background:none;border:none;color:#00d4ff;cursor:pointer;font-size:10px;font-weight:700;';
+    copy.addEventListener('click', () => copyToClipboard(mint, 'CA'));
+    ca.append(caText, copy);
 
-    body.innerHTML = `
-      <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;">
-        <div style="width:48px;height:48px;border-radius:8px;background:#090d16;border:1px solid #1a253d;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
-          ${token.icon ? `<img src="${token.icon}" style="width:100%;height:100%;object-fit:cover;">` : `<i data-lucide="coins" style="width:20px;height:20px;color:#546e7a;"></i>`}
-        </div>
-        <div style="min-width:0;flex:1;">
-          <h3 style="font-size:14px;font-weight:800;color:#f1f5f9;margin:0 0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${token.name || 'Unknown'}</h3>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span style="font-size:11.5px;font-weight:800;font-family:monospace;color:#00d4ff;">${token.symbol || 'TOKEN'}</span>
-            <span style="font-size:10px;color:#64748b;font-family:monospace;">MCap: $${Number(token.marketCap || 0).toLocaleString()}</span>
-          </div>
-        </div>
-      </div>
+    const links = document.createElement('div');
+    links.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;';
+    addHttpsLink(links, token.twitter || (token.socials && token.socials.twitter), 'Twitter');
+    addHttpsLink(links, token.telegram || (token.socials && token.socials.telegram), 'Telegram');
+    addHttpsLink(links, token.website || (token.socials && token.socials.website), 'Website');
+    if (!links.childNodes.length) {
+      const none = document.createElement('div');
+      none.style.cssText = 'font-size:11px;color:#64748b;';
+      none.textContent = 'No https social links on this coin.';
+      links.appendChild(none);
+    }
 
-      <!-- Contract Address -->
-      <div style="background:#090d16;padding:6px 9px;border-radius:6px;border:1px solid #1a253d;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-family:monospace;font-size:10.5px;">
-        <span style="color:#78909c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;">${address}</span>
-        <button onclick="copyToClipboard('${address}', 'CA')" style="background:none;border:none;color:#00d4ff;cursor:pointer;font-size:10px;font-weight:700;display:flex;align-items:center;gap:3px;">
-          <i data-lucide="copy" style="width:11px;height:11px;"></i> Copy
-        </button>
-      </div>
+    const description = document.createElement('div');
+    description.style.cssText = 'background:#090d16;padding:8px 10px;border-radius:6px;border:1px solid #1a253d;font-size:10.5px;color:#94a3b8;max-height:80px;overflow-y:auto;margin-bottom:14px;';
+    description.textContent = String(token.description || 'No description provided.');
 
-      <!-- Socials List -->
-      <div style="margin-bottom:12px;">
-        <label style="display:block;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:6px;">
-          Verified Social Media Channels
-        </label>
-        ${hasSocials ? `
-          <div style="display:flex;flex-direction:column;gap:6px;">
-            ${twitter ? `
-              <div style="display:flex;align-items:center;justify-content:space-between;background:#090d16;padding:7px 10px;border-radius:6px;border:1px solid #1a253d;">
-                <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:#e2e8f0;">
-                  <strong style="color:#38bdf8;font-size:12px;">𝕏</strong>
-                  <span>Twitter / X</span>
-                </div>
-                <a href="${twitter}" target="_blank" style="color:#38bdf8;font-size:10.5px;text-decoration:none;font-weight:700;display:flex;align-items:center;gap:3px;">
-                  Open Link ↗
-                </a>
-              </div>` : ''}
-            ${telegram ? `
-              <div style="display:flex;align-items:center;justify-content:space-between;background:#090d16;padding:7px 10px;border-radius:6px;border:1px solid #1a253d;">
-                <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:#e2e8f0;">
-                  <strong style="color:#00d4ff;font-size:12px;">✈</strong>
-                  <span>Telegram</span>
-                </div>
-                <a href="${telegram}" target="_blank" style="color:#00d4ff;font-size:10.5px;text-decoration:none;font-weight:700;display:flex;align-items:center;gap:3px;">
-                  Join Channel ↗
-                </a>
-              </div>` : ''}
-            ${website ? `
-              <div style="display:flex;align-items:center;justify-content:space-between;background:#090d16;padding:7px 10px;border-radius:6px;border:1px solid #1a253d;">
-                <div style="display:flex;align-items:center;gap:7px;font-size:11px;color:#e2e8f0;">
-                  <strong style="color:#a78bfa;font-size:12px;">🌐</strong>
-                  <span>Official Website</span>
-                </div>
-                <a href="${website}" target="_blank" style="color:#a78bfa;font-size:10.5px;text-decoration:none;font-weight:700;display:flex;align-items:center;gap:3px;">
-                  Visit Site ↗
-                </a>
-              </div>` : ''}
-          </div>
-        ` : `
-          <div style="background:#090d16;padding:10px;border-radius:6px;border:1px dashed #1a253d;font-size:11px;color:#64748b;text-align:center;">
-            No official socials detected. (Stealth launch / community takeover candidate)
-          </div>
-        `}
-      </div>
-
-      <!-- Description -->
-      <div style="margin-bottom:14px;">
-        <label style="display:block;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">
-          Narrative / Description
-        </label>
-        <div style="background:#090d16;padding:8px 10px;border-radius:6px;border:1px solid #1a253d;font-size:10.5px;color:#94a3b8;max-height:80px;overflow-y:auto;line-height:1.4;">
-          ${token.description || 'No description provided.'}
-        </div>
-      </div>
-
-      <!-- Actions -->
-      <div style="display:flex;gap:8px;">
-        <button onclick="closeSocialInspectModal(); vampDirect('${address}')" class="btn-primary" style="flex:1;padding:8px;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:5px;">
-          <i data-lucide="skull" style="width:12px;height:12px;"></i> Vamp into Launchpad
-        </button>
-        <button onclick="closeSocialInspectModal()" class="btn-secondary" style="padding:8px 14px;font-size:11px;">
-          Close
-        </button>
-      </div>
-    `;
-
-    if (window.lucide) lucide.createIcons();
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;';
+    const vamp = document.createElement('button');
+    vamp.type = 'button';
+    vamp.className = 'btn-primary';
+    vamp.style.cssText = 'flex:1;padding:8px;font-size:11px;font-weight:700;';
+    vamp.textContent = 'Vamp into Launchpad';
+    vamp.addEventListener('click', () => { closeSocialInspectModal(); vampDirect(mint); });
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'btn-secondary';
+    close.style.cssText = 'padding:8px 14px;font-size:11px;';
+    close.textContent = 'Close';
+    close.addEventListener('click', () => closeSocialInspectModal());
+    actions.append(vamp, close);
+    body.append(top, ca, links, description, actions);
   } catch (err) {
-    body.innerHTML = `<div style="color:#f04c5e;font-size:11px;padding:12px;text-align:center;">Failed to inspect socials: ${err.message}</div>`;
+    body.replaceChildren();
+    const fail = document.createElement('div');
+    fail.style.cssText = 'color:#f04c5e;font-size:11px;padding:12px;text-align:center;';
+    fail.textContent = 'Failed to inspect socials: ' + err.message;
+    body.appendChild(fail);
   }
 }
 window.inspectAndPopupSocials = inspectAndPopupSocials;
@@ -2205,7 +2324,7 @@ async function inspectCustomVampCa() {
   if (!ca) return showToast('Please enter a Solana CA or Pump.fun link', 'warning');
   document.getElementById('vampCaInput').value = ca;
   try {
-    const res = await fetch(`/api/vamp/inspect/${ca}`);
+    const res = await apiFetch(`/api/vamp/inspect/${ca}`);
     const data = await res.json();
     if (data.token) {
       applyVampToLaunchpad(data.token);
@@ -2219,7 +2338,7 @@ async function inspectCustomVampCa() {
 
 async function vampDirect(address) {
   try {
-    const res = await fetch(`/api/vamp/inspect/${address}`);
+    const res = await apiFetch(`/api/vamp/inspect/${address}`);
     const data = await res.json();
     applyVampToLaunchpad(data.token);
     showToast(`Vamped ${data.token.symbol}! Ready in Launchpad`, 'success');
@@ -2231,9 +2350,9 @@ async function vampDirect(address) {
 
 async function vampMutate2(address) {
   try {
-    const res = await fetch(`/api/vamp/inspect/${address}`);
+    const res = await apiFetch(`/api/vamp/inspect/${address}`);
     const data = await res.json();
-    const mutateRes = await fetch('/api/vamp/mutate', {
+    const mutateRes = await apiFetch('/api/vamp/mutate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tokenData: data.token, mode: 'v2' })
@@ -2280,7 +2399,7 @@ async function inspectCustomVampCaFromLaunchpad() {
   if (!ca) return showToast('Please enter a Solana CA or Pump.fun URL', 'warning');
   document.getElementById('launchpadVampedCa').value = ca;
   try {
-    const res = await fetch(`/api/vamp/inspect/${ca}`);
+    const res = await apiFetch(`/api/vamp/inspect/${ca}`);
     const data = await res.json();
     if (data.token) {
       applyVampToLaunchpad(data.token);
@@ -2301,7 +2420,7 @@ function applyVampToLaunchpad(token) {
   document.getElementById('tokenDescription').value = token.description || '';
 
   // 2. Source / Vamped Token CA window
-  const ca = token.address || token.tokenAddress || '';
+  const ca = externalMint(token.address || token.tokenAddress || '');
   const caInput = document.getElementById('launchpadVampedCa');
   if (caInput) caInput.value = ca;
   const pumpLink = document.getElementById('launchpadPumpLink');
@@ -2320,7 +2439,7 @@ function applyVampToLaunchpad(token) {
   document.getElementById('tokenWebsite').value = website;
 
   // 4. Logo Picture Display & Storage
-  const iconUrl = token.icon || token.imageUrl || token.image || '';
+  const iconUrl = typeof safeHttpsUrl === 'function' ? safeHttpsUrl(token.icon || token.imageUrl || token.image || '') : '';
   state.vampedImageUrl = iconUrl;
   const preview = document.getElementById('logoPreview');
   const placeholder = document.getElementById('logoIconPlaceholder');
@@ -2371,7 +2490,7 @@ async function toggleVolumeBumper(start) {
     if (start) {
       const solAmount = parseFloat(document.getElementById('bumpAmountInput').value || '0.01');
       const intervalSeconds = parseInt(document.getElementById('bumpIntervalInput').value || '20', 10);
-      await fetch('/api/trading/bumper/start', {
+      await apiFetch('/api/trading/bumper/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ solAmount, intervalSeconds })
@@ -2380,7 +2499,7 @@ async function toggleVolumeBumper(start) {
       badge.className = 'text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold animate-pulse';
       showToast('Volume bumper started', 'success');
     } else {
-      await fetch('/api/trading/bumper/stop', { method: 'POST' });
+      await apiFetch('/api/trading/bumper/stop', { method: 'POST' });
       badge.innerText = 'STOPPED';
       badge.className = 'text-[10px] px-1.5 py-0.2 rounded bg-[#131a29] text-slate-400 font-mono';
       showToast('Volume bumper stopped', 'info');
@@ -2393,9 +2512,13 @@ async function toggleVolumeBumper(start) {
 function logTerminal(message) {
   const term = document.getElementById('terminalLogs');
   if (!term) return;
-  const time = new Date().toLocaleTimeString();
   const div = document.createElement('div');
-  div.innerHTML = `<span class="text-slate-500">[${time}]</span> ${message}`;
+  const time = document.createElement('span');
+  time.className = 'text-slate-500';
+  time.textContent = `[${new Date().toLocaleTimeString()}] `;
+  const body = document.createElement('span');
+  body.textContent = String(message);
+  div.append(time, body);
   term.appendChild(div);
   term.scrollTop = term.scrollHeight;
 }
@@ -2439,7 +2562,7 @@ async function reclaimRentAndRewards() {
   showToast('Scanning token accounts for rent reclamation...', 'info');
 
   try {
-    const res = await fetch('/api/wallets/reclaim-rent', {
+    const res = await apiFetch('/api/wallets/reclaim-rent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mint })
@@ -2526,8 +2649,8 @@ function renderTradeTick(trade) {
     chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:4px;background:${badgeBg};border:1px solid ${borderCol};font-size:10px;flex-shrink:0;`;
     chip.innerHTML = `
       <strong style="color:${color};font-weight:800;">${isBuy ? '▲ BUY' : '▼ SELL'}</strong>
-      <span style="color:#e2e8f0;font-weight:700;">${solFormatted} SOL</span>
-      <span style="color:#64748b;font-size:9.5px;">(${traderShort})</span>
+      <span style="color:#e2e8f0;font-weight:700;">${escapeHtml(solFormatted)} SOL</span>
+      <span style="color:#64748b;font-size:9.5px;">(${escapeHtml(traderShort)})</span>
     `;
     chartBar.prepend(chip);
     while (chartBar.children.length > 12) {
@@ -2553,8 +2676,8 @@ function renderTradeTick(trade) {
         <span style="color:#e2e8f0;font-weight:600;">${solFormatted} SOL</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
-        <span style="color:#94a3b8;font-size:10px;">${(trade.tokenAmount || 0).toLocaleString()} tokens</span>
-        <a href="https://solscan.io/account/${trade.traderPublicKey}" target="_blank" style="color:#00d4ff;font-size:10px;text-decoration:none;">${traderShort}</a>
+        <span style="color:#94a3b8;font-size:10px;">${escapeHtml(Number(trade.tokenAmount) || 0)} tokens</span>
+        ${externalMint(trade.traderPublicKey) ? `<a href="https://solscan.io/account/${externalMint(trade.traderPublicKey)}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff;font-size:10px;text-decoration:none;">${escapeHtml(traderShort)}</a>` : `<span style="color:#00d4ff;font-size:10px;">${escapeHtml(traderShort)}</span>`}
       </div>
     `;
     tapePanel.prepend(row);

@@ -1,6 +1,6 @@
 node_modules/
 .env
-data/wallets.json
+data/
 uploads/
 .DS_Store
 

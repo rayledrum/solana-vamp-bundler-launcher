@@ -108,11 +108,15 @@ class PumpFunService {
         metadata: response.data.metadata
       };
     } catch (err) {
-      console.warn('Direct IPFS upload fallback triggered:', err.message);
-      // Fallback synthetic IPFS metadata for testing/simulation
+      const walletManager = require('./walletManager');
+      if (!walletManager.simulationMode) {
+        throw new Error(`IPFS metadata upload failed in live mode: ${err.message}`);
+      }
+      console.warn('Simulation IPFS fallback triggered:', err.message);
       return {
-        metadataUri: `https://ipfs.io/ipfs/QmSynthetic${Date.now()}`,
-        metadata: { name, symbol, description }
+        metadataUri: `https://ipfs.io/ipfs/sim-${Date.now()}`,
+        metadata: { name, symbol, description },
+        simulated: true
       };
     }
   }
