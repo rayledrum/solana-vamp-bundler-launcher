@@ -138,6 +138,8 @@ class CurveFeed {
     this.mint = null;
     this.accountSub = null;
     this.logsSub = null;
+    this.mintLogsSub = null;
+    this.lastEventLog = 0;
     this.stopped = true;
     this.retry = 0;
     this.timer = null;
@@ -197,6 +199,11 @@ class CurveFeed {
       (logs) => this.onLogs(logs),
       'processed'
     );
+    this.mintLogsSub = this.connection.onLogs(
+      new PublicKey(this.mint),
+      (logs) => this.onLogs(logs),
+      'processed'
+    );
     this.source = 'Helius bonding curve';
     this.emit(true);
     if (typeof this.connection.getAccountInfo === 'function') {
@@ -213,8 +220,12 @@ class CurveFeed {
     if (this.logsSub != null && this.connection && this.connection.removeOnLogsListener) {
       try { this.connection.removeOnLogsListener(this.logsSub); } catch (err) { /* already removed */ }
     }
+    if (this.mintLogsSub != null && this.connection && this.connection.removeOnLogsListener) {
+      try { this.connection.removeOnLogsListener(this.mintLogsSub); } catch (err) { /* already removed */ }
+    }
     this.accountSub = null;
     this.logsSub = null;
+    this.mintLogsSub = null;
   }
 
   onAccount(info) {
@@ -243,6 +254,11 @@ class CurveFeed {
     const signature = logs && logs.signature;
     if (signature && this.seen.has(signature)) return;
     const events = parseProgramDataLogs(logs && logs.logs);
+    if (events.length && Date.now() - this.lastEventLog > 2000) {
+      const sample = events[0];
+      console.log(`[CurveFeed] ${sample.txType} ${sample.solAmount} SOL / ${sample.tokenAmount} tokens ${signature || ''} mint ${sample.mint}`);
+      this.lastEventLog = Date.now();
+    }
     for (const event of events) {
       if (this.mint && event.mint !== this.mint) continue;
       if (signature) this.seen.add(signature);

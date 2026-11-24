@@ -1,8 +1,13 @@
 const walletManager = require('./walletManager');
 const pumpfun = require('./pumpfun');
 const config = require('./config');
-const { PublicKey } = require('@solana/web3.js');
-const { getAssociatedTokenAddress } = require('@solana/spl-token');
+const {
+  readOwnerTokenBalance,
+  solSpentFromMeta,
+  tokenChangeFromMeta,
+  accountKeysFromTransaction,
+  noTokensMessage
+} = require('./tokenAccounts');
 const WebSocket = require('ws');
 const {
   requireSolTradeAmount,
@@ -389,7 +394,9 @@ class TradingEngine {
     totalTokens += devPos.tokens;
     totalInvested += devPos.solInvested;
 
-    const devCurrentVal = pumpfun.calculateSellOutput(devPos.tokens, 15);
+    const livePrice = !walletManager.simulationMode && this.priceMint === mint && this.priceSol > 0 ? this.priceSol : null;
+    const valueOf = (tokens) => livePrice != null ? tokens * livePrice : (walletManager.simulationMode ? pumpfun.calculateSellOutput(tokens, 15) : 0);
+    const devCurrentVal = valueOf(devPos.tokens);
     const devPnlSol = devCurrentVal - devPos.solInvested;
     const devPnlPct = devPos.solInvested > 0 ? (devPnlSol / devPos.solInvested) * 100 : 0;
 
@@ -411,7 +418,7 @@ class TradingEngine {
       const position = this.positions.get(wallet.address) || { tokens: wallet.tokenBalance, solInvested: 0 };
       totalTokens += position.tokens;
       totalInvested += position.solInvested;
-      const subVal = pumpfun.calculateSellOutput(position.tokens, 15);
+      const subVal = valueOf(position.tokens);
       const subPnl = subVal - position.solInvested;
       const subPct = position.solInvested > 0 ? (subPnl / position.solInvested) * 100 : 0;
 
@@ -430,7 +437,7 @@ class TradingEngine {
       });
     }
 
-    const currentSolValue = pumpfun.calculateSellOutput(totalTokens, 15);
+    const currentSolValue = valueOf(totalTokens);
     const pnlSol = currentSolValue - totalInvested;
     const pnlPct = totalInvested > 0 ? (pnlSol / totalInvested) * 100 : 0;
     const curveProgressPct = pumpfun.calculateProgress(15 + totalInvested);
@@ -455,16 +462,44 @@ class TradingEngine {
   }
 
   async onChainTokenUi(owner, mint) {
-    const mintKey = new PublicKey(mint);
-    const ata = await getAssociatedTokenAddress(mintKey, owner.publicKey);
-    try {
-      const balance = await walletManager.connection.getTokenAccountBalance(ata, 'confirmed');
-      return Number(balance.value.uiAmount || 0);
-    } catch (err) {
-      const message = String(err.message || '');
-      if (message.includes('could not find') || message.includes('Invalid param')) return 0;
-      throw err;
+    const ownerKey = owner.publicKey ? owner.publicKey.toBase58() : String(owner);
+    const balance = await readOwnerTokenBalance(walletManager.connection, ownerKey, mint);
+    return balance.ui;
+  }
+
+  async fetchConfirmedTransaction(signature) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const tx = await walletManager.connection.getTransaction(signature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed'
+      });
+      if (tx && tx.meta) return tx;
+      await new Promise(resolve => setTimeout(resolve, 400));
     }
+    return null;
+  }
+
+  async confirmedFill(signature, owner, mint) {
+    const tx = await this.fetchConfirmedTransaction(signature);
+    if (!tx) return null;
+    const keys = accountKeysFromTransaction(tx);
+    const solDelta = solSpentFromMeta(tx.meta, keys, owner);
+    const tokens = tokenChangeFromMeta(tx.meta, owner, mint);
+    return { solDelta, ...tokens };
+  }
+
+  tradeError(result) {
+    if (result.success) return result;
+    const lines = [];
+    const walk = (rows) => {
+      (rows || []).forEach(row => {
+        if (row && Array.isArray(row.results)) walk(row.results);
+        else if (row && row.status && !/success/i.test(String(row.status))) lines.push(String(row.status));
+      });
+    };
+    walk(result.results);
+    if (!result.error) result.error = lines.join('; ') || 'Trade failed';
+    return result;
   }
 
   reserveSession(sol) {
@@ -549,44 +584,38 @@ class TradingEngine {
         });
         tx.sign([signer]);
         const signature = await sendAndConfirmVersioned(walletManager.connection, tx);
-        let tokensOut = 0;
-        try {
-          const ui = await this.onChainTokenUi(signer, mint);
-          const previous = (this.positions.get(addr) || { tokens: 0 }).tokens;
-          tokensOut = Math.max(0, Math.floor(ui - previous));
-          const position = this.positions.get(addr) || { tokens: 0, solInvested: 0 };
-          position.tokens = ui;
-          position.solInvested += amountPerWallet;
-          this.positions.set(addr, position);
-        } catch (balanceErr) {
-          tokensOut = Math.floor(pumpfun.calculateBuyOutput(amountPerWallet, 15));
-          const position = this.positions.get(addr) || { tokens: 0, solInvested: 0 };
-          position.tokens += tokensOut;
-          position.solInvested += amountPerWallet;
-          this.positions.set(addr, position);
-        }
-        this.sessionSpentSol += amountPerWallet;
+        const settled = await this.confirmedFill(signature, addr, mint);
+        const previous = (this.positions.get(addr) || { tokens: 0, solInvested: 0 });
+        let postTokens = settled ? settled.postUi : null;
+        if (postTokens == null) postTokens = await this.onChainTokenUi(signer, mint);
+        const tokensOut = settled ? Math.max(0, settled.delta) : Math.max(0, postTokens - previous.tokens);
+        const solSpent = settled && settled.solDelta != null
+          ? Math.max(0, settled.solDelta)
+          : amountPerWallet + knownTradeFeeSol(config.PRIORITY_FEE_SOL);
+        const position = this.positions.get(addr) || { tokens: 0, solInvested: 0 };
+        position.tokens = postTokens;
+        position.solInvested += solSpent;
+        this.positions.set(addr, position);
+        this.sessionSpentSol += solSpent;
         totalBoughtTokens += tokensOut;
-        totalSpentSol += amountPerWallet;
+        totalSpentSol += solSpent;
         walletManager.invalidateLiveBalances();
-        this.noteFill(mint, addr, {
-          side: 'buy',
-          tokensBought: tokensOut,
-          solSpent: amountPerWallet + knownTradeFeeSol(config.PRIORITY_FEE_SOL)
-        });
-        this.broadcast('PUBLIC_TRADE', {
+        walletManager.noteTokenBalance(addr, mint, postTokens);
+        this.noteFill(mint, addr, { side: 'buy', tokensBought: tokensOut, solSpent });
+        this.ingestExternalTrade({
           txType: 'buy',
-          solAmount: amountPerWallet,
+          solAmount: solSpent,
           tokenAmount: tokensOut,
-          traderPublicKey: addr.slice(0, 4) + '...' + addr.slice(-4),
+          priceSol: tokensOut > 0 ? solSpent / tokensOut : null,
+          traderPublicKey: addr,
           signature,
           mint,
-          confirmed: true,
-          timestamp: Date.now()
+          simulated: false,
+          source: 'wallet'
         });
         results.push({
           address: addr,
-          solSpent: amountPerWallet,
+          solSpent,
           tokensBought: tokensOut,
           txSignature: signature,
           status: 'Success'
@@ -611,14 +640,14 @@ class TradingEngine {
       resultsCount: successCount
     });
 
-    return {
+    return this.tradeError({
       success: failures === 0 && successCount > 0,
       simulation: isSim,
       amountPerWallet,
       totalBoughtTokens,
       totalSpentSol: Number(totalSpentSol.toFixed(4)),
       results
-    };
+    });
   }
 
   async executeSell({ pct, walletAddresses = [] }) {
@@ -689,7 +718,7 @@ class TradingEngine {
         const uiBalance = await this.onChainTokenUi(signer, mint);
         if (!(uiBalance > 0)) {
           failures += 1;
-          results.push({ address: addr, tokensSold: 0, status: 'Error: no on-chain token balance' });
+          results.push({ address: addr, tokensSold: 0, status: noTokensMessage(addr, mint) });
           continue;
         }
         const sellAll = sellPct === 100;
@@ -706,34 +735,35 @@ class TradingEngine {
         });
         tx.sign([signer]);
         const signature = await sendAndConfirmVersioned(walletManager.connection, tx);
-        const remaining = await this.onChainTokenUi(signer, mint);
+        const settled = await this.confirmedFill(signature, addr, mint);
+        const postTokens = settled ? settled.postUi : await this.onChainTokenUi(signer, mint);
+        const sold = settled ? Math.max(0, -settled.delta) : Math.max(0, uiBalance - postTokens);
+        const solReceived = settled && settled.solDelta != null
+          ? Math.max(0, -settled.solDelta)
+          : Math.max(0, pumpfun.calculateSellOutput(sold || tokensToSell, 15) - knownTradeFeeSol(config.PRIORITY_FEE_SOL));
         const position = this.positions.get(addr) || { tokens: uiBalance, solInvested: 0 };
-        const sold = Math.max(0, uiBalance - remaining);
-        position.tokens = remaining;
+        position.tokens = postTokens;
         this.positions.set(addr, position);
-        const solGained = pumpfun.calculateSellOutput(sold || tokensToSell, 15);
-        totalSoldTokens += sold || tokensToSell;
-        totalReceivedSol += solGained;
+        totalSoldTokens += sold;
+        totalReceivedSol += solReceived;
         walletManager.invalidateLiveBalances();
-        this.noteFill(mint, addr, {
-          side: 'sell',
-          tokensSold: sold || tokensToSell,
-          solReceived: Math.max(0, solGained - knownTradeFeeSol(config.PRIORITY_FEE_SOL))
-        });
-        this.broadcast('PUBLIC_TRADE', {
+        walletManager.noteTokenBalance(addr, mint, postTokens);
+        this.noteFill(mint, addr, { side: 'sell', tokensSold: sold, solReceived });
+        this.ingestExternalTrade({
           txType: 'sell',
-          solAmount: Number(solGained.toFixed(4)),
-          tokenAmount: sold || tokensToSell,
-          traderPublicKey: addr.slice(0, 4) + '...' + addr.slice(-4),
+          solAmount: solReceived,
+          tokenAmount: sold,
+          priceSol: sold > 0 ? solReceived / sold : null,
+          traderPublicKey: addr,
           signature,
           mint,
-          confirmed: true,
-          timestamp: Date.now()
+          simulated: false,
+          source: 'wallet'
         });
         results.push({
           address: addr,
-          tokensSold: sold || tokensToSell,
-          solReceived: Number(solGained.toFixed(4)),
+          tokensSold: sold,
+          solReceived: Number(solReceived.toFixed(4)),
           txSignature: signature,
           status: 'Success'
         });
@@ -756,14 +786,14 @@ class TradingEngine {
       resultsCount: successCount
     });
 
-    return {
+    return this.tradeError({
       success: failures === 0 && successCount > 0,
       simulation: isSim,
       pct: sellPct,
       totalSoldTokens,
       totalReceivedSol: Number(totalReceivedSol.toFixed(4)),
       results
-    };
+    });
   }
 
   async executeCascadeSell(delayMs = 1200, pct = 100) {
@@ -774,7 +804,18 @@ class TradingEngine {
     if (!Number.isFinite(delay) || delay < 0 || delay > 60000) {
       throw new ValidationError('Cascade delay must be between 0 and 60000 ms');
     }
-    const addrs = Array.from(this.positions.keys()).filter(addr => (this.positions.get(addr)?.tokens || 0) > 0);
+    const addrs = walletManager.simulationMode
+      ? Array.from(this.positions.keys()).filter(addr => (this.positions.get(addr)?.tokens || 0) > 0)
+      : walletManager.walletList().map(wallet => wallet.publicKey.toBase58());
+    if (!addrs.length) {
+      return this.tradeError({
+        success: false,
+        error: 'No tokens found to sell.',
+        simulation: walletManager.simulationMode,
+        executedCount: 0,
+        results: []
+      });
+    }
 
     this.broadcast('CASCADE_STARTED', { mint, walletsCount: addrs.length, delayMs: delay, pct: sellPct });
 
@@ -791,7 +832,12 @@ class TradingEngine {
     }
 
     this.broadcast('CASCADE_COMPLETED', { mint, totalExecuted: stepResults.length });
-    return { success: stepResults.every(step => step.success), executedCount: stepResults.length, results: stepResults };
+    return this.tradeError({
+      success: stepResults.length > 0 && stepResults.every(step => step.success),
+      simulation: walletManager.simulationMode,
+      executedCount: stepResults.length,
+      results: stepResults
+    });
   }
 
   startVolumeBumper(solAmount, intervalSeconds) {

@@ -1,12 +1,13 @@
 const { PublicKey } = require('@solana/web3.js');
 const { getAssociatedTokenAddressSync } = require('@solana/spl-token');
 
-function associatedToken(owner, mint) {
-  return getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(owner)).toBase58();
+function associatedToken(owner, mint, programId) {
+  const program = programId ? new PublicKey(programId) : undefined;
+  return getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(owner), false, program).toBase58();
 }
 
 // One SOL account per wallet, plus that wallet's ATA for the active mint only.
-function planAccounts({ wallets, mint }) {
+function planAccounts({ wallets, mint, tokenProgramId }) {
   const accounts = [];
   const seen = new Set();
   for (const owner of wallets || []) {
@@ -24,7 +25,7 @@ function planAccounts({ wallets, mint }) {
     if (!address) continue;
     let ata = '';
     try {
-      ata = associatedToken(address, mintText);
+      ata = associatedToken(address, mintText, tokenProgramId);
     } catch (err) {
       continue;
     }
