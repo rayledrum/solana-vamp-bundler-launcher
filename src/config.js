@@ -1,9 +1,7 @@
 require('dotenv').config();
 const { PublicKey } = require('@solana/web3.js');
 
-function envFlag(name) {
-  return String(process.env[name] || '').trim().toLowerCase() === 'true';
-}
+const { ignoredModeEnv } = require('./simulationMode');
 
 function num(name, fallback) {
   const raw = process.env[name];
@@ -15,20 +13,11 @@ function num(name, fallback) {
   return value;
 }
 
-// Live trading is off unless LIVE_TRADING=true. SIMULATION_MODE=false must not
-// turn live mode on; that string used to be treated as truthy by Boolean().
-const LIVE_TRADING = envFlag('LIVE_TRADING');
 const HELIUS_API_KEY = String(process.env.HELIUS_API_KEY || '').trim();
 const HELIUS_RPC_URL = String(process.env.HELIUS_RPC_URL || '').trim()
   || (HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : '');
 const HELIUS_WS_URL = String(process.env.HELIUS_WS_URL || '').trim()
   || (HELIUS_API_KEY ? `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : '');
-
-if (LIVE_TRADING && !HELIUS_RPC_URL) {
-  throw new Error(
-    'LIVE_TRADING=true but no RPC is configured. Set HELIUS_RPC_URL or HELIUS_API_KEY in .env. Refusing to start in live mode.'
-  );
-}
 
 const PUBLIC_RPC = String(process.env.SOLANA_PUBLIC_RPC_URL || '').trim() || 'https://api.mainnet.solana.com';
 
@@ -36,8 +25,9 @@ const config = {
   PORT: num('PORT', 3000),
   HOST: String(process.env.HOST || '').trim() || '127.0.0.1',
 
-  LIVE_TRADING,
-  SIMULATION_MODE: !LIVE_TRADING,
+  // Always simulation at process start. The dashboard switch is the only way into live mode.
+  SIMULATION_MODE: true,
+  ignoredModeEnv: ignoredModeEnv(process.env),
 
   HELIUS_API_KEY,
   HELIUS_RPC_URL: HELIUS_RPC_URL || PUBLIC_RPC,
