@@ -102,9 +102,10 @@ test('switching the tracked mint unsubscribes the previous bonding curve', () =>
   feed.setMint(mintA);
   assert.equal(feed.accountSub, 1);
   assert.equal(feed.logsSub, 2);
+  assert.equal(feed.mintLogsSub, 3);
   feed.setMint(mintB);
   assert.deepEqual(connection.removedAccounts, [1]);
-  assert.deepEqual(connection.removedLogs, [2]);
+  assert.deepEqual(connection.removedLogs, [2, 3]);
   assert.notEqual(feed.accountSub, 1);
   assert.equal(feed.mint, mintB);
   feed.stop();

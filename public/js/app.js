@@ -1227,6 +1227,54 @@ function getTargetAddresses(targetMode) {
   return all;
 }
 
+function collectSignatures(data, into = []) {
+  (data && data.results || []).forEach(row => {
+    if (!row) return;
+    if (row.txSignature) into.push(row.txSignature);
+    if (row.results) collectSignatures(row, into);
+  });
+  return into;
+}
+
+function tradeFailureText(data) {
+  if (data && data.error) return String(data.error);
+  const lines = [];
+  const walk = (rows) => (rows || []).forEach(row => {
+    if (!row) return;
+    if (row.results) walk(row.results);
+    else if (row.status && !/success/i.test(String(row.status))) lines.push(String(row.status));
+  });
+  walk(data && data.results);
+  return lines.join('; ') || 'Trade failed with no error message';
+}
+
+async function finishTrade(label, res) {
+  const data = await res.json().catch(() => ({}));
+  const failed = !res.ok || data.success === false;
+  const sigs = collectSignatures(data);
+  if (sigs.length) {
+    sigs.forEach(sig => logTerminal(`[${label}] Confirmed https://solscan.io/tx/${sig}`));
+    showToast(`${label} confirmed. Solscan: https://solscan.io/tx/${sigs[0]}`, 'success');
+  }
+  if (failed) {
+    const message = tradeFailureText(data);
+    logTerminal(`[${label}] Failed: ${message}`);
+    showToast(`${label} failed: ${message}`, 'error');
+  } else if (!sigs.length && data.simulation) {
+    logTerminal(`[${label}] Simulated. No chain transaction was sent.`);
+    showToast(`${label} simulated`, 'info');
+  } else if (!sigs.length) {
+    logTerminal(`[${label}] Finished with no transaction signature.`);
+    showToast(`${label} finished with no signature`, 'warning');
+  }
+  if (!failed || sigs.length) {
+    loadLiveStats();
+    loadMasterWallet();
+    loadSubWallets();
+  }
+  return data;
+}
+
 async function executeManualBuy() {
   if (!state.activeToken) {
     return showToast('No active token is currently selected! Launch or track a CA first.', 'warning');
@@ -1243,6 +1291,8 @@ async function executeManualBuy() {
   const btn = document.getElementById('btnManualBuy');
   btn.disabled = true;
   btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>BUYING...</span>`;
+  logTerminal(`[Buy] Pending ${solAmount} SOL from ${walletAddresses.length} wallet(s)`);
+  showToast('Buy pending…', 'info');
 
   try {
     const res = await apiFetch('/api/trading/buy', {
@@ -1250,17 +1300,10 @@ async function executeManualBuy() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ solAmount, walletAddresses })
     });
-    const data = await res.json();
-    if (data.success) {
-      showToast(`Buy Executed! Spent ${data.totalSpentSol} SOL across ${data.results.length} wallets`, 'success');
-      loadLiveStats();
-      loadMasterWallet();
-      loadSubWallets();
-    } else {
-      throw new Error(data.error);
-    }
+    await finishTrade('Buy', res);
   } catch (err) {
-    showToast(`Buy error: ${err.message}`, 'error');
+    logTerminal(`[Buy] Failed: ${err.message}`);
+    showToast(`Buy failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false;
     btn.innerHTML = `<i data-lucide="arrow-up" class="w-4 h-4"></i><span>▲ BUY TOKENS (GREEN UP)</span>`;
@@ -1284,6 +1327,8 @@ async function executeManualSell() {
   const btn = document.getElementById('btnManualSell');
   btn.disabled = true;
   btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>SELLING...</span>`;
+  logTerminal(`[Sell] Pending ${pct}% from ${walletAddresses.length} wallet(s)`);
+  showToast('Sell pending…', 'info');
 
   try {
     const res = await apiFetch('/api/trading/sell', {
@@ -1291,17 +1336,10 @@ async function executeManualSell() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pct, walletAddresses })
     });
-    const data = await res.json();
-    if (data.success) {
-      showToast(`Sold ${pct}%: gained +${data.totalReceivedSol} SOL`, 'warning');
-      loadLiveStats();
-      loadMasterWallet();
-      loadSubWallets();
-    } else {
-      throw new Error(data.error);
-    }
+    await finishTrade('Sell', res);
   } catch (err) {
-    showToast(`Sell error: ${err.message}`, 'error');
+    logTerminal(`[Sell] Failed: ${err.message}`);
+    showToast(`Sell failed: ${err.message}`, 'error');
   } finally {
     btn.disabled = false;
     btn.innerHTML = `<i data-lucide="arrow-down" class="w-4 h-4"></i><span>▼ SELL TOKENS (RED DOWN)</span>`;
@@ -1310,68 +1348,68 @@ async function executeManualSell() {
 }
 
 async function executeInlineBuy(address, solAmount = 0.1) {
+  logTerminal(`[Buy] Pending ${solAmount} SOL for ${address}`);
+  showToast(`Buy pending for ${address.slice(0, 6)}…`, 'info');
   try {
-    showToast(`Buying ${solAmount} SOL for ${address.slice(0, 6)}...`, 'info');
     const res = await apiFetch('/api/trading/buy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ solAmount, walletAddresses: [address] })
     });
-    const data = await res.json();
-    showToast(`Bought tokens (+${solAmount} SOL)`, 'success');
-    loadLiveStats();
+    await finishTrade('Buy', res);
   } catch (err) {
-    showToast('Inline buy error: ' + err.message, 'error');
+    logTerminal(`[Buy] Failed: ${err.message}`);
+    showToast('Buy failed: ' + err.message, 'error');
   }
 }
 
 async function executeInlineSell(address, pct = 100) {
+  logTerminal(`[Sell] Pending ${pct}% from ${address}`);
+  showToast(`Sell pending for ${address.slice(0, 6)}…`, 'info');
   try {
-    showToast(`Selling ${pct}% from ${address.slice(0, 6)}...`, 'info');
     const res = await apiFetch('/api/trading/sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pct, walletAddresses: [address] })
     });
-    const data = await res.json();
-    showToast(`Sold ${pct}% (+${data.totalReceivedSol} SOL)`, 'warning');
-    loadLiveStats();
+    await finishTrade('Sell', res);
   } catch (err) {
-    showToast('Inline sell error: ' + err.message, 'error');
+    logTerminal(`[Sell] Failed: ${err.message}`);
+    showToast('Sell failed: ' + err.message, 'error');
   }
 }
 
 async function executeCascadeExit() {
   if (!confirm('CASCADE EXIT: Staggered sell across sub-wallets with delays?')) return;
+  logTerminal('[Cascade] Pending staggered sell');
+  showToast('Cascade pending…', 'info');
   try {
-    showToast('Starting Cascade Exit...', 'info');
     const res = await apiFetch('/api/trading/cascade-sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ delayMs: 800, pct: 100 })
     });
-    await res.json();
-    showToast('Cascade exit successfully completed', 'success');
-    loadLiveStats();
+    await finishTrade('Cascade', res);
   } catch (err) {
-    showToast('Cascade error: ' + err.message, 'error');
+    logTerminal(`[Cascade] Failed: ${err.message}`);
+    showToast('Cascade failed: ' + err.message, 'error');
   }
 }
 
 async function executePanicDumpAll() {
   if (!confirm('PANIC DUMP ALL: Emergency exit 100% of all tokens across all wallets immediately?')) return;
+  logTerminal('[Panic] Pending 100% sell');
+  showToast('Panic sell pending…', 'warning');
   try {
-    showToast('PANIC DUMPING ALL HOLDINGS...', 'warning');
     const res = await apiFetch('/api/trading/sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pct: 100 })
     });
-    const data = await res.json();
-    showToast(`Panic dumped all! Received +${data.totalReceivedSol} SOL`, 'success');
-    loadLiveStats();
+    await finishTrade('Panic', res);
   } catch (err) {
-    showToast('Dump error: ' + err.message, 'error');
+    logTerminal(`[Panic] Failed: ${err.message}`);
+    showToast('Panic failed: ' + err.message, 'error');
   }
 }
 
@@ -1476,44 +1514,38 @@ async function executeMatrixBuy() {
   try {
     if (delaySec > 0 && isDevIncluded && subTargets.length > 0) {
       // Step 1: Dev buys immediately
-      logTerminal(`[Multi-Buy] Dev wallet executing ${solAmount} SOL in 1st block...`);
-      showToast(`Dev buy sent! Delaying ${delaySec}s before sub-wallets buy...`, 'info');
-      await apiFetch('/api/trading/buy', {
+      logTerminal(`[Buy] Pending dev wallet ${solAmount} SOL, then ${delaySec}s before sub-wallets`);
+      showToast('Buy pending…', 'info');
+      const devRes = await apiFetch('/api/trading/buy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ solAmount, walletAddresses: [state.masterWallet.address] })
       });
-      loadLiveStats();
+      const devData = await finishTrade('Buy', devRes);
+      if (!devRes.ok || devData.success === false) return;
 
       // Step 2: Delay countdown
       await new Promise(r => setTimeout(r, delaySec * 1000));
 
       // Step 3: Sub-wallets buy
       logTerminal(`[Multi-Buy] Firing ${subTargets.length} sub-wallets buy after ${delaySec}s delay...`);
+      logTerminal(`[Buy] Pending ${subTargets.length} sub-wallet buy(s)`);
       const res = await apiFetch('/api/trading/buy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ solAmount, walletAddresses: subTargets })
       });
-      const data = await res.json();
-      showToast(`Delayed Multi-Buy Complete! (+${data.totalTokensBought || ''} tokens)`, 'success');
+      await finishTrade('Buy', res);
     } else {
-      // Simultaneous buy across all target wallets
+      logTerminal(`[Buy] Pending ${solAmount} SOL across ${walletAddresses.length} wallet(s)`);
+      showToast('Buy pending…', 'info');
       const res = await apiFetch('/api/trading/buy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ solAmount, walletAddresses })
       });
-      const data = await res.json();
-      if (data.success) {
-        showToast(`Multi-Buy Success! Bought with ${walletAddresses.length} wallets (+${data.totalTokensBought || ''} tokens)`, 'success');
-      } else {
-        throw new Error(data.error);
-      }
+      await finishTrade('Buy', res);
     }
-    loadLiveStats();
-    loadMasterWallet();
-    loadSubWallets();
   } catch (err) {
     showToast(`Multi-Buy error: ${err.message}`, 'error');
   } finally {
@@ -1541,22 +1573,17 @@ async function executeMatrixSell() {
     btn.innerHTML = `<i data-lucide="loader" class="w-3 h-3 animate-spin"></i><span>SELLING...</span>`;
   }
   try {
+    logTerminal(`[Sell] Pending ${pct}% from ${walletAddresses.length} wallet(s)`);
+    showToast('Sell pending…', 'info');
     const res = await apiFetch('/api/trading/sell', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pct, walletAddresses })
     });
-    const data = await res.json();
-    if (data.success) {
-      showToast(`Multi-Sell Success! Sold ${pct}% from ${walletAddresses.length} wallets (+${data.totalReceivedSol} SOL)`, 'warning');
-      loadLiveStats();
-      loadMasterWallet();
-      loadSubWallets();
-    } else {
-      throw new Error(data.error);
-    }
+    await finishTrade('Sell', res);
   } catch (err) {
-    showToast(`Multi-Sell error: ${err.message}`, 'error');
+    logTerminal(`[Sell] Failed: ${err.message}`);
+    showToast(`Sell failed: ${err.message}`, 'error');
   } finally {
     if (btn) {
       btn.disabled = false;

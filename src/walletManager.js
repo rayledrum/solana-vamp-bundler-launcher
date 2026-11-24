@@ -9,10 +9,7 @@ const {
   sendAndConfirmTransaction,
   LAMPORTS_PER_SOL
 } = require('@solana/web3.js');
-const {
-  getAssociatedTokenAddress,
-  getAccount
-} = require('@solana/spl-token');
+const { readOwnerTokenBalance } = require('./tokenAccounts');
 const bs58Raw = require('bs58');
 const bs58 = bs58Raw.default || bs58Raw;
 const config = require('./config');
@@ -330,10 +327,8 @@ class WalletManager {
           tokenBalance = noted;
         } else {
           try {
-            const mintPubkey = new PublicKey(tokenMint);
-            const ata = await getAssociatedTokenAddress(mintPubkey, wallet.publicKey);
-            const acc = await getAccount(this.connection, ata);
-            tokenBalance = Number(acc.amount);
+            const balance = await readOwnerTokenBalance(this.connection, address, tokenMint);
+            tokenBalance = balance.ui;
           } catch (e) {
             tokenBalance = 0;
           }

@@ -15,6 +15,7 @@ class LiveAccountFeed {
     this.current = new Map();
     this.wallets = [];
     this.mint = null;
+    this.tokenProgramId = null;
     this.timer = null;
     this.retry = 0;
     this.connected = false;
@@ -45,13 +46,20 @@ class LiveAccountFeed {
     if (!this.stopped) this.apply();
   }
 
+  setTokenProgram(programId) {
+    const next = programId && programId.toBase58 ? programId.toBase58() : (programId || null);
+    if (next === this.tokenProgramId) return;
+    this.tokenProgramId = next;
+    if (!this.stopped && this.mint) this.apply();
+  }
+
   apply() {
     if (this.stopped || !this.isLive()) {
       this.unsubscribeAll();
       this.emitStatus();
       return;
     }
-    const next = planAccounts({ wallets: this.wallets, mint: this.mint });
+    const next = planAccounts({ wallets: this.wallets, mint: this.mint, tokenProgramId: this.tokenProgramId });
     const diff = diffSubscriptions(new Set(this.current.keys()), next);
     diff.unsubscribe.forEach(key => this.unsubscribeKey(key));
     diff.subscribe.forEach(account => this.subscribeAccount(account));

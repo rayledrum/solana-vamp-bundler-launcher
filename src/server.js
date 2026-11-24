@@ -14,6 +14,7 @@ const { fetchHttpsImage } = require('./safeImage');
 const { applySimulationChange, ignoredModeMessage } = require('./simulationMode');
 const { LiveAccountFeed } = require('./liveFeed');
 const { CurveFeed } = require('./curveFeed');
+const { resolveMintTokenProgram } = require('./tokenAccounts');
 const {
   parseStrictBoolean,
   requirePositive,
@@ -110,11 +111,19 @@ const curveFeed = new CurveFeed({
   }
 });
 
-function syncLiveFeed() {
+async function syncLiveFeed() {
   if (walletManager.simulationMode) {
     liveFeed.stop();
     curveFeed.stop();
     return;
+  }
+  if (tradingEngine.activeToken) {
+    try {
+      const program = await resolveMintTokenProgram(walletManager.connection, tradingEngine.activeToken);
+      liveFeed.setTokenProgram(program);
+    } catch (err) {
+      console.warn('[Tokens] Could not read mint owner program:', err.message);
+    }
   }
   liveFeed.setWallets(walletManager.walletList().map(wallet => wallet.publicKey.toBase58()));
   liveFeed.setMint(tradingEngine.activeToken);
