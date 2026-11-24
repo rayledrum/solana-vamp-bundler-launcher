@@ -19,7 +19,7 @@ const { fetchSingleVersionedTx, sendAndConfirmVersioned } = require('./portalTx'
 const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTradeFeeSol } = require('./pnl');
 const { pumpPortalFeedEvent } = require('./curveFeed');
 const { curveState, MIGRATION_DESTINATION } = require('./bondingCurve');
-const { createRoundTripStrategy, readBumpLimits } = require('./volumeStrategy');
+const { createRoundTripStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
 
 class TradingEngine {
   constructor() {
@@ -1163,7 +1163,8 @@ class TradingEngine {
     try {
       if (!mint) throw new ValidationError('No active token is currently selected');
       if (!this.bumpStrategy) this.bumpStrategy = createRoundTripStrategy(this.bumpLimits || {});
-      const early = this.bumpStopReason();
+      const phase = this.bumpPhase || 'buy';
+      const early = phase === 'buy' ? this.bumpStopReason() : '';
       if (early && (this.bumpCycles || 0) > 0) {
         this.isBumping = false;
         this.clearBumpTimer();
@@ -1173,9 +1174,10 @@ class TradingEngine {
         this.broadcast('BUMP_TICK', payload);
         return payload;
       }
-      this.bumpCycles = (this.bumpCycles || 0) + 1;
+      if (phase === 'buy') this.bumpCycles = (this.bumpCycles || 0) + 1;
       const outcome = await this.bumpStrategy.onCycle({
         engine: this,
+        phase: this.bumpPhase || 'buy',
         cycle: this.bumpCycles,
         solAmount: amount,
         mint
@@ -1203,6 +1205,7 @@ class TradingEngine {
         ...this.bumpSnapshot()
       };
       this.broadcast('BUMP_TICK', payload);
+      if (this.isBumping) this.armBump(this.nextBumpPhase(actions));
       return payload;
     } catch (err) {
       this.bumpErrors = (this.bumpErrors || 0) + 1;
@@ -1223,6 +1226,7 @@ class TradingEngine {
         ...this.bumpSnapshot()
       };
       this.broadcast('BUMP_TICK', payload);
+      if (this.isBumping) this.armBump('buy');
       console.warn('[VolumeBumper]', this.bumpLastError);
       return payload;
     } finally {
@@ -1235,16 +1239,37 @@ class TradingEngine {
     }
   }
 
+  nextBumpPhase(actions) {
+    const bought = (actions || []).some(action => action.side === 'buy' && action.result && action.result.success);
+    return bought ? 'sell' : 'buy';
+  }
+
+  randomDelayMs() {
+    return delayMs(this.bumpLimits, this.bumpRng || Math.random);
+  }
+
+  armBump(phase) {
+    if (!this.isBumping) return;
+    this.clearBumpTimer();
+    const ms = this.randomDelayMs();
+    this.bumpPhase = phase;
+    const fire = () => {
+      this.bumpTimer = null;
+      if (!this.isBumping) return null;
+      return this.runBumpCycle().catch(err => console.warn('[VolumeBumper]', err.message));
+    };
+    this.bumpTimer = this.bumpSchedule(fire, ms);
+  }
+
   clearBumpTimer() {
-    if (this.bumpInterval) {
-      clearInterval(this.bumpInterval);
-      this.bumpInterval = null;
+    if (this.bumpTimer) {
+      clearTimeout(this.bumpTimer);
+      this.bumpTimer = null;
     }
   }
 
-  startVolumeBumper(solAmount, intervalSeconds, options = {}) {
+  startVolumeBumper(solAmount, options = {}) {
     const amount = requireSolTradeAmount(solAmount);
-    const interval = requireBumperInterval(intervalSeconds);
     const limits = readBumpLimits(options, amount);
     if (this.isBumping) return this.bumpSnapshot();
     if (!this.activeToken) throw new ValidationError('No active token is currently selected');
@@ -1252,7 +1277,8 @@ class TradingEngine {
     this.isBumping = true;
     this.bumpSol = amount;
     this.bumpLimits = limits;
-    this.bumpEveryMs = interval * 1000;
+    this.bumpRng = options.rng || Math.random;
+    this.bumpSchedule = options.schedule || ((fn, ms) => setTimeout(fn, ms));
     this.bumpCycles = 0;
     this.bumpVolumeSol = 0;
     this.bumpNetSol = 0;
@@ -1262,26 +1288,22 @@ class TradingEngine {
     this.bumpLastError = '';
     this.bumpStartedAt = Date.now();
     this.bumpStopRequested = false;
-    this.bumpStrategy = options.strategy || createRoundTripStrategy({ ...options, holdMs: limits.holdSeconds * 1000 });
+    this.bumpPhase = 'buy';
+    this.bumpStrategy = options.strategy || createRoundTripStrategy(options);
     const simulated = walletManager.simulationMode;
     this.broadcast('BUMPER_STARTED', {
       mint: this.activeToken,
       solAmount: amount,
-      intervalSeconds: interval,
       simulated,
       limits,
       ...this.bumpSnapshot()
     });
-    const tick = () => {
-      this.runBumpCycle().catch(err => console.warn('[VolumeBumper]', err.message));
-    };
-    tick();
-    this.bumpInterval = setInterval(tick, this.bumpEveryMs);
+    this.armBump('buy');
     return this.bumpSnapshot();
   }
 
   async stopVolumeBumper() {
-    const wasRunning = this.isBumping || this.bumpInterval || (this.bumpStrategy && this.bumpStrategy.open && this.bumpStrategy.open.length);
+    const wasRunning = this.isBumping || this.bumpTimer || (this.bumpStrategy && this.bumpStrategy.open && this.bumpStrategy.open.length);
     this.isBumping = false;
     this.clearBumpTimer();
     if (!wasRunning) return this.bumpSnapshot();

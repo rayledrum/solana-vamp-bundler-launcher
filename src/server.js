@@ -23,7 +23,6 @@ const {
   requirePositive,
   requireSolTradeAmount,
   requireSellPct,
-  requireBumperInterval,
   requirePublicKey,
   requireMint,
   requireLaunchAmounts,
@@ -650,8 +649,7 @@ app.post('/api/trading/bumper/start', (req, res) => {
   try {
     const body = req.body || {};
     const solAmount = requireSolTradeAmount(body.solAmount);
-    const intervalSeconds = requireBumperInterval(body.intervalSeconds);
-    const stats = tradingEngine.startVolumeBumper(solAmount, intervalSeconds, body);
+    const stats = tradingEngine.startVolumeBumper(solAmount, body);
     res.json({
       success: true,
       bumping: true,

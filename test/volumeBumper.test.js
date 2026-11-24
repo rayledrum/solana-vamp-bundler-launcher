@@ -11,6 +11,25 @@ function addresses() {
   return walletManager.subWallets.map(wallet => wallet.publicKey.toBase58());
 }
 
+function manualClock() {
+  const queue = [];
+  const delays = [];
+  const schedule = (fn, ms) => {
+    delays.push(ms);
+    queue.push(fn);
+    return queue.length;
+  };
+  return {
+    delays,
+    schedule,
+    async fire() {
+      const fn = queue.shift();
+      if (!fn) throw new Error('no bumper step was scheduled');
+      await fn();
+    }
+  };
+}
+
 function mockTrades() {
   const calls = { buys: [], sells: [] };
   tradingEngine.executeBuy = async ({ solAmount, walletAddresses }) => {
@@ -54,8 +73,10 @@ test('the SOL reserve skips a sub-wallet that would be drained', async () => {
   const rich = subs[1];
   walletManager.simulatedBalances.set(rich, 0.2);
   const calls = mockTrades();
-  tradingEngine.startVolumeBumper(0.01, 30, { reserveSol: 0.02, holdSeconds: 60, maxCycles: 1, sessionBudget: 0.05 });
-  await new Promise(resolve => setImmediate(resolve));
+  const clock = manualClock();
+  tradingEngine.startVolumeBumper(0.01, { reserveSol: 0.02, minDelaySeconds: 3, maxDelaySeconds: 10, maxCycles: 1, sessionBudget: 0.05, schedule: clock.schedule, rng: () => 0 });
+  assert.equal(calls.buys.length, 0);
+  await clock.fire();
   assert.deepEqual(calls.buys.map(row => row.address), [rich]);
   await tradingEngine.stopVolumeBumper();
 });
@@ -63,22 +84,23 @@ test('the SOL reserve skips a sub-wallet that would be drained', async () => {
 test('session budget and max cycles stop new buys and sell the open lot', async () => {
   quiet();
   const calls = mockTrades();
-  tradingEngine.startVolumeBumper(0.01, 30, { reserveSol: 0, holdSeconds: 60, maxCycles: 5, sessionBudget: 0.01, maxPerTrade: 0.02 });
-  await new Promise(resolve => setImmediate(resolve));
+  const clock = manualClock();
+  tradingEngine.startVolumeBumper(0.01, { reserveSol: 0, minDelaySeconds: 1, maxDelaySeconds: 1, maxCycles: 5, sessionBudget: 0.01, schedule: clock.schedule });
+  await clock.fire();
   assert.equal(calls.buys.length, 1);
   assert.equal(tradingEngine.isBumping, false);
   assert.equal(calls.sells.length, 1);
   assert.equal(calls.sells[0].pct, 100);
   assert.match(tradingEngine.bumpLastError, /budget/i);
-  assert.ok(tradingEngine.bumpNetSol > 0);
-  assert.ok(tradingEngine.bumpNetSol < 0.01);
+  assert.equal(Number(tradingEngine.bumpNetSol.toFixed(4)), 0.002);
 });
 
 test('stop sells open cycle positions and does not buy again', async () => {
   quiet();
   const calls = mockTrades();
-  tradingEngine.startVolumeBumper(0.01, 30, { reserveSol: 0, holdSeconds: 120, maxCycles: 10, sessionBudget: 0.2 });
-  await new Promise(resolve => setImmediate(resolve));
+  const clock = manualClock();
+  tradingEngine.startVolumeBumper(0.01, { reserveSol: 0, minDelaySeconds: 3, maxDelaySeconds: 10, maxCycles: 10, sessionBudget: 0.2, schedule: clock.schedule, rng: () => 0 });
+  await clock.fire();
   assert.equal(calls.buys.length, 1);
   assert.equal(calls.sells.length, 0);
   await tradingEngine.stopVolumeBumper();
@@ -92,10 +114,11 @@ test('three failed buys auto-stop', async () => {
   quiet();
   tradingEngine.executeBuy = async () => ({ success: false, error: 'no route', results: [] });
   tradingEngine.executeSell = async () => ({ success: true, totalReceivedSol: 0, results: [] });
-  tradingEngine.startVolumeBumper(0.01, 30, { reserveSol: 0, holdSeconds: 30, maxErrors: 3, maxCycles: 10, sessionBudget: 0.2 });
-  await new Promise(resolve => setImmediate(resolve));
-  await tradingEngine.runBumpCycle();
-  await tradingEngine.runBumpCycle();
+  const clock = manualClock();
+  tradingEngine.startVolumeBumper(0.01, { reserveSol: 0, minDelaySeconds: 1, maxDelaySeconds: 1, maxErrors: 3, maxCycles: 10, sessionBudget: 0.2, schedule: clock.schedule });
+  await clock.fire();
+  await clock.fire();
+  await clock.fire();
   assert.equal(tradingEngine.isBumping, false);
   assert.match(tradingEngine.bumpLastError, /consecutive errors/i);
 });
@@ -103,8 +126,9 @@ test('three failed buys auto-stop', async () => {
 test('graduation stops the bumper and sells the open lot', async () => {
   quiet();
   const calls = mockTrades();
-  tradingEngine.startVolumeBumper(0.01, 30, { reserveSol: 0, holdSeconds: 120, maxCycles: 10, sessionBudget: 0.2 });
-  await new Promise(resolve => setImmediate(resolve));
+  const clock = manualClock();
+  tradingEngine.startVolumeBumper(0.01, { reserveSol: 0, minDelaySeconds: 1, maxDelaySeconds: 1, maxCycles: 10, sessionBudget: 0.2, schedule: clock.schedule });
+  await clock.fire();
   tradingEngine.curve = { mint: 'BumpMint', complete: true, progressPct: 100, realSol: 40 };
   tradingEngine.isBumping = true;
   tradingEngine.bumpBusy = false;
@@ -124,8 +148,9 @@ test('live mode uses the same trade calls and the live balance reserve', async (
   });
   const calls = mockTrades();
   try {
-    tradingEngine.startVolumeBumper(0.01, 30, { reserveSol: 0.02, holdSeconds: 60, maxCycles: 1, sessionBudget: 0.05 });
-    await new Promise(resolve => setImmediate(resolve));
+    const clock = manualClock();
+    tradingEngine.startVolumeBumper(0.01, { reserveSol: 0.02, minDelaySeconds: 3, maxDelaySeconds: 10, maxCycles: 1, sessionBudget: 0.05, schedule: clock.schedule, rng: () => 0 });
+    await clock.fire();
     assert.equal(calls.buys.length, 1);
     assert.equal(calls.buys[0].address, first);
     assert.equal(calls.buys[0].solAmount, 0.01);
@@ -137,11 +162,39 @@ test('live mode uses the same trade calls and the live balance reserve', async (
   }
 });
 
+test('delay bounds are random between min and max and rejected outside them', async () => {
+  quiet();
+  const calls = mockTrades();
+  const clock = manualClock();
+  let roll = 0;
+  tradingEngine.startVolumeBumper(0.01, {
+    reserveSol: 0,
+    minDelaySeconds: 3,
+    maxDelaySeconds: 10,
+    maxCycles: 2,
+    sessionBudget: 0.2,
+    schedule: clock.schedule,
+    rng: () => roll++ === 0 ? 0 : 1
+  });
+  assert.equal(clock.delays[0], 3000);
+  await clock.fire();
+  assert.equal(calls.buys.length, 1);
+  assert.equal(calls.sells.length, 0);
+  assert.equal(clock.delays[1], 10000);
+  await clock.fire();
+  assert.equal(calls.sells.length, 1);
+  assert.equal(calls.sells[0].pct, 100);
+  await tradingEngine.stopVolumeBumper();
+  assert.throws(() => tradingEngine.startVolumeBumper(0.01, { minDelaySeconds: 0, maxDelaySeconds: 10 }), /at least 1/);
+  assert.throws(() => tradingEngine.startVolumeBumper(0.01, { minDelaySeconds: 8, maxDelaySeconds: 3 }), /greater than or equal/);
+  assert.throws(() => tradingEngine.startVolumeBumper(0.01, { minDelaySeconds: 1, maxDelaySeconds: 301 }), /at most 300/);
+});
+
 test('a buy above the per-trade cap is refused before any trade', () => {
   quiet();
   mockTrades();
   assert.throws(
-    () => tradingEngine.startVolumeBumper(0.05, 30, { maxPerTrade: 0.02 }),
+    () => tradingEngine.startVolumeBumper(0.05, { maxPerTrade: 0.01 }),
     /per-trade cap/
   );
   assert.equal(tradingEngine.isBumping, false);

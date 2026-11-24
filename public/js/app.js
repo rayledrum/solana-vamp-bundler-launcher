@@ -2934,18 +2934,17 @@ async function toggleVolumeBumper(start) {
         return Number.isFinite(value) ? value : fallback;
       };
       const solAmount = num('bumpAmountInput', 0.01);
-      const intervalSeconds = parseInt(document.getElementById('bumpIntervalInput').value || '20', 10);
       const res = await apiFetch('/api/trading/bumper/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           solAmount,
-          intervalSeconds,
-          maxPerTrade: num('bumpMaxTradeInput', 0.02),
+          maxPerTrade: num('bumpMaxTradeInput', 0.01),
           sessionBudget: num('bumpBudgetInput', 0.05),
           maxCycles: num('bumpMaxCyclesInput', 10),
           reserveSol: num('bumpReserveInput', 0.02),
-          holdSeconds: num('bumpHoldInput', 15),
+          minDelaySeconds: num('bumpMinDelayInput', 3),
+          maxDelaySeconds: num('bumpMaxDelayInput', 10),
           maxErrors: num('bumpMaxErrorsInput', 3)
         })
       });

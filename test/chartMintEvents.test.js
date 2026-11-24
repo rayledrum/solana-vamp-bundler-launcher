@@ -90,7 +90,7 @@ test('trade events stay on the mint they were opened for', async (t) => {
     tradingEngine.setActiveToken('MintBump', []);
     tradingEngine.stopVolumeBumper();
     try {
-      tradingEngine.startVolumeBumper(0.01, 5);
+      tradingEngine.startVolumeBumper(0.01, { minDelaySeconds: 1, maxDelaySeconds: 1 });
       const started = events.find((event) => event.type === 'BUMPER_STARTED');
       assert.equal(started.payload.mint, 'MintBump');
       assert.equal(started.payload.simulated, true);

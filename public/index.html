@@ -916,7 +916,7 @@
             </h2>
             <span id="bumperActiveBadge" style="font-size:9.5px;padding:1px 8px;background:#111827;color:#78909c;border-radius:4px;font-family:monospace;font-weight:700;">STOPPED</span>
           </div>
-          <p style="font-size:11.5px;color:#78909c;margin-bottom:14px;">Buys with a sub-wallet, holds, then sells the tokens from that buy. Simulation and live follow the dashboard switch. Live orders use the same confirmed path as a manual trade. Stop cancels new buys and sells anything still open. The caps below also stop it.</p>
+          <p style="font-size:11.5px;color:#78909c;margin-bottom:14px;">Buys with a sub-wallet, waits, then sells the tokens from that buy. Each buy and each sell waits a random time between the min and max delay. Simulation and live follow the dashboard switch. Live orders use the same confirmed path as a manual trade. Stop cancels new buys and sells anything still open.</p>
           <div id="bumperStats" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;font-family:'JetBrains Mono',monospace;font-size:11px;">
             <div style="background:#090d17;border:1px solid #1a2338;border-radius:8px;padding:8px;">
               <div style="color:#546e7a;font-size:9px;font-weight:800;letter-spacing:0.06em;">CYCLES</div>
@@ -941,12 +941,12 @@
               <input id="bumpAmountInput" type="number" step="0.005" min="0.005" value="0.01" class="input-field font-mono" style="font-size:12px;">
             </div>
             <div>
-              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Interval (Seconds)</label>
-              <input id="bumpIntervalInput" type="number" step="1" min="5" value="20" class="input-field font-mono" style="font-size:12px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Min delay (s)</label>
+              <input id="bumpMinDelayInput" type="number" step="1" min="1" value="3" class="input-field font-mono" style="font-size:12px;">
             </div>
             <div>
               <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Max / Trade</label>
-              <input id="bumpMaxTradeInput" type="number" step="0.005" min="0.005" value="0.02" class="input-field font-mono" style="font-size:12px;">
+              <input id="bumpMaxTradeInput" type="number" step="0.005" min="0.005" value="0.01" class="input-field font-mono" style="font-size:12px;">
             </div>
             <div>
               <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Session Budget</label>
@@ -961,8 +961,8 @@
               <input id="bumpReserveInput" type="number" step="0.005" min="0" value="0.02" class="input-field font-mono" style="font-size:12px;">
             </div>
             <div>
-              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Hold (Seconds)</label>
-              <input id="bumpHoldInput" type="number" step="1" min="0" value="15" class="input-field font-mono" style="font-size:12px;">
+              <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Max delay (s)</label>
+              <input id="bumpMaxDelayInput" type="number" step="1" min="1" value="10" class="input-field font-mono" style="font-size:12px;">
             </div>
             <div>
               <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Max Errors</label>
