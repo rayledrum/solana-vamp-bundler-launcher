@@ -92,26 +92,26 @@
     <!-- Nav -->
     <nav style="flex:1;padding:12px 10px;display:flex;flex-direction:column;gap:4px;">
       <div class="sidebar-section-label">Main Menu</div>
-      <button onclick="switchTab('trading')"  id="tabBtn-trading"  class="sidebar-nav-btn active">
+      <button data-fn="switchTab" data-arg="trading"  id="tabBtn-trading"  class="sidebar-nav-btn active">
         <i data-lucide="layout-dashboard" style="width:15px;height:15px;"></i><span>Dashboard</span>
       </button>
-      <button onclick="switchTab('launchpad')" id="tabBtn-launchpad" class="sidebar-nav-btn">
+      <button data-fn="switchTab" data-arg="launchpad" id="tabBtn-launchpad" class="sidebar-nav-btn">
         <i data-lucide="rocket" style="width:15px;height:15px;"></i><span>Launchpad</span>
       </button>
-      <button onclick="switchTab('vamp')"     id="tabBtn-vamp"     class="sidebar-nav-btn">
+      <button data-fn="switchTab" data-arg="vamp"     id="tabBtn-vamp"     class="sidebar-nav-btn">
         <i data-lucide="skull" style="width:15px;height:15px;"></i><span>Vamp Cloner</span>
       </button>
-      <button onclick="switchTab('wallets')"  id="tabBtn-wallets"  class="sidebar-nav-btn">
+      <button data-fn="switchTab" data-arg="wallets"  id="tabBtn-wallets"  class="sidebar-nav-btn">
         <i data-lucide="users" style="width:15px;height:15px;"></i><span>Wallets Matrix</span>
       </button>
-      <button onclick="switchTab('bumper')"   id="tabBtn-bumper"   class="sidebar-nav-btn">
+      <button data-fn="switchTab" data-arg="bumper"   id="tabBtn-bumper"   class="sidebar-nav-btn">
         <i data-lucide="trending-up" style="width:15px;height:15px;"></i><span>Volume Bumper</span>
       </button>
       <div class="sidebar-section-label" style="margin-top:8px;">Tools</div>
-      <button class="sidebar-nav-btn" onclick="switchTab('wallets')">
+      <button class="sidebar-nav-btn" data-fn="switchTab" data-arg="wallets">
         <i data-lucide="key" style="width:15px;height:15px;"></i><span>Key Manager</span>
       </button>
-      <button class="sidebar-nav-btn" onclick="switchTab('launchpad')">
+      <button class="sidebar-nav-btn" data-fn="switchTab" data-arg="launchpad">
         <i data-lucide="layers" style="width:15px;height:15px;"></i><span>Jito Bundler</span>
       </button>
     </nav>
@@ -181,18 +181,18 @@
         <div style="display:flex;align-items:center;gap:6px;background:#090d17;padding:6px 12px;border-radius:9px;border:1px solid #1a2338;width:280px;max-width:100%;">
           <i data-lucide="search" style="width:13px;height:13px;color:#546e7a;flex-shrink:0;"></i>
           <input id="navTrackCaInput" type="text" placeholder="Track Token CA / Mint..." style="background:none;border:none;outline:none;font-size:11.5px;font-family:'JetBrains Mono',monospace;color:#b0bec5;width:100%;" placeholder="Track CA...">
-          <button onclick="setTrackedTokenFromNav()" style="font-size:9.5px;font-weight:800;color:#00d4ff;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.2);border-radius:5px;padding:2px 7px;cursor:pointer;white-space:nowrap;letter-spacing:0.05em;">TRACK</button>
+          <button data-fn="setTrackedTokenFromNav" style="font-size:9.5px;font-weight:800;color:#00d4ff;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.2);border-radius:5px;padding:2px 7px;cursor:pointer;white-space:nowrap;letter-spacing:0.05em;">TRACK</button>
         </div>
 
         <!-- Right: Mode toggle + balance -->
         <div style="display:flex;align-items:center;gap:10px;">
           <!-- Simulation / Live toggle -->
           <div style="display:flex;align-items:center;background:#0d1120;padding:3px;border-radius:8px;border:1px solid #1a2338;">
-            <button id="modeSimBtn" onclick="toggleSimulation(true)"
+            <button id="modeSimBtn" data-fn="toggleSimulation" data-arg="true"
               style="padding:3px 10px;font-size:10px;font-weight:800;border-radius:6px;background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.25);cursor:pointer;letter-spacing:0.05em;">
               SIM
             </button>
-            <button id="modeLiveBtn" onclick="toggleSimulation(false)"
+            <button id="modeLiveBtn" data-fn="toggleSimulation" data-arg="false"
               style="padding:3px 10px;font-size:10px;font-weight:800;border-radius:6px;color:#546e7a;border:1px solid transparent;cursor:pointer;letter-spacing:0.05em;background:none;">
               LIVE
             </button>
@@ -216,11 +216,11 @@
 
       <!-- Mobile tabs -->
       <div class="flex md:hidden border-t items-center gap-1 px-3 py-1.5 overflow-x-auto text-xs" style="border-color:#1a2338;background:#080b12;">
-        <button onclick="switchTab('trading')"  style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#00d4ff;background:#111827;border:none;cursor:pointer;">Dashboard</button>
-        <button onclick="switchTab('launchpad')" style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Launch</button>
-        <button onclick="switchTab('vamp')"     style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Vamp</button>
-        <button onclick="switchTab('wallets')"  style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Wallets</button>
-        <button onclick="switchTab('bumper')"   style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Bumper</button>
+        <button data-fn="switchTab" data-arg="trading"  style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#00d4ff;background:#111827;border:none;cursor:pointer;">Dashboard</button>
+        <button data-fn="switchTab" data-arg="launchpad" style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Launch</button>
+        <button data-fn="switchTab" data-arg="vamp"     style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Vamp</button>
+        <button data-fn="switchTab" data-arg="wallets"  style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Wallets</button>
+        <button data-fn="switchTab" data-arg="bumper"   style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">Bumper</button>
       </div>
     </header>
 
@@ -252,17 +252,17 @@
               <!-- Timeframe buttons & Manual CA input -->
               <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                 <div style="display:flex;align-items:center;gap:2px;">
-                  <button onclick="setChartTimeframe('1s')"  id="tfBtn-1s"  class="chart-tf-btn">1s</button>
-                  <button onclick="setChartTimeframe('5s')"  id="tfBtn-5s"  class="chart-tf-btn active">5s</button>
-                  <button onclick="setChartTimeframe('15s')" id="tfBtn-15s" class="chart-tf-btn">15s</button>
-                  <button onclick="setChartTimeframe('30s')" id="tfBtn-30s" class="chart-tf-btn">30s</button>
-                  <button onclick="setChartTimeframe('1m')"  id="tfBtn-1m"  class="chart-tf-btn">1m</button>
-                  <button onclick="setChartTimeframe('5m')"  id="tfBtn-5m"  class="chart-tf-btn">5m</button>
+                  <button data-fn="setChartTimeframe" data-arg="1s"  id="tfBtn-1s"  class="chart-tf-btn">1s</button>
+                  <button data-fn="setChartTimeframe" data-arg="5s"  id="tfBtn-5s"  class="chart-tf-btn active">5s</button>
+                  <button data-fn="setChartTimeframe" data-arg="15s" id="tfBtn-15s" class="chart-tf-btn">15s</button>
+                  <button data-fn="setChartTimeframe" data-arg="30s" id="tfBtn-30s" class="chart-tf-btn">30s</button>
+                  <button data-fn="setChartTimeframe" data-arg="1m"  id="tfBtn-1m"  class="chart-tf-btn">1m</button>
+                  <button data-fn="setChartTimeframe" data-arg="5m"  id="tfBtn-5m"  class="chart-tf-btn">5m</button>
                 </div>
                 <!-- Manual Token CA Input -->
                 <div style="display:flex;align-items:center;gap:3px;margin-left:6px;padding-left:6px;border-left:1px solid #1a2338;">
                   <input id="chartManualCaInput" type="text" placeholder="Token CA / Mint..." class="input-field font-mono" style="width:160px;font-size:10px;padding:2px 6px;height:23px;" onkeydown="if(event.key==='Enter')loadChartCaFromInput()">
-                  <button onclick="loadChartCaFromInput()" class="btn-primary" style="padding:2px 7px;font-size:9.5px;height:23px;border-radius:5px;cursor:pointer;white-space:nowrap;font-weight:700;">LOAD</button>
+                  <button data-fn="loadChartCaFromInput" class="btn-primary" style="padding:2px 7px;font-size:9.5px;height:23px;border-radius:5px;cursor:pointer;white-space:nowrap;font-weight:700;">LOAD</button>
                 </div>
               </div>
             </div>
@@ -293,9 +293,9 @@
                 <span style="color:#546e7a;">Active: <a id="deskPumpLink" href="https://pump.fun" target="_blank" style="color:#00d4ff;text-decoration:none;">Pump.fun ↗</a></span>
               </div>
               <div style="display:flex;align-items:center;gap:5px;">
-                <button onclick="switchTab('launchpad')" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.25);color:#00d4ff;cursor:pointer;">Launch Token</button>
-                <button onclick="executeManualBuy()" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(0,196,140,0.1);border:1px solid rgba(0,196,140,0.25);color:#00c48c;cursor:pointer;">Buy</button>
-                <button onclick="executeManualSell()" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(240,76,94,0.1);border:1px solid rgba(240,76,94,0.25);color:#f04c5e;cursor:pointer;">Sell</button>
+                <button data-fn="switchTab" data-arg="launchpad" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.25);color:#00d4ff;cursor:pointer;">Launch Token</button>
+                <button data-fn="executeManualBuy" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(0,196,140,0.1);border:1px solid rgba(0,196,140,0.25);color:#00c48c;cursor:pointer;">Buy</button>
+                <button data-fn="executeManualSell" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;background:rgba(240,76,94,0.1);border:1px solid rgba(240,76,94,0.25);color:#f04c5e;cursor:pointer;">Sell</button>
               </div>
             </div>
           </div>
@@ -338,7 +338,7 @@
             <div class="bento-card" style="flex:1;">
               <div class="bento-header">
                 <div class="bento-title"><i data-lucide="flame" style="width:13px;height:13px;color:#f04c5e;"></i> Top Movers</div>
-                <button onclick="loadTrendingVampTokens();renderTopMovers();" style="font-size:9.5px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">↻ Refresh</button>
+                <button data-fn="refreshMovers" style="font-size:9.5px;font-weight:700;color:#78909c;background:none;border:none;cursor:pointer;">↻ Refresh</button>
               </div>
               <div id="topMoversPanel" style="padding:10px 12px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:200px;">
                 <!-- Populated by JS -->
@@ -364,11 +364,11 @@
             <div style="margin-bottom:10px;">
               <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#546e7a;margin-bottom:5px;">Quick Size</div>
               <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:3px;">
-                <button type="button" onclick="setManualBuyAmount(0.05)"  class="btn-quick-buy">0.05</button>
-                <button type="button" onclick="setManualBuyAmount(0.10)"  class="btn-quick-buy">0.10</button>
-                <button type="button" onclick="setManualBuyAmount(0.25)"  class="btn-quick-buy">0.25</button>
-                <button type="button" onclick="setManualBuyAmount(0.50)"  class="btn-quick-buy">0.50</button>
-                <button type="button" onclick="setManualBuyAmount(1.00)"  class="btn-quick-buy">1.00</button>
+                <button type="button" data-fn="setManualBuyAmount" data-arg="0.05"  class="btn-quick-buy">0.05</button>
+                <button type="button" data-fn="setManualBuyAmount" data-arg="0.10"  class="btn-quick-buy">0.10</button>
+                <button type="button" data-fn="setManualBuyAmount" data-arg="0.25"  class="btn-quick-buy">0.25</button>
+                <button type="button" data-fn="setManualBuyAmount" data-arg="0.50"  class="btn-quick-buy">0.50</button>
+                <button type="button" data-fn="setManualBuyAmount" data-arg="1.00"  class="btn-quick-buy">1.00</button>
               </div>
             </div>
 
@@ -389,7 +389,7 @@
               </select>
             </div>
 
-            <button id="btnManualBuy" onclick="executeManualBuy()" class="btn-buy-green w-full" style="padding:11px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
+            <button id="btnManualBuy" data-fn="executeManualBuy" class="btn-buy-green w-full" style="padding:11px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
               <i data-lucide="arrow-up" style="width:14px;height:14px;"></i>
               <span>▲ BUY TOKENS</span>
             </button>
@@ -408,11 +408,11 @@
             <div style="margin-bottom:10px;">
               <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#546e7a;margin-bottom:5px;">Quick %</div>
               <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:3px;">
-                <button type="button" onclick="setManualSellPct(10)"  class="btn-quick-sell">10%</button>
-                <button type="button" onclick="setManualSellPct(25)"  class="btn-quick-sell">25%</button>
-                <button type="button" onclick="setManualSellPct(50)"  class="btn-quick-sell">50%</button>
-                <button type="button" onclick="setManualSellPct(75)"  class="btn-quick-sell">75%</button>
-                <button type="button" onclick="setManualSellPct(100)" class="btn-quick-sell">100</button>
+                <button type="button" data-fn="setManualSellPct" data-arg="10"  class="btn-quick-sell">10%</button>
+                <button type="button" data-fn="setManualSellPct" data-arg="25"  class="btn-quick-sell">25%</button>
+                <button type="button" data-fn="setManualSellPct" data-arg="50"  class="btn-quick-sell">50%</button>
+                <button type="button" data-fn="setManualSellPct" data-arg="75"  class="btn-quick-sell">75%</button>
+                <button type="button" data-fn="setManualSellPct" data-arg="100" class="btn-quick-sell">100</button>
               </div>
             </div>
 
@@ -433,17 +433,17 @@
               </select>
             </div>
 
-            <button id="btnManualSell" onclick="executeManualSell()" class="btn-sell-red w-full" style="padding:11px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
+            <button id="btnManualSell" data-fn="executeManualSell" class="btn-sell-red w-full" style="padding:11px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
               <i data-lucide="arrow-down" style="width:14px;height:14px;"></i>
               <span>▼ SELL TOKENS</span>
             </button>
 
             <!-- Cascade & Panic -->
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;">
-              <button onclick="executeCascadeExit()" class="btn-secondary" style="padding:6px;font-size:10px;font-weight:700;color:#fbbf24;display:flex;align-items:center;justify-content:center;gap:4px;">
+              <button data-fn="executeCascadeExit" class="btn-secondary" style="padding:6px;font-size:10px;font-weight:700;color:#fbbf24;display:flex;align-items:center;justify-content:center;gap:4px;">
                 <i data-lucide="waves" style="width:11px;height:11px;"></i> Cascade
               </button>
-              <button onclick="executePanicDumpAll()" class="btn-secondary" style="padding:6px;font-size:10px;font-weight:700;color:#f04c5e;display:flex;align-items:center;justify-content:center;gap:4px;">
+              <button data-fn="executePanicDumpAll" class="btn-secondary" style="padding:6px;font-size:10px;font-weight:700;color:#f04c5e;display:flex;align-items:center;justify-content:center;gap:4px;">
                 <i data-lucide="alert-octagon" style="width:11px;height:11px;"></i> Panic Dump
               </button>
             </div>
@@ -458,14 +458,14 @@
                 <span id="matrixSelectedCount" style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:#111827;color:#00d4ff;border:1px solid rgba(0,212,255,0.25);font-family:monospace;font-weight:700;">0/0 Selected</span>
               </div>
               <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-                <button onclick="selectWalletsByRole('all')"   class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">All</button>
-                <button onclick="selectWalletsByRole('dev')"   class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">Dev</button>
-                <button onclick="selectWalletsByRole('subs')"  class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">Subs</button>
-                <button onclick="selectWalletsByRole('none')"  class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">None</button>
-                <button onclick="loadLiveStats()" class="btn-secondary" style="font-size:9.5px;padding:2px 7px;display:flex;align-items:center;gap:3px;" title="Sync live stats">
+                <button data-fn="selectWalletsByRole" data-arg="all"   class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">All</button>
+                <button data-fn="selectWalletsByRole" data-arg="dev"   class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">Dev</button>
+                <button data-fn="selectWalletsByRole" data-arg="subs"  class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">Subs</button>
+                <button data-fn="selectWalletsByRole" data-arg="none"  class="btn-secondary" style="font-size:9.5px;padding:2px 7px;">None</button>
+                <button data-fn="loadLiveStats" class="btn-secondary" style="font-size:9.5px;padding:2px 7px;display:flex;align-items:center;gap:3px;" title="Sync live stats">
                   <i data-lucide="refresh-cw" style="width:10px;height:10px;"></i> Sync
                 </button>
-                <button onclick="reclaimRentAndRewards()" class="btn-secondary" style="font-size:9.5px;padding:2px 7px;color:#fbbf24;border-color:rgba(251,191,36,0.3);display:flex;align-items:center;gap:3px;" title="Reclaim SOL ATA rent (~0.00204 SOL per empty token account) & claim Pump.fun creator rewards back to Master Dev">
+                <button data-fn="reclaimRentAndRewards" class="btn-secondary" style="font-size:9.5px;padding:2px 7px;color:#fbbf24;border-color:rgba(251,191,36,0.3);display:flex;align-items:center;gap:3px;" title="Reclaim SOL ATA rent (~0.00204 SOL per empty token account) & claim Pump.fun creator rewards back to Master Dev">
                   <i data-lucide="coins" style="width:10px;height:10px;"></i> Reclaim Rent
                 </button>
                 <!-- Sub-Wallet Buy Delay (up to 10s) -->
@@ -473,7 +473,7 @@
                   <span style="font-size:9.5px;font-weight:800;color:#fbbf24;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:3px;">
                     <i data-lucide="timer" style="width:11px;height:11px;"></i> Sub Delay:
                   </span>
-                  <input id="subWalletBuyDelayInput" type="number" step="0.5" min="0" max="10" value="0" oninput="handleDelayInputChange(this.value)" class="input-field font-mono" style="width:54px;font-size:10.5px;padding:2px 3px;height:22px;text-align:center;">
+                  <input id="subWalletBuyDelayInput" type="number" step="0.5" min="0" max="10" value="0" data-fn="delayInput" data-evt="input" class="input-field font-mono" style="width:54px;font-size:10.5px;padding:2px 3px;height:22px;text-align:center;">
                   <span style="font-size:9.5px;color:#78909c;font-family:monospace;">s</span>
                   <span id="subDelayBadge" style="font-size:8.5px;padding:1px 5px;border-radius:4px;background:rgba(0,196,140,0.12);color:#00c48c;border:1px solid rgba(0,196,140,0.25);font-family:monospace;font-weight:700;">1st Block</span>
                 </div>
@@ -487,15 +487,15 @@
                 <span style="font-size:10px;font-weight:800;color:#00c48c;text-transform:uppercase;letter-spacing:0.07em;display:flex;align-items:center;gap:3px;margin-right:2px;">
                   <i data-lucide="zap" style="width:11px;height:11px;"></i> Multi-Buy:
                 </span>
-                <button type="button" onclick="setMatrixBuyAmount(0.05)" class="btn-quick-buy" style="padding:2px 5px;font-size:10px;">+0.05</button>
-                <button type="button" onclick="setMatrixBuyAmount(0.1)"  class="btn-quick-buy" style="padding:2px 5px;font-size:10px;">+0.1</button>
-                <button type="button" onclick="setMatrixBuyAmount(0.25)" class="btn-quick-buy" style="padding:2px 5px;font-size:10px;">+0.25</button>
-                <button type="button" onclick="setMatrixBuyAmount(0.5)"  class="btn-quick-buy" style="padding:2px 5px;font-size:10px;">+0.5</button>
+                <button type="button" data-fn="setMatrixBuyAmount" data-arg="0.05" class="btn-quick-buy" style="padding:2px 5px;font-size:10px;">+0.05</button>
+                <button type="button" data-fn="setMatrixBuyAmount" data-arg="0.1"  class="btn-quick-buy" style="padding:2px 5px;font-size:10px;">+0.1</button>
+                <button type="button" data-fn="setMatrixBuyAmount" data-arg="0.25" class="btn-quick-buy" style="padding:2px 5px;font-size:10px;">+0.25</button>
+                <button type="button" data-fn="setMatrixBuyAmount" data-arg="0.5"  class="btn-quick-buy" style="padding:2px 5px;font-size:10px;">+0.5</button>
                 <div style="position:relative;width:85px;">
                   <input id="matrixBuyAmountInput" type="number" step="0.05" min="0.01" value="0.1" class="input-field font-mono" style="font-size:11px;padding:3px 22px 3px 6px;height:25px;">
                   <span style="position:absolute;right:5px;top:50%;transform:translateY(-50%);font-size:9px;color:#546e7a;font-family:monospace;pointer-events:none;">SOL</span>
                 </div>
-                <button id="btnMatrixBuy" onclick="executeMatrixBuy()" class="btn-buy-green" style="padding:4px 9px;font-size:10.5px;font-weight:800;border-radius:6px;display:flex;align-items:center;gap:3px;cursor:pointer;">
+                <button id="btnMatrixBuy" data-fn="executeMatrixBuy" class="btn-buy-green" style="padding:4px 9px;font-size:10.5px;font-weight:800;border-radius:6px;display:flex;align-items:center;gap:3px;cursor:pointer;">
                   ▲ BUY SELECTED
                 </button>
               </div>
@@ -505,21 +505,21 @@
                 <span style="font-size:10px;font-weight:800;color:#f04c5e;text-transform:uppercase;letter-spacing:0.07em;display:flex;align-items:center;gap:3px;margin-right:2px;">
                   <i data-lucide="flame" style="width:11px;height:11px;"></i> Multi-Sell:
                 </span>
-                <button type="button" onclick="setMatrixSellPct(25)"  class="btn-quick-sell" style="padding:2px 5px;font-size:10px;">25%</button>
-                <button type="button" onclick="setMatrixSellPct(50)"  class="btn-quick-sell" style="padding:2px 5px;font-size:10px;">50%</button>
-                <button type="button" onclick="setMatrixSellPct(75)"  class="btn-quick-sell" style="padding:2px 5px;font-size:10px;">75%</button>
-                <button type="button" onclick="setMatrixSellPct(100)" class="btn-quick-sell" style="padding:2px 5px;font-size:10px;background:rgba(240,76,94,0.18);">100%</button>
+                <button type="button" data-fn="setMatrixSellPct" data-arg="25"  class="btn-quick-sell" style="padding:2px 5px;font-size:10px;">25%</button>
+                <button type="button" data-fn="setMatrixSellPct" data-arg="50"  class="btn-quick-sell" style="padding:2px 5px;font-size:10px;">50%</button>
+                <button type="button" data-fn="setMatrixSellPct" data-arg="75"  class="btn-quick-sell" style="padding:2px 5px;font-size:10px;">75%</button>
+                <button type="button" data-fn="setMatrixSellPct" data-arg="100" class="btn-quick-sell" style="padding:2px 5px;font-size:10px;background:rgba(240,76,94,0.18);">100%</button>
                 <div style="position:relative;width:70px;">
                   <input id="matrixSellPctInput" type="number" step="5" min="1" max="100" value="50" class="input-field font-mono" style="font-size:11px;padding:3px 16px 3px 6px;height:25px;">
                   <span style="position:absolute;right:5px;top:50%;transform:translateY(-50%);font-size:9px;color:#546e7a;font-family:monospace;pointer-events:none;">%</span>
                 </div>
-                <button id="btnMatrixSell" onclick="executeMatrixSell()" class="btn-sell-red" style="padding:4px 9px;font-size:10.5px;font-weight:800;border-radius:6px;display:flex;align-items:center;gap:3px;cursor:pointer;">
+                <button id="btnMatrixSell" data-fn="executeMatrixSell" class="btn-sell-red" style="padding:4px 9px;font-size:10.5px;font-weight:800;border-radius:6px;display:flex;align-items:center;gap:3px;cursor:pointer;">
                   ▼ SELL SELECTED
                 </button>
-                <button onclick="executeCascadeExit()" class="btn-secondary" style="padding:4px 7px;font-size:10px;color:#fbbf24;border-color:rgba(251,191,36,0.25);display:flex;align-items:center;gap:3px;cursor:pointer;" title="Cascade sell with delays across selected wallets">
+                <button data-fn="executeCascadeExit" class="btn-secondary" style="padding:4px 7px;font-size:10px;color:#fbbf24;border-color:rgba(251,191,36,0.25);display:flex;align-items:center;gap:3px;cursor:pointer;" title="Cascade sell with delays across selected wallets">
                   <i data-lucide="layers" style="width:10px;height:10px;"></i> Cascade
                 </button>
-                <button onclick="executePanicDumpAll()" class="btn-secondary" style="padding:4px 7px;font-size:10px;color:#f04c5e;border-color:rgba(240,76,94,0.3);display:flex;align-items:center;gap:3px;cursor:pointer;" title="Emergency dump all holdings across all wallets">
+                <button data-fn="executePanicDumpAll" class="btn-secondary" style="padding:4px 7px;font-size:10px;color:#f04c5e;border-color:rgba(240,76,94,0.3);display:flex;align-items:center;gap:3px;cursor:pointer;" title="Emergency dump all holdings across all wallets">
                   <i data-lucide="alert-octagon" style="width:10px;height:10px;"></i> Dump All
                 </button>
               </div>
@@ -529,7 +529,7 @@
               <table style="width:100%;font-size:11px;font-family:'JetBrains Mono',monospace;border-collapse:collapse;min-width:760px;">
                 <thead>
                   <tr style="border-bottom:1px solid #1a2338;font-size:10px;color:#546e7a;">
-                    <th style="padding:7px 6px;text-align:left;font-weight:600;"><input type="checkbox" id="checkAllRows" onchange="toggleSelectAllRows(this.checked)" style="accent-color:#00d4ff;"></th>
+                    <th style="padding:7px 6px;text-align:left;font-weight:600;"><input type="checkbox" id="checkAllRows" data-fn="toggleSelectAll" data-evt="change" style="accent-color:#00d4ff;"></th>
                     <th style="padding:7px 6px;text-align:left;font-weight:600;">Wallet</th>
                     <th style="padding:7px 6px;text-align:right;font-weight:600;">SOL Bal</th>
                     <th style="padding:7px 6px;text-align:right;font-weight:600;">Tokens</th>
@@ -617,7 +617,7 @@
           <div class="bento-card">
             <div class="bento-header">
               <div class="bento-title"><i data-lucide="terminal" style="width:12px;height:12px;color:#00d4ff;"></i> Execution Log</div>
-              <button onclick="clearTerminalLogs()" style="font-size:9.5px;color:#78909c;background:none;border:none;cursor:pointer;">Clear</button>
+              <button data-fn="clearTerminalLogs" style="font-size:9.5px;color:#78909c;background:none;border:none;cursor:pointer;">Clear</button>
             </div>
             <div id="terminalLogs" style="background:#090d17;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#78909c;height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;">
               <div style="color:#546e7a;">[System] Svarog Institutional Desk Ready.</div>
@@ -647,7 +647,7 @@
                   <i data-lucide="skull" style="width:11px;height:11px;color:#00d4ff;"></i> Vamped Source Token CA
                 </label>
                 <div style="display:flex;align-items:center;gap:8px;">
-                  <button type="button" onclick="copyToClipboard(document.getElementById('launchpadVampedCa').value, 'Vamped CA')" style="background:none;border:none;color:#00d4ff;cursor:pointer;font-size:10px;font-weight:700;display:flex;align-items:center;gap:3px;" title="Copy Vamped CA">
+                  <button type="button" data-fn="copyInput" data-arg="launchpadVampedCa" data-arg2="Vamped CA" style="background:none;border:none;color:#00d4ff;cursor:pointer;font-size:10px;font-weight:700;display:flex;align-items:center;gap:3px;" title="Copy Vamped CA">
                     <i data-lucide="copy" style="width:11px;height:11px;"></i> Copy CA
                   </button>
                   <a id="launchpadPumpLink" href="#" target="_blank" style="display:none;color:#78909c;font-size:10px;text-decoration:none;" title="View on Pump.fun">
@@ -657,7 +657,7 @@
               </div>
               <div style="display:flex;gap:6px;">
                 <input id="launchpadVampedCa" type="text" placeholder="No source coin vamped yet (or paste any Pump.fun CA/link here)..." class="input-field font-mono" style="font-size:11px;color:#00d4ff;background:#060810;" onkeydown="if(event.key==='Enter')inspectCustomVampCaFromLaunchpad()">
-                <button type="button" onclick="inspectCustomVampCaFromLaunchpad()" class="btn-primary" style="padding:4px 10px;font-size:10px;font-weight:700;white-space:nowrap;">VAMP</button>
+                <button type="button" data-fn="inspectCustomVampCaFromLaunchpad" class="btn-primary" style="padding:4px 10px;font-size:10px;font-weight:700;white-space:nowrap;">VAMP</button>
               </div>
             </div>
 
@@ -684,8 +684,8 @@
                   <i id="logoIconPlaceholder" data-lucide="image" style="width:18px;height:18px;color:#2d4068;"></i>
                 </div>
                 <div style="flex:1;">
-                  <input id="logoFile" type="file" accept="image/*" style="display:none;" onchange="handleLogoSelect(event)">
-                  <button type="button" onclick="document.getElementById('logoFile').click()" class="btn-secondary" style="width:100%;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
+                  <input id="logoFile" type="file" accept="image/*" style="display:none;" data-fn="logoSelect" data-evt="change">
+                  <button type="button" data-fn="clickLogo" class="btn-secondary" style="width:100%;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
                     <i data-lucide="upload" style="width:12px;height:12px;"></i> Choose Image
                   </button>
                 </div>
@@ -713,7 +713,7 @@
                 <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;">Master Dev Buy (SOL)</label>
                 <span id="devBuyTokensEst" style="font-size:10.5px;font-family:monospace;color:#00d4ff;">~32,258,000 tokens (3.2%)</span>
               </div>
-              <input id="devSolBuy" type="number" step="0.05" min="0" value="0.5" oninput="calculateBundleMetrics()" class="input-field font-mono" style="font-size:15px;font-weight:800;">
+              <input id="devSolBuy" type="number" step="0.01" min="0" max="0.1" value="0.05" data-fn="bundleMetrics" data-evt="input" class="input-field font-mono" style="font-size:15px;font-weight:800;">
             </div>
 
             <div style="margin-bottom:12px;">
@@ -721,8 +721,8 @@
                 <span style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;">Sub-Wallets Bundle</span>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span id="subWalletCountBadge" style="font-size:9.5px;font-family:monospace;font-weight:800;color:#cfd8dc;padding:1px 7px;background:#111827;border-radius:4px;">6 Wallets</span>
-                  <button type="button" onclick="quickFillSubBuys(0.2)" style="font-size:9.5px;color:#00d4ff;background:none;border:none;cursor:pointer;">All 0.2</button>
-                  <button type="button" onclick="randomizeSubBuys()" style="font-size:9.5px;color:#6c63ff;background:none;border:none;cursor:pointer;">Jitter</button>
+                  <button type="button" data-fn="quickFillSubBuys" data-arg="0.05" style="font-size:9.5px;color:#00d4ff;background:none;border:none;cursor:pointer;">All 0.05</button>
+                  <button type="button" data-fn="randomizeSubBuys" style="font-size:9.5px;color:#6c63ff;background:none;border:none;cursor:pointer;">Jitter</button>
                 </div>
               </div>
               <div id="subWalletBuysContainer" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:120px;overflow-y:auto;"></div>
@@ -738,7 +738,7 @@
                 <div style="font-size:9.5px;color:#78909c;">0s = All in 1st block atomic bundle | 1–10s = Delay sub-wallets after Dev</div>
               </div>
               <div style="display:flex;align-items:center;gap:4px;">
-                <input id="launchSubDelayInput" type="number" step="0.5" min="0" max="10" value="0" oninput="handleDelayInputChange(this.value)" class="input-field font-mono" style="width:55px;font-size:11px;padding:3px 4px;height:24px;text-align:center;">
+                <input id="launchSubDelayInput" type="number" step="0.5" min="0" max="10" value="0" data-fn="delayInput" data-evt="input" class="input-field font-mono" style="width:55px;font-size:11px;padding:3px 4px;height:24px;text-align:center;">
                 <span style="font-size:9.5px;color:#78909c;font-family:monospace;">s</span>
                 <span id="launchSubDelayBadge" style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(0,196,140,0.12);color:#00c48c;border:1px solid rgba(0,196,140,0.25);font-family:monospace;font-weight:700;">1st Block</span>
               </div>
@@ -748,15 +748,15 @@
             <div style="margin-bottom:12px;">
               <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:7px;">Jito Miner Tip</label>
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;">
-                <button type="button" onclick="setJitoTip(0.002)" id="tipBtn-0.002" class="tip-btn" style="padding:8px;border:1px solid #1a2338;background:#090d17;border-radius:8px;text-align:center;cursor:pointer;">
+                <button type="button" data-fn="setJitoTip" data-arg="0.002" id="tipBtn-0.002" class="tip-btn" style="padding:8px;border:1px solid #1a2338;background:#090d17;border-radius:8px;text-align:center;cursor:pointer;">
                   <div style="font-size:9.5px;color:#78909c;margin-bottom:2px;">Fast</div>
                   <div style="font-family:monospace;font-weight:800;font-size:11.5px;color:#cfd8dc;">0.002 SOL</div>
                 </button>
-                <button type="button" onclick="setJitoTip(0.005)" id="tipBtn-0.005" class="tip-btn active" style="padding:8px;border:1px solid #00d4ff;background:rgba(0,212,255,0.08);border-radius:8px;text-align:center;cursor:pointer;">
+                <button type="button" data-fn="setJitoTip" data-arg="0.005" id="tipBtn-0.005" class="tip-btn active" style="padding:8px;border:1px solid #00d4ff;background:rgba(0,212,255,0.08);border-radius:8px;text-align:center;cursor:pointer;">
                   <div style="font-size:9.5px;color:#00d4ff;font-weight:700;margin-bottom:2px;">Turbo ✓</div>
                   <div style="font-family:monospace;font-weight:800;font-size:11.5px;color:#a0e8ff;">0.005 SOL</div>
                 </button>
-                <button type="button" onclick="setJitoTip(0.01)" id="tipBtn-0.01" class="tip-btn" style="padding:8px;border:1px solid #1a2338;background:#090d17;border-radius:8px;text-align:center;cursor:pointer;">
+                <button type="button" data-fn="setJitoTip" data-arg="0.01" id="tipBtn-0.01" class="tip-btn" style="padding:8px;border:1px solid #1a2338;background:#090d17;border-radius:8px;text-align:center;cursor:pointer;">
                   <div style="font-size:9.5px;color:#78909c;margin-bottom:2px;">Ultra</div>
                   <div style="font-family:monospace;font-weight:800;font-size:11.5px;color:#cfd8dc;">0.010 SOL</div>
                 </button>
@@ -772,10 +772,10 @@
 
             <!-- Actions -->
             <div style="display:flex;flex-direction:column;gap:7px;">
-              <button id="btnPreflight" onclick="runPreflightCheck()" class="btn-secondary" style="width:100%;padding:9px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
+              <button id="btnPreflight" data-fn="runPreflightCheck" class="btn-secondary" style="width:100%;padding:9px;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px;">
                 <i data-lucide="check-circle" style="width:13px;height:13px;"></i> Pre-Flight Validation
               </button>
-              <button id="btnLaunchBundle" onclick="executeLaunchBundle()" class="btn-primary" style="width:100%;padding:12px;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:7px;letter-spacing:0.04em;">
+              <button id="btnLaunchBundle" data-fn="executeLaunchBundle" class="btn-primary" style="width:100%;padding:12px;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:7px;letter-spacing:0.04em;">
                 <i data-lucide="flame" style="width:15px;height:15px;"></i>
                 LAUNCH ATOMIC JITO BUNDLE (SLOT 0)
               </button>
@@ -794,16 +794,16 @@
               </h2>
               <p style="font-size:11px;color:#78909c;margin:0;">Siphon attention from trending Solana tokens by cloning &amp; revamping them in 1-click.</p>
             </div>
-            <button onclick="loadTrendingVampTokens()" class="btn-secondary" style="font-size:11px;padding:7px 12px;display:flex;align-items:center;gap:5px;">
+            <button data-fn="loadTrendingVampTokens" class="btn-secondary" style="font-size:11px;padding:7px 12px;display:flex;align-items:center;gap:5px;">
               <i data-lucide="refresh-cw" style="width:11px;height:11px;"></i> Refresh Feed
             </button>
           </div>
           <div style="display:flex;gap:7px;">
             <input id="vampCaInput" type="text" placeholder="Paste Solana Token Mint Address (CA) or Pump.fun link to inspect &amp; vamp..." class="input-field font-mono" style="flex:1;font-size:11.5px;" onkeydown="if(event.key==='Enter')inspectCustomVampCa()">
-            <button onclick="copyToClipboard(document.getElementById('vampCaInput').value, 'CA')" class="btn-secondary" style="font-size:11px;padding:7px 11px;display:flex;align-items:center;gap:4px;" title="Copy CA to clipboard">
+            <button data-fn="copyInput" data-arg="vampCaInput" data-arg2="CA" class="btn-secondary" style="font-size:11px;padding:7px 11px;display:flex;align-items:center;gap:4px;" title="Copy CA to clipboard">
               <i data-lucide="copy" style="width:12px;height:12px;"></i> Copy
             </button>
-            <button onclick="inspectCustomVampCa()" class="btn-primary" style="font-size:11.5px;padding:7px 14px;display:flex;align-items:center;gap:5px;white-space:nowrap;">
+            <button data-fn="inspectCustomVampCa" class="btn-primary" style="font-size:11.5px;padding:7px 14px;display:flex;align-items:center;gap:5px;white-space:nowrap;">
               <i data-lucide="search" style="width:12px;height:12px;"></i> Inspect CA
             </button>
           </div>
@@ -827,7 +827,7 @@
               <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Public Address</label>
               <div style="display:flex;align-items:center;gap:5px;">
                 <input id="masterAddressInput" type="text" readonly class="input-field font-mono" style="font-size:10.5px;background:#090d17;">
-                <button onclick="copyMasterAddress()" class="btn-secondary" style="padding:8px;flex-shrink:0;" title="Copy">
+                <button data-fn="copyMasterAddress" class="btn-secondary" style="padding:8px;flex-shrink:0;" title="Copy">
                   <i data-lucide="copy" style="width:12px;height:12px;"></i>
                 </button>
               </div>
@@ -835,15 +835,15 @@
             <div style="margin-bottom:14px;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
                 <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;">Private Key (Base58)</label>
-                <button type="button" onclick="toggleRevealMasterKey()" id="btnRevealMasterKey" style="font-size:9.5px;color:#00d4ff;background:none;border:none;cursor:pointer;">Reveal</button>
+                <button type="button" data-fn="toggleRevealMasterKey" id="btnRevealMasterKey" style="font-size:9.5px;color:#00d4ff;background:none;border:none;cursor:pointer;">Reveal</button>
               </div>
               <input id="masterKeyInput" type="password" readonly class="input-field font-mono" style="font-size:10.5px;background:#090d17;">
             </div>
             <div style="display:flex;gap:7px;padding-top:10px;border-top:1px solid #1a2338;margin-bottom:14px;">
-              <button onclick="generateNewMasterWallet()" class="btn-secondary" style="flex:1;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
+              <button data-fn="generateNewMasterWallet" class="btn-secondary" style="flex:1;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
                 <i data-lucide="rotate-ccw" style="width:11px;height:11px;"></i> Generate New
               </button>
-              <button onclick="promptImportMasterKey()" class="btn-secondary" style="flex:1;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
+              <button data-fn="promptImportMasterKey" class="btn-secondary" style="flex:1;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;gap:5px;">
                 <i data-lucide="log-in" style="width:11px;height:11px;"></i> Import Key
               </button>
             </div>
@@ -851,16 +851,16 @@
               <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.07em;color:#cfd8dc;display:block;margin-bottom:7px;">1-Click Disperse SOL</span>
               <div style="display:flex;gap:7px;margin-bottom:7px;">
                 <input id="disperseTotalSol" type="number" step="0.1" min="0.1" value="1.2" class="input-field font-mono" style="font-size:11.5px;">
-                <button onclick="executeDisperseSol()" class="btn-primary" style="padding:8px 14px;font-size:11.5px;white-space:nowrap;">Disperse</button>
+                <button data-fn="executeDisperseSol" class="btn-primary" style="padding:8px 14px;font-size:11.5px;white-space:nowrap;">Disperse</button>
               </div>
               <div style="display:flex;align-items:center;gap:7px;margin-bottom:7px;">
                 <input id="disperseRandomize" type="checkbox" checked style="accent-color:#00d4ff;width:14px;height:14px;">
                 <label for="disperseRandomize" style="font-size:10.5px;color:#78909c;">Randomize amounts ±20% (Anti-Tracker)</label>
               </div>
-              <button onclick="executeDrainSol()" class="btn-secondary" style="width:100%;padding:8px;font-size:11px;color:#f04c5e;display:flex;align-items:center;justify-content:center;gap:5px;">
+              <button data-fn="executeDrainSol" class="btn-secondary" style="width:100%;padding:8px;font-size:11px;color:#f04c5e;display:flex;align-items:center;justify-content:center;gap:5px;">
                 <i data-lucide="download" style="width:12px;height:12px;"></i> Drain All Sub-Wallets to Master
               </button>
-              <button onclick="reclaimRentAndRewards()" class="btn-secondary" style="width:100%;margin-top:6px;padding:8px;font-size:11px;color:#fbbf24;border-color:rgba(251,191,36,0.3);display:flex;align-items:center;justify-content:center;gap:5px;" title="Close 0-balance token accounts to recover ~0.00204 SOL rent per account + claim Pump.fun creator rewards">
+              <button data-fn="reclaimRentAndRewards" class="btn-secondary" style="width:100%;margin-top:6px;padding:8px;font-size:11px;color:#fbbf24;border-color:rgba(251,191,36,0.3);display:flex;align-items:center;justify-content:center;gap:5px;" title="Close 0-balance token accounts to recover ~0.00204 SOL rent per account + claim Pump.fun creator rewards">
                 <i data-lucide="coins" style="width:12px;height:12px;"></i> Reclaim Token Rent &amp; Creator Rewards
               </button>
             </div>
@@ -871,17 +871,17 @@
             <div class="bento-header">
               <div class="bento-title"><i data-lucide="users" style="width:13px;height:13px;color:#6c63ff;"></i> Sub-Wallets Matrix</div>
               <div style="display:flex;align-items:center;gap:7px;">
-                <select id="subWalletCountSelect" onchange="regenerateSubWallets()" class="input-field" style="font-size:11px;padding:4px 24px 4px 7px;width:auto;">
+                <select id="subWalletCountSelect" data-fn="regenerateSubWallets" data-evt="change" class="input-field" style="font-size:11px;padding:4px 24px 4px 7px;width:auto;">
                   <option value="4">4 Wallets</option>
                   <option value="6" selected>6 Wallets</option>
                   <option value="8">8 Wallets</option>
                   <option value="12">12 Wallets</option>
                   <option value="16">16 Wallets</option>
                 </select>
-                <button onclick="regenerateSubWallets()" class="btn-secondary" style="padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:4px;">
+                <button data-fn="regenerateSubWallets" class="btn-secondary" style="padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:4px;">
                   <i data-lucide="rotate-ccw" style="width:11px;height:11px;"></i> Regen
                 </button>
-                <button onclick="exportSubWallets()" class="btn-secondary" style="padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:4px;">
+                <button data-fn="exportSubWallets" class="btn-secondary" style="padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:4px;">
                   <i data-lucide="download" style="width:11px;height:11px;"></i> Export
                 </button>
               </div>
@@ -913,7 +913,7 @@
             </h2>
             <span id="bumperActiveBadge" style="font-size:9.5px;padding:1px 8px;background:#111827;color:#78909c;border-radius:4px;font-family:monospace;font-weight:700;">STOPPED</span>
           </div>
-          <p style="font-size:11.5px;color:#78909c;margin-bottom:14px;">Micro-buys from rotating sub-wallets to keep the token bumping on Pump.fun's front page feed.</p>
+          <p style="font-size:11.5px;color:#78909c;margin-bottom:14px;">SIMULATION ONLY. This control does not submit buys or sells. It prints a labeled practice tick so the desk can be exercised without spending SOL.</p>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
             <div>
               <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Buy Size (SOL)</label>
@@ -921,14 +921,14 @@
             </div>
             <div>
               <label style="display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#78909c;margin-bottom:4px;">Interval (Seconds)</label>
-              <input id="bumpIntervalInput" type="number" step="5" min="10" value="20" class="input-field font-mono" style="font-size:12px;">
+              <input id="bumpIntervalInput" type="number" step="1" min="5" value="20" class="input-field font-mono" style="font-size:12px;">
             </div>
           </div>
           <div style="display:flex;gap:9px;">
-            <button id="btnStartBumper" onclick="toggleVolumeBumper(true)" class="btn-primary" style="flex:1;padding:11px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
+            <button id="btnStartBumper" data-fn="toggleVolumeBumper" data-arg="true" class="btn-primary" style="flex:1;padding:11px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
               <i data-lucide="play" style="width:13px;height:13px;"></i> Start Bumping
             </button>
-            <button id="btnStopBumper" onclick="toggleVolumeBumper(false)" class="btn-secondary" style="flex:1;padding:11px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
+            <button id="btnStopBumper" data-fn="toggleVolumeBumper" data-arg="false" class="btn-secondary" style="flex:1;padding:11px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;">
               <i data-lucide="square" style="width:13px;height:13px;"></i> Stop Bumper
             </button>
           </div>
@@ -950,7 +950,7 @@
           <i data-lucide="info" style="width:14px;height:14px;color:#00d4ff;"></i>
           <span style="font-size:12px;font-weight:800;color:#e2e8f0;text-transform:uppercase;letter-spacing:0.06em;">Token &amp; Socials Inspect</span>
         </div>
-        <button onclick="closeSocialInspectModal()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:16px;padding:2px 6px;line-height:1;">✕</button>
+        <button data-fn="closeSocialInspectModal" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:16px;padding:2px 6px;line-height:1;">✕</button>
       </div>
 
       <!-- Content Body -->
@@ -960,6 +960,7 @@
     </div>
   </div>
 
+  <script src="js/escapeHtml.js"></script>
   <script src="js/chartBook.js"></script>
   <script src="js/app.js"></script>
 </body>

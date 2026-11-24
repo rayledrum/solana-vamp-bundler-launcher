@@ -1,12 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('os');
+const path = require('path');
 
+process.env.WALLETS_FILE = path.join(os.tmpdir(), `chart-wallets-${process.pid}.json`);
 const walletManager = require('../src/walletManager');
 const tradingEngine = require('../src/tradingEngine');
 const pumpfun = require('../src/pumpfun');
 
 walletManager.setSimulationMode(true);
 tradingEngine.connectPumpPortal = () => {};
+const masterAddr = walletManager.masterWallet.publicKey.toBase58();
+const subAddr = walletManager.subWallets[0].publicKey.toBase58();
 
 function captureEvents() {
   const events = [];
@@ -18,11 +23,11 @@ test('trade events stay on the mint they were opened for', async (t) => {
   await t.test('buy and sell broadcasts carry that mint', async () => {
     const events = captureEvents();
     tradingEngine.setActiveToken('MintA', [
-      { address: 'walletA', tokens: 1000000, sol: 0.4 }
+      { address: masterAddr, tokens: 1000000, sol: 0.4 }
     ]);
 
-    await tradingEngine.executeBuy({ solAmount: 0.2, walletAddresses: ['walletA'] });
-    await tradingEngine.executeSell({ pct: 50, walletAddresses: ['walletA'] });
+    await tradingEngine.executeBuy({ solAmount: 0.05, walletAddresses: [masterAddr] });
+    await tradingEngine.executeSell({ pct: 50, walletAddresses: [masterAddr] });
 
     const buy = events.find((event) => event.type === 'BUY_EXECUTED');
     const sell = events.find((event) => event.type === 'SELL_EXECUTED');
@@ -36,8 +41,8 @@ test('trade events stay on the mint they were opened for', async (t) => {
   await t.test('a token switch during a cascade does not continue onto the new mint', async () => {
     const events = [];
     tradingEngine.setActiveToken('MintA', [
-      { address: 'walletA', tokens: 1000000, sol: 0.4 },
-      { address: 'walletB', tokens: 1000000, sol: 0.4 }
+      { address: masterAddr, tokens: 1000000, sol: 0.4 },
+      { address: subAddr, tokens: 1000000, sol: 0.4 }
     ]);
     tradingEngine.setBroadcaster((event) => {
       events.push(event);
@@ -56,7 +61,7 @@ test('trade events stay on the mint they were opened for', async (t) => {
     assert.ok(steps.every((event) => event.payload.mint === 'MintA'));
     assert.equal(completed.payload.mint, 'MintA');
     assert.equal(tradingEngine.activeToken, 'MintB');
-    assert.equal(tradingEngine.positions.get('walletB'), undefined);
+    assert.equal(tradingEngine.positions.get(subAddr), undefined);
   });
 
   await t.test('stats started for one mint are stale if the active mint changes', async () => {
@@ -85,10 +90,11 @@ test('trade events stay on the mint they were opened for', async (t) => {
     tradingEngine.setActiveToken('MintBump', []);
     tradingEngine.stopVolumeBumper();
     try {
-      tradingEngine.startVolumeBumper(0.01, 0.02);
+      tradingEngine.startVolumeBumper(0.01, 5);
       const started = events.find((event) => event.type === 'BUMPER_STARTED');
       assert.equal(started.payload.mint, 'MintBump');
-      const tick = await waitFor(() => events.find((event) => event.type === 'BUMP_TICK'));
+      assert.equal(started.payload.simulated, true);
+      const tick = await waitFor(() => events.find((event) => event.type === 'BUMP_TICK'), 8000);
       assert.equal(tick.payload.mint, 'MintBump');
     } finally {
       tradingEngine.stopVolumeBumper();
