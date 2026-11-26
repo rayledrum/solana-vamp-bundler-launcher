@@ -322,6 +322,15 @@ function classifyNonMigrator(row) {
   return check('nonMigrator', 'Non-migrator', 'red', `Dev is a non-migrator. ${detail || 'Prior coins showed the pattern'}`);
 }
 
+function classifyOrigin(row) {
+  if (!row || row.status == null || row.status === 'unknown') {
+    return check('origin', 'OG or vamp', 'unknown', (row && row.reason) || 'Lookalike search was not read');
+  }
+  if (row.status === 'og') return check('origin', 'OG or vamp', 'green', `${row.label}. ${row.reason || ''}`.trim());
+  const buying = row.ogDevBuying === true ? ' OG dev is buying this vamp.' : '';
+  return check('origin', 'OG or vamp', row.ogDevBuying === true ? 'red' : 'yellow', `${row.label}. ${row.reason || ''}${buying}`.trim());
+}
+
 function classifyPump(row) {
   if (!row || !Array.isArray(row.pumps) || row.aboveSecondPumpThreshold == null) {
     return check('pumpPhase', 'Pump phase', 'unknown', 'Market cap series was not read in USD');
@@ -491,6 +500,7 @@ function createSafetyChecks(options = {}) {
   const scaleOutLookup = options.scaleOutLookup || (mint => readNamed('scale-outs.jsonl', mint));
   const bondingLookup = options.bondingLookup || (mint => readNamed('bonding.jsonl', mint));
   const topTraderLookup = options.topTraderLookup || (mint => readNamed('top-traders.jsonl', mint));
+  const originLookup = options.originLookup || (async () => ({ status: 'unknown', reason: 'Lookalike search was not run' }));
   const serialLookup = options.serialLookup || (mint => {
     try {
       const rows = linkSerialDevs(createStore().readJsonl('serial-devs.jsonl'));
@@ -796,6 +806,7 @@ function createSafetyChecks(options = {}) {
       classifyBleed(phase && phase.bleed),
       classifyNonMigrator(phase && phase.nonMigrator),
       classifyTopTraders(topTraderLookup(key)),
+      classifyOrigin(await originLookup(key)),
       classifySerial(serialLookup(key), new Set((loadBlacklist().devs || []).map(item => item.address))),
       classifyCurve(curve),
       classifyMarket(dex),
@@ -908,7 +919,8 @@ async function defaultFetchJson(url) {
   return response.json();
 }
 
-const safetyChecks = createSafetyChecks();
+const { originLookup } = require('./research/origin');
+const safetyChecks = createSafetyChecks({ originLookup: (mint) => originLookup.get(mint) });
 
 module.exports = {
   createSafetyChecks,

@@ -609,6 +609,16 @@ app.post('/api/research/exit-ladder', (req, res) => {
   }
 });
 
+app.get('/api/research/origin/:mint', async (req, res) => {
+  try {
+    const { originLookup } = require('./research/origin');
+    const origin = await originLookup.get(req.params.mint);
+    res.json({ success: true, origin });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.get('/api/research/farm-ride/:mint', (req, res) => {
   try {
     res.json({ success: true, ...tradingEngine.reviewFarmRide(req.params.mint, {}) });

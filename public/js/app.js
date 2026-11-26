@@ -2053,6 +2053,27 @@ async function saveFarmRide(enabled) {
   }
 }
 
+function paintOriginBadge(origin) {
+  const badge = document.getElementById('chartOriginBadge');
+  if (!badge) return;
+  const status = origin && origin.status;
+  const styles = {
+    og: 'display:inline-block;background:rgba(45,212,191,0.16);color:#5eead4;border:1px solid rgba(45,212,191,0.45);',
+    vamp: 'display:inline-block;background:rgba(244,114,182,0.16);color:#fb7185;border:1px solid rgba(251,146,60,0.55);',
+    unknown: 'display:inline-block;background:rgba(148,163,184,0.16);color:#94a3b8;border:1px solid rgba(148,163,184,0.4);'
+  };
+  if (status !== 'og' && status !== 'vamp' && status !== 'unknown') {
+    badge.style.display = 'none';
+    badge.textContent = '';
+    badge.title = '';
+    return;
+  }
+  badge.style.cssText = `${styles[status]}font-size:9px;font-weight:800;letter-spacing:0.04em;padding:2px 6px;border-radius:999px;`;
+  badge.textContent = status === 'unknown' ? 'UNKNOWN' : (origin.label || status.toUpperCase());
+  const tip = [origin.reason, origin.og && origin.og.mint ? `OG ${origin.og.mint}` : '', origin.ogDevBuying ? 'OG dev is buying this vamp' : ''].filter(Boolean).join(' · ');
+  badge.title = tip;
+}
+
 function paintFarmRide(decision) {
   const el = document.getElementById('farmRideStatus');
   if (!el) return;
@@ -2070,6 +2091,13 @@ async function loadSafety(mint) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Safety check failed');
     paintSafety(data.report);
+    try {
+      const originRes = await apiFetch(`/api/research/origin/${encodeURIComponent(mint)}`);
+      const originBody = await originRes.json().catch(() => ({}));
+      paintOriginBadge(originRes.ok ? originBody.origin : { status: 'unknown', reason: 'Lookalike search failed' });
+    } catch (err) {
+      paintOriginBadge({ status: 'unknown', reason: err.message });
+    }
     try {
       const farm = await apiFetch(`/api/research/farm-ride/${encodeURIComponent(mint)}`);
       const farmBody = await farm.json().catch(() => ({}));
