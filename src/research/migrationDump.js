@@ -17,6 +17,9 @@ function emptyMigration(mint) {
 }
 
 function analyzeMigrationDump(input = {}) {
+  if (input.graduated === false) {
+    return { mint: input.mint || null, flagged: false, dumpedSupplyPct: null, firstDumpMs: null, windowMinutes: finite(input.windowMinutes) || DEFAULT_WINDOW_MIN, na: true };
+  }
   if (input.graduated == null || finite(input.graduatedAt) == null || !Array.isArray(input.trades)) return emptyMigration(input.mint);
   const windowMinutes = finite(input.windowMinutes) || DEFAULT_WINDOW_MIN;
   if (input.graduated !== true) {

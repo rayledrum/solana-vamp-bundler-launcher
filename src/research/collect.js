@@ -1,5 +1,5 @@
 const { createStore } = require('./store');
-const { ingestLaunches, takeDueSnapshots, pollNewCoins, createPacer } = require('./collector');
+const { ingestLaunches, takeDueSnapshots, pollNewCoins, createPacer, observationFromSources } = require('./collector');
 const { analyzeEarlyBuys, updateRegistry } = require('./snipers');
 const { analyzeDevExit } = require('./devExit');
 const { clusterFunding, traceFunding } = require('./funding');
@@ -41,19 +41,49 @@ async function runCollect(options = {}) {
   });
   const observe = options.observe || (async (mint) => {
     await pace();
-    const coin = await fetchJson(pumpUrl(`/coins/${encodeURIComponent(mint)}`));
-    if (!coin || typeof coin !== 'object') return {};
-    return {
-      mcapUsd: coin.usd_market_cap,
-      graduated: coin.complete,
-      buys: coin.buys,
-      sells: coin.sells,
-      uniqueBuyers: coin.unique_buyers,
-      holderCount: coin.holder_count,
-      top10Pct: coin.top10_pct,
-      devHoldPct: coin.dev_hold_pct,
-      devSold: coin.dev_sold
-    };
+    let coin = null;
+    try {
+      coin = await fetchJson(pumpUrl(`/coins/${encodeURIComponent(mint)}`));
+    } catch (err) {
+      coin = null;
+    }
+    if (coin && coin.usd_market_cap != null) {
+      return observationFromSources({ coin });
+    }
+    let dex = null;
+    let candles = null;
+    let solUsd = null;
+    let supplyUi = null;
+    let curve = null;
+    try {
+      const body = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(mint)}`, { headers: { accept: 'application/json' } });
+      if (body.ok) {
+        const parsed = await body.json();
+        dex = parsed && Array.isArray(parsed.pairs) ? parsed.pairs[0] : null;
+      }
+    } catch (err) {
+      dex = null;
+    }
+    try {
+      const chart = await require('../pumpfun').getChartCandles(mint, '1m');
+      candles = chart && chart.candles;
+      const close = chart && chart.priceNative;
+      const priceUsd = dex && Number(dex.priceUsd);
+      if (close > 0 && priceUsd > 0) solUsd = priceUsd / close;
+    } catch (err) {
+      candles = null;
+    }
+    if (options.connection && typeof options.connection.getAccountInfo === 'function') {
+      try {
+        const { bondingCurvePda, decodeBondingCurve } = require('../curveFeed');
+        const info = await options.connection.getAccountInfo(bondingCurvePda(mint, require('../config').PUMP_PROGRAM_ID), 'confirmed');
+        curve = decodeBondingCurve(info && info.data);
+        if (curve && curve.tokenTotalSupply > 0) supplyUi = curve.tokenTotalSupply / 1e6;
+      } catch (err) {
+        curve = null;
+      }
+    }
+    return observationFromSources({ coin, candles, supplyUi, solUsd, curve, dex });
   });
   const coins = await list();
   const added = await ingestLaunches({

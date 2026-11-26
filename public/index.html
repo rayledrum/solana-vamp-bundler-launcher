@@ -247,6 +247,7 @@
                 <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#78909c;">Market Overview</span>
                 <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;"><span id="chartSymbolDisplay" style="color:#00d4ff;">TOKEN</span><span style="color:#546e7a;">/SOL</span></span>
                 <span id="chartOriginBadge" title="" style="display:none;font-size:9px;font-weight:800;letter-spacing:0.04em;padding:2px 6px;border-radius:999px;"></span>
+                <button id="chartSafetySummary" type="button" data-fn="scrollToSafety" title="Jump to the safety panel" style="display:none;font-size:9px;font-weight:800;letter-spacing:0.03em;padding:2px 7px;border-radius:999px;border:1px solid #334155;background:#0f172a;color:#cbd5e1;cursor:pointer;"></button>
                 <span id="chartSourceDisplay" style="font-size:9px;font-weight:700;letter-spacing:0.04em;color:#546e7a;text-transform:uppercase;"></span>
                 <span id="chartPriceDisplay" style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#00c48c;"></span>
                 <span id="chartChangeDisplay" style="font-size:10px;padding:1px 7px;border-radius:5px;background:rgba(0,196,140,0.12);color:#00c48c;font-weight:800;font-family:monospace;">+0.0%</span>
@@ -288,21 +289,6 @@
                 <span style="color:#546e7a;font-size:10px;">Streaming live trades from Solana &amp; Pump.fun...</span>
               </div>
             </div>
-            <div id="safetyPanel" style="border-top:1px solid #1a2338;background:#090d17;padding:8px 12px;">
-              <div id="safetyBanner" style="display:none;margin-bottom:8px;padding:6px 8px;border-radius:6px;background:rgba(240,76,94,0.12);border:1px solid rgba(240,76,94,0.45);color:#fda4af;font-size:11px;font-weight:700;"></div>
-              <div id="exitAlert" style="display:none;margin-bottom:8px;padding:6px 8px;border-radius:6px;background:rgba(252,211,77,0.12);border:1px solid rgba(252,211,77,0.45);color:#fcd34d;font-size:11px;font-weight:700;"></div>
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
-                <span style="font-size:9.5px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#78909c;">Safety</span>
-                <span id="safetyScore" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:800;color:#cfd8dc;">—</span>
-                <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:#b0bec5;">
-                  <input id="safetyAutoBlacklist" type="checkbox" checked data-fn="toggleSafetyAuto" data-evt="change">
-                  Auto-blacklist
-                </label>
-                <button type="button" data-fn="blacklistCurrentDev" style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:rgba(240,76,94,0.1);border:1px solid rgba(240,76,94,0.35);color:#fda4af;cursor:pointer;">Blacklist dev</button>
-              </div>
-              <div id="safetyChecks" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10.5px;color:#cbd5e1;"></div>
-              <div id="topTraders" style="display:none;margin-top:8px;overflow-x:auto;"></div>
-            </div>
             <!-- Pump link row -->
             <div style="padding:7px 14px;border-top:1px solid #1a2338;display:flex;align-items:center;justify-content:space-between;background:#0d1120;">
               <div style="display:flex;align-items:center;gap:14px;font-size:10.5px;font-family:'JetBrains Mono',monospace;">
@@ -319,24 +305,6 @@
 
           <!-- RIGHT COLUMN: SENTIMENT GAUGE + TOP MOVERS -->
           <div style="display:flex;flex-direction:column;gap:14px;">
-            <div class="bento-card" style="padding:12px;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <span style="font-size:10px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#78909c;">Research</span>
-                <button type="button" data-fn="refreshResearch" style="font-size:10px;color:#00d4ff;background:none;border:none;cursor:pointer;">Refresh</button>
-              </div>
-              <div id="researchMeta" style="font-size:10.5px;color:#cbd5e1;min-height:18px;">No theme sample yet.</div>
-              <div id="researchSnipers" style="font-size:10.5px;color:#94a3b8;margin-top:4px;"></div>
-              <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:10.5px;color:#cbd5e1;">
-                <input id="exitLadderEnabled" type="checkbox" data-fn="saveExitLadder" data-evt="change">
-                Sim exit ladder (10k / 20k / 30k, moonbag, off in live)
-              </label>
-              <div id="farmRideStatus" style="margin-top:6px;font-size:10.5px;color:#cbd5e1;">Farm ride: unknown</div>
-              <label style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:10.5px;color:#cbd5e1;">
-                <input id="farmRideEnabled" type="checkbox" data-fn="saveFarmRide" data-evt="change">
-                Sim farm ride (off by default, alerts only in live)
-              </label>
-            </div>
-
             <!-- MARKET SENTIMENT GAUGE -->
             <div class="bento-card" style="padding:14px;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -658,6 +626,41 @@
             </div>
           </div>
 
+        </div>
+
+        <div id="researchDock" style="display:grid;grid-template-columns:1.4fr 0.8fr;gap:14px;">
+          <div id="safetyPanel" class="bento-card" style="padding:12px;">
+            <div id="safetyBanner" style="display:none;margin-bottom:8px;padding:6px 8px;border-radius:6px;background:rgba(240,76,94,0.12);border:1px solid rgba(240,76,94,0.45);color:#fda4af;font-size:11px;font-weight:700;"></div>
+            <div id="exitAlert" style="display:none;margin-bottom:8px;padding:6px 8px;border-radius:6px;background:rgba(252,211,77,0.12);border:1px solid rgba(252,211,77,0.45);color:#fcd34d;font-size:11px;font-weight:700;"></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+              <span style="font-size:9.5px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#78909c;">Safety</span>
+              <span id="safetyScore" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:800;color:#cfd8dc;">—</span>
+              <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:#b0bec5;">
+                <input id="safetyAutoBlacklist" type="checkbox" checked data-fn="toggleSafetyAuto" data-evt="change">
+                Auto-blacklist
+              </label>
+              <button type="button" data-fn="blacklistCurrentDev" style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:rgba(240,76,94,0.1);border:1px solid rgba(240,76,94,0.35);color:#fda4af;cursor:pointer;">Blacklist dev</button>
+            </div>
+            <div id="safetyChecks" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10.5px;color:#cbd5e1;"></div>
+            <div id="topTraders" style="display:none;margin-top:8px;overflow-x:auto;"></div>
+          </div>
+          <div class="bento-card" style="padding:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:10px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#78909c;">Research</span>
+              <button type="button" data-fn="refreshResearch" style="font-size:10px;color:#00d4ff;background:none;border:none;cursor:pointer;">Refresh</button>
+            </div>
+            <div id="researchMeta" style="font-size:10.5px;color:#cbd5e1;min-height:18px;">No theme sample yet.</div>
+            <div id="researchSnipers" style="font-size:10.5px;color:#94a3b8;margin-top:4px;"></div>
+            <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:10.5px;color:#cbd5e1;">
+              <input id="exitLadderEnabled" type="checkbox" data-fn="saveExitLadder" data-evt="change">
+              Sim exit ladder (10k / 20k / 30k, moonbag, off in live)
+            </label>
+            <div id="farmRideStatus" style="margin-top:6px;font-size:10.5px;color:#cbd5e1;">Farm ride: unknown</div>
+            <label style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:10.5px;color:#cbd5e1;">
+              <input id="farmRideEnabled" type="checkbox" data-fn="saveFarmRide" data-evt="change">
+              Sim farm ride (off by default, alerts only in live)
+            </label>
+          </div>
         </div>
       </div>
 

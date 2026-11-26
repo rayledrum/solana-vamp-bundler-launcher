@@ -1947,11 +1947,18 @@ function paintSafety(report) {
     if (topTraders) topTraders.style.display = 'none';
     return;
   }
-  const colors = { green: '#86efac', yellow: '#fcd34d', red: '#fda4af', unknown: '#94a3b8' };
+  const colors = { green: '#86efac', yellow: '#fcd34d', red: '#fda4af', unknown: '#94a3b8', na: '#94a3b8', incomplete: '#fbbf24' };
   const unknownCount = (report && report.checks || []).filter(row => row && row.status === 'unknown').length;
-  const headline = report && report.score != null ? `${report.overall || 'unknown'} · ${report.score}` : (report && report.overall) || 'unknown';
+  const verdict = (report && report.overall) || 'unknown';
+  const headline = report && report.score != null ? `${verdict} · ${report.score}` : verdict;
   score.textContent = unknownCount ? `${headline} · ${unknownCount} unknown` : headline;
-  score.style.color = colors[(report && report.overall) || 'unknown'] || colors.unknown;
+  score.style.color = colors[verdict] || colors.unknown;
+  const summary = document.getElementById('chartSafetySummary');
+  if (summary) {
+    const reds = (report && report.checks || []).filter(row => row && row.status === 'red').length;
+    summary.style.display = 'inline-block';
+    summary.textContent = `${verdict} ${report && report.score != null ? report.score : '—'} · ${reds} red · ${unknownCount} unknown`;
+  }
   list.innerHTML = '';
   (report && report.checks || []).forEach(row => {
     const item = document.createElement('div');
@@ -1961,7 +1968,7 @@ function paintSafety(report) {
     dot.style.color = colors[row.status] || colors.unknown;
     const text = document.createElement('span');
     const when = row.at ? new Date(row.at).toISOString().slice(11, 19) : '';
-    const stateLabel = row.status === 'unknown' ? 'UNKNOWN' : row.status === 'green' ? 'PASS' : (row.status || '');
+    const stateLabel = row.status === 'unknown' ? 'UNKNOWN' : row.status === 'na' ? 'n/a' : row.status === 'green' ? 'PASS' : (row.status || '');
     text.textContent = `${stateLabel} ${row.label}: ${row.reason || row.status}${when ? ' · ' + when : ''}`;
     item.append(dot, text);
     list.appendChild(item);
@@ -2053,6 +2060,11 @@ async function saveFarmRide(enabled) {
   }
 }
 
+function scrollToSafety() {
+  const panel = document.getElementById('safetyPanel');
+  if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function paintOriginBadge(origin) {
   const badge = document.getElementById('chartOriginBadge');
   if (!badge) return;
@@ -2060,9 +2072,10 @@ function paintOriginBadge(origin) {
   const styles = {
     og: 'display:inline-block;background:rgba(45,212,191,0.16);color:#5eead4;border:1px solid rgba(45,212,191,0.45);',
     vamp: 'display:inline-block;background:rgba(244,114,182,0.16);color:#fb7185;border:1px solid rgba(251,146,60,0.55);',
-    unknown: 'display:inline-block;background:rgba(148,163,184,0.16);color:#94a3b8;border:1px solid rgba(148,163,184,0.4);'
+    unknown: 'display:inline-block;background:rgba(148,163,184,0.16);color:#94a3b8;border:1px solid rgba(148,163,184,0.4);',
+    possible: 'display:inline-block;background:rgba(251,191,36,0.16);color:#fbbf24;border:1px solid rgba(251,191,36,0.45);'
   };
-  if (status !== 'og' && status !== 'vamp' && status !== 'unknown') {
+  if (status !== 'og' && status !== 'vamp' && status !== 'unknown' && status !== 'possible') {
     badge.style.display = 'none';
     badge.textContent = '';
     badge.title = '';
@@ -2084,13 +2097,26 @@ function paintFarmRide(decision) {
   el.textContent = `Farm ride: ${decision.eligible ? 'eligible' : 'not eligible'}. ${(decision.reasons || []).join('; ')}`;
 }
 
+let safetyPollMint = '';
+let safetyPolls = 0;
+
 async function loadSafety(mint) {
   if (!mint) return;
+  if (safetyPollMint !== mint) {
+    safetyPollMint = mint;
+    safetyPolls = 0;
+  }
   try {
     const res = await apiFetch(`/api/safety/${encodeURIComponent(mint)}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Safety check failed');
     paintSafety(data.report);
+    if (data.report && data.report.pending && safetyPolls < 4 && safetyPollMint === mint) {
+      safetyPolls += 1;
+      setTimeout(() => { if (safetyPollMint === mint) loadSafety(mint); }, 4000);
+    } else if (data.report && !data.report.pending) {
+      safetyPolls = 0;
+    }
     try {
       const originRes = await apiFetch(`/api/research/origin/${encodeURIComponent(mint)}`);
       const originBody = await originRes.json().catch(() => ({}));
