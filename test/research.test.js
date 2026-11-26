@@ -20,6 +20,9 @@ const { compareLadders } = require('../src/research/backtest');
 const { createSafetyChecks } = require('../src/safetyChecks');
 const { runCollect } = require('../src/research/collect');
 const { clusterFunding, compareFundingClusters, traceFunding, CEX_WALLETS } = require('../src/research/funding');
+const { scoreCoordination } = require('../src/research/coordination');
+const { analyzeDistribution, markCampaigns } = require('../src/research/distribution');
+const { readCurveTape } = require('../src/research/tradeTape');
 
 function tempStore() {
   return createStore(fs.mkdtempSync(path.join(os.tmpdir(), 'research-')));
@@ -354,4 +357,101 @@ test('same-amount funding forms a cluster and a CEX does not', async () => {
   assert.equal(traced[0].amount, 1);
   await traceFunding({ connection, buyers: [{ wallet: 'WalletA' }], before: 100 * 1000 + 1000, cache, pace: async () => {} });
   assert.equal(rpcCalls, 2);
+});
+
+test('staggered funding and warmed wallets score as coordinated', () => {
+  const t0 = 1_700_000_000_000;
+  const buyers = ['A', 'B', 'C'].map((wallet, index) => ({
+    wallet,
+    supplyPct: 5,
+    time: t0 + index * 60_000,
+    priorTxCount: 6,
+    priorTrades: [
+      { mint: 'one', sol: 0.01, time: t0 - 60_000 },
+      { mint: 'two', sol: 0.02, time: t0 - 120_000 },
+      { mint: 'three', sol: 0.01, time: t0 - 180_000 }
+    ]
+  }));
+  const fundings = buyers.map((buyer, index) => ({
+    wallet: buyer.wallet,
+    funder: 'Hopper',
+    amount: 1 + index * 0.4,
+    time: t0 - 10 * 60_000 + index * 60_000,
+    cex: null
+  }));
+  const scored = scoreCoordination({ mint: 'MintA', createTime: t0, buyers, fundings });
+  assert.equal(scored.coordinatedSupplyPct, 15);
+  assert.ok(scored.reasons.includes('regular funding cadence'));
+  assert.ok(scored.reasons.includes('warmed with tiny trades on other tokens'));
+  const unknown = scoreCoordination({ mint: 'MintB' });
+  assert.equal(unknown.coordinatedSupplyPct, null);
+});
+
+test('dev token transfers to many wallets are a distribution, not buys', () => {
+  const t0 = 1_700_000_000_000;
+  const transfers = Array.from({ length: 10 }, (_, index) => ({
+    side: 'transfer',
+    from: 'Dev',
+    to: `R${index}`,
+    tokens: 1000,
+    time: t0 + 60_000
+  }));
+  const first = analyzeDistribution({ mint: 'Coin1', dev: 'Dev', supply: 100_000, createTime: t0, transfers, snapshots: [{ time: t0, mcapUsd: 5000 }, { time: t0 + 600_000, mcapUsd: 20000 }, { time: t0 + 1_200_000, mcapUsd: 4000 }] });
+  const second = analyzeDistribution({
+    mint: 'Coin2',
+    dev: 'Dev',
+    supply: 100_000,
+    createTime: t0,
+    transfers: transfers.map(row => ({ ...row, time: t0 + 120_000 }))
+  });
+  const [marked] = markCampaigns([first, second]).filter(row => row.mint === 'Coin1');
+  assert.equal(first.recipientCount, 10);
+  assert.equal(first.supplyPct, 10);
+  assert.equal(first.peakMcapUsd, 20000);
+  assert.equal(first.dumpAt, t0 + 1_200_000);
+  assert.equal(marked.campaign, true);
+  const missing = analyzeDistribution({ mint: 'Coin3' });
+  assert.equal(missing.recipientCount, null);
+});
+
+test('a recorded bonding-curve transaction becomes a buy relative to the create slot', async () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'curve-trade-tx.json'), 'utf8'));
+  const pages = [];
+  const connection = {
+    async getSignaturesForAddress(_curve, options) {
+      pages.push(options && options.before || null);
+      if (options && options.before) return [];
+      return fixture.signatures;
+    },
+    async getTransaction(signature) {
+      if (signature !== 'tradeSig') return { meta: { logMessages: [] }, slot: 100 };
+      return { meta: { logMessages: ['Program log: Instruction: Buy', fixture.log] }, slot: 101 };
+    },
+    async getAccountInfo() { return null; }
+  };
+  const tape = await readCurveTape({ connection, mint: fixture.mint, pace: async () => {} });
+  assert.equal(tape.createSlot, 100);
+  assert.equal(tape.trades.length, 1);
+  assert.equal(tape.trades[0].wallet, fixture.wallet);
+  assert.equal(tape.trades[0].side, 'buy');
+  assert.equal(tape.trades[0].slot - tape.createSlot, 1);
+  assert.ok(Math.abs(tape.trades[0].sol - 1) < 1e-9);
+  const failed = await readCurveTape({
+    connection: { async getSignaturesForAddress() { throw new Error('rpc down'); } },
+    mint: fixture.mint
+  });
+  assert.equal(failed, null);
+  const store = tempStore();
+  const result = await runCollect({
+    store,
+    now: 1_700_000_060_000,
+    listCoins: async () => [{ mint: fixture.mint, name: 'Recorded', creator: 'Dev', created_timestamp: 1_700_000_000_000 }],
+    enrich: async () => ({ safetyScore: null, devHistory: null }),
+    readTape: async () => tape,
+    observe: async () => ({})
+  });
+  assert.equal(result.tapes, 1);
+  const snipers = store.readJsonl('snipers.jsonl');
+  assert.equal(snipers[0].buys[0].wallet, fixture.wallet);
+  assert.equal(store.readState().mints[fixture.mint].tape, true);
 });

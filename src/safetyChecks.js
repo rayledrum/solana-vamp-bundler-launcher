@@ -21,7 +21,8 @@ const DEFAULT_AUTO = {
   enabled: true,
   rugHistory: true,
   devHoldPct: 10,
-  rugcheckDanger: true
+  rugcheckDanger: true,
+  distributionCampaign: true
 };
 
 function check(id, label, status, reason) {
@@ -156,6 +157,27 @@ function classifySocials(source) {
   return check('socials', 'Socials', 'green', present.join(', '));
 }
 
+function classifyCoordinated(row) {
+  if (!row || row.coordinatedSupplyPct == null) {
+    return check('coordinated', 'Coordinated early wallets', 'unknown', 'Early-wallet behavior was not read');
+  }
+  const pct = Number(row.coordinatedSupplyPct);
+  const status = pct >= 20 ? 'red' : pct >= 8 ? 'yellow' : 'green';
+  const why = Array.isArray(row.reasons) && row.reasons.length ? row.reasons.slice(0, 3).join('; ') : 'no shared pattern';
+  return check('coordinated', 'Coordinated early wallets', status, `${pct.toFixed(1)}% of supply. ${why}`);
+}
+
+function classifyDistribution(row) {
+  if (!row || row.recipientCount == null) {
+    return check('distribution', 'Token distribution', 'unknown', 'Token transfers from the dev were not read');
+  }
+  const share = row.supplyPct == null ? 'unknown share' : `${Number(row.supplyPct).toFixed(1)}%`;
+  const parts = [`Supply sent to ${row.recipientCount} wallets: ${share}`];
+  if (row.campaign === true) parts.push('Dev running multi-coin distribution campaign');
+  const status = row.campaign === true || (row.supplyPct != null && row.supplyPct >= 15) ? 'red' : row.recipientCount >= 10 ? 'yellow' : 'green';
+  return check('distribution', 'Token distribution', status, parts.join('. '));
+}
+
 function classifyFundingClusters(row) {
   if (!row || row.largestClusterSupplyPct == null) {
     return check('fundingClusters', 'Funding clusters', 'unknown', 'Early-buyer funding was not read');
@@ -250,6 +272,15 @@ function readDevAssociated(mint) {
   }
 }
 
+function readBehavior(name, mint) {
+  try {
+    const rows = createStore().readJsonl(name);
+    return rows.filter(item => item && item.mint === mint).pop() || null;
+  } catch (err) {
+    return null;
+  }
+}
+
 function readFundingClusters(mint) {
   try {
     const rows = createStore().readJsonl('funding-clusters.jsonl');
@@ -285,6 +316,16 @@ function createSafetyChecks(options = {}) {
   const sniperLookup = options.sniperLookup || readSniperCluster;
   const devLookup = options.devLookup || readDevAssociated;
   const fundingLookup = options.fundingLookup || readFundingClusters;
+  const coordinationLookup = options.coordinationLookup || (mint => readBehavior('coordination.jsonl', mint));
+  const distributionLookup = options.distributionLookup || (mint => {
+    const { markCampaigns } = require('./research/distribution');
+    try {
+      const rows = markCampaigns(createStore().readJsonl('distributions.jsonl'));
+      return rows.filter(item => item && item.mint === mint).pop() || null;
+    } catch (err) {
+      return null;
+    }
+  });
   const connection = options.connection || null;
   const cache = new Map();
   let lastCall = 0;
@@ -532,6 +573,8 @@ function createSafetyChecks(options = {}) {
       classifyHolders(holders),
       classifySnipers(sniperLookup(key) || { unknown: true, reason: 'First-block buyers were not read' }),
       classifyFundingClusters(fundingLookup(key)),
+      classifyCoordinated(coordinationLookup(key)),
+      classifyDistribution(distributionLookup(key)),
       classifyCurve(curve),
       classifyMarket(dex),
       classifyAge(createdMs, Date.now()),
@@ -578,6 +621,9 @@ function createSafetyChecks(options = {}) {
     const reasons = [];
     if (auto.rugHistory && byId.rugHistory && byId.rugHistory.status === 'red') reasons.push(byId.rugHistory.reason);
     if (auto.rugcheckDanger && byId.rugcheck && byId.rugcheck.status === 'red') reasons.push(byId.rugcheck.reason);
+    if (auto.distributionCampaign !== false && byId.distribution && /multi-coin distribution campaign/.test(byId.distribution.reason || '')) {
+      reasons.push(byId.distribution.reason);
+    }
     const hold = byId.devHolding;
     const holdPct = hold && /([\d.]+)%/.exec(hold.reason);
     if (auto.devHoldPct != null && holdPct && Number(holdPct[1]) > Number(auto.devHoldPct) && hold.status === 'red') {

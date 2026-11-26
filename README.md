@@ -52,9 +52,12 @@ Quality launches are meant to scale out into real demand, not dump a thin curve.
 
 ```bash
 npm run collect
+npm run collect -- --watch
 npm run backfill
 npm run backtest
 ```
+
+`npm run collect` reads the bonding-curve history for each new mint (Helius when `HELIUS_RPC_URL` or `HELIUS_API_KEY` is set, otherwise the public RPC more slowly), writes the sniper and dev-exit tapes, and traces funding when Helius is present. `COLLECT_FUNDING=0` turns funding traces off. `--watch` keeps polling about every 45 seconds (`COLLECT_INTERVAL_MS` overrides that) and logs how many launches, snapshots, tapes, and funding traces were added. Parsed transactions are cached in `tx-cache.jsonl` and a mint is not fetched again after a successful read. A failed RPC read stays unrecorded so the next pass can retry. The same tape scores warmed or cadence-funded early wallets and token transfers from the dev. A user-editable `data/research/kol-wallets.json` list starts empty.
 
 ---
 

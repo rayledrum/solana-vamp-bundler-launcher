@@ -19,6 +19,10 @@ function passesFilters(coin, filters = {}) {
     const pct = coin.funding && coin.funding.largestClusterSupplyPct;
     if (pct == null || pct > filters.maxClusterSupplyPct) return false;
   }
+  if (filters.maxCoordinatedPct != null) {
+    const pct = coin.coordination && coin.coordination.coordinatedSupplyPct;
+    if (pct == null || pct > filters.maxCoordinatedPct) return false;
+  }
   return true;
 }
 
