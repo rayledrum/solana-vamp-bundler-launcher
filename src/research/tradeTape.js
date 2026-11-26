@@ -129,8 +129,36 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
   const trades = [];
   let fetched = 0;
   let failedFetches = 0;
+  let heliusBySig = null;
+  if (process.env.HELIUS_API_KEY && picked.chosen.length) {
+    try {
+      const response = await fetch(`https://api.helius.xyz/v0/transactions?api-key=${encodeURIComponent(process.env.HELIUS_API_KEY)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ transactions: picked.chosen.slice(0, 100).map(row => row.signature) })
+      });
+      if (response.ok) {
+        const body = await response.json();
+        if (Array.isArray(body)) {
+          heliusBySig = new Map();
+          body.forEach(tx => {
+            if (tx && tx.signature) heliusBySig.set(tx.signature, tradesFromHelius(tx));
+          });
+        }
+      }
+    } catch (err) {
+      heliusBySig = null;
+    }
+  }
   for (const sig of picked.chosen) {
     const key = sig.signature;
+    if (heliusBySig && heliusBySig.has(key)) {
+      const parsed = heliusBySig.get(key);
+      if (cache) cache.set(key, parsed);
+      trades.push(...parsed);
+      fetched += 1;
+      continue;
+    }
     if (cache && cache.has(key)) {
       trades.push(...cache.get(key));
       fetched += 1;

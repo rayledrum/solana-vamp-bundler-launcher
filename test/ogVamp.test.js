@@ -64,6 +64,20 @@ test('image CIDs and socials match across gateways, and a missing clock stays un
   assert.equal(noClock.status, 'unknown');
   assert.match(noClock.reason, /creation time/);
 
+  const day = 24 * 60 * 60 * 1000;
+  const weakTicker = classifyOrigin(
+    { mint: 'F9CwhBgSsEJuCigbodtUH257EqQpRSzKLKwHPPKNpump', name: 'My Dog', symbol: 'DOG', createdAt: 581.6 * day },
+    [{ mint: 'OldDog', name: 'cute dog 123', symbol: 'DOG', createdAt: 0 }]
+  );
+  assert.notEqual(weakTicker.status, 'vamp');
+  assert.equal(weakTicker.status, 'possible');
+  assert.doesNotMatch(weakTicker.label, /VAMP/);
+  const lateExact = classifyOrigin(
+    { mint: 'LateDog', name: 'cute dog 123', symbol: 'DOG', createdAt: 581.6 * day },
+    [{ mint: 'OldDog', name: 'cute dog 123', symbol: 'DOG', createdAt: 0 }]
+  );
+  assert.equal(lateExact.status, 'possible');
+
   const unrelated = classifyOrigin(
     { mint: 'Other', name: 'Coin', symbol: 'SOL', createdAt: 1 },
     [{ mint: og.mint, name: 'elonmas', symbol: 'ELON', createdAt: 2 }]

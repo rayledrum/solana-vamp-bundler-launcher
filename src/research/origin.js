@@ -55,23 +55,37 @@ function handleOf(value, kind) {
   return text.replace(/^@/, '');
 }
 
+const VAMP_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
 function matchReasons(subject, other) {
   const reasons = [];
   const name = normalizeLabel(subject.name);
   const otherName = normalizeLabel(other.name);
-  if (nearLabel(name, otherName)) reasons.push('name');
+  const exactName = Boolean(name && name === otherName && name.length >= 3);
+  const nearName = !exactName && nearLabel(name, otherName);
+  if (exactName) reasons.push('name');
+  else if (nearName) reasons.push('near-name');
   const symbol = normalizeLabel(subject.symbol);
   const otherSymbol = normalizeLabel(other.symbol);
-  if (symbol && otherSymbol && symbol.length >= 2 && symbol === otherSymbol) reasons.push('ticker');
+  const exactTicker = Boolean(symbol && otherSymbol && symbol.length >= 2 && symbol === otherSymbol);
+  if (exactTicker) reasons.push('ticker');
   const image = imageKey(subject.image);
   const otherImage = imageKey(other.image);
-  if ((image && image === otherImage) || (subject.imageHash && subject.imageHash === other.imageHash)) reasons.push('image');
+  const sameImage = Boolean((image && image === otherImage) || (subject.imageHash && subject.imageHash === other.imageHash));
+  if (sameImage) reasons.push('image');
+  let social = false;
   ['twitter', 'telegram', 'website'].forEach(kind => {
     const left = handleOf(subject[kind], kind);
     const right = handleOf(other[kind], kind);
-    if (left && left === right) reasons.push(kind);
+    if (left && left === right) {
+      reasons.push(kind);
+      social = true;
+    }
   });
-  return reasons;
+  const nameAndTicker = exactName && exactTicker && (name.length >= 5 || symbol.length >= 4);
+  const strong = nameAndTicker || sameImage || social;
+  const weak = !strong && (exactName || exactTicker || nearName);
+  return { reasons, strength: strong ? 'strong' : weak ? 'weak' : null };
 }
 
 function formatDelta(ms) {
@@ -96,7 +110,7 @@ function classifyOrigin(subject, candidates) {
   candidates.forEach(other => {
     if (!other || !other.mint || other.mint === subject.mint) return;
     const why = matchReasons(subject, other);
-    if (why.length) matches.push({ ...other, match: why });
+    if (why.strength) matches.push({ ...other, match: why.reasons, strength: why.strength });
   });
   if (!matches.length) {
     return {
@@ -107,10 +121,27 @@ function classifyOrigin(subject, candidates) {
       reason: 'No other coin shares this name, ticker, image, or socials'
     };
   }
-  const group = [subject, ...matches];
-  if (group.some(row => finite(row.createdAt) == null)) {
+  if (finite(subject.createdAt) == null) {
     return { status: 'unknown', reason: 'Lookalikes were found but creation time is missing' };
   }
+  const untimed = matches.filter(row => row.strength === 'strong' && finite(row.createdAt) == null);
+  const dated = matches.filter(row => finite(row.createdAt) != null);
+  const subjectAt = subject.createdAt;
+  const strong = dated.filter(row => row.strength === 'strong' && Math.abs(row.createdAt - subjectAt) <= VAMP_WINDOW_MS);
+  const outside = dated.filter(row => !strong.includes(row));
+  const skipped = untimed.length ? ` ${untimed.length} lookalike${untimed.length === 1 ? '' : 's'} had no creation time and ${untimed.length === 1 ? 'was' : 'were'} not counted.` : '';
+  if (!strong.length) {
+    const sample = outside[0];
+    const sampleName = sample && (sample.name || sample.symbol) || 'another coin';
+    return {
+      status: 'possible',
+      label: `Possible copy of ${sampleName}`,
+      vamps: 0,
+      ogDevBuying: null,
+      reason: `Name or ticker is only similar, or the other coin is outside the 14 day window.${skipped}`
+    };
+  }
+  const group = [subject, ...strong];
   const ordered = group.slice().sort((a, b) => a.createdAt - b.createdAt);
   const og = ordered[0];
   const clones = ordered.slice(1);
@@ -121,7 +152,7 @@ function classifyOrigin(subject, candidates) {
       vamps: clones.length,
       og: { mint: og.mint, name: og.name || null, createdAt: og.createdAt, graduated: og.graduated == null ? null : og.graduated, peakMcapUsd: finite(og.peakMcapUsd) },
       ogDevBuying: null,
-      reason: `Earliest of ${ordered.length} matching coins`
+      reason: `Earliest of ${ordered.length} matching coins.${skipped}`
     };
   }
   const vampIndex = clones.findIndex(row => row.mint === subject.mint) + 1;
@@ -144,12 +175,14 @@ function classifyOrigin(subject, candidates) {
     },
     delta,
     ogDevBuying: buying,
-    reason: `${delta || 'Created later'} than ${og.mint}. ${graduated}. ${peak == null ? 'OG peak unknown' : `OG peak $${Math.round(peak)}`}`
+    reason: `${delta || 'Created later'} than ${og.mint}. ${graduated}. ${peak == null ? 'OG peak unknown' : `OG peak $${Math.round(peak)}`}.${skipped}`
   };
 }
 
 function pairToCoin(pair) {
   if (!pair || !pair.baseToken || !pair.baseToken.address) return null;
+  if (pair.chainId && pair.chainId !== 'solana') return null;
+  if (pair.dexId && pair.dexId !== 'pumpfun' && pair.dexId !== 'pumpswap') return null;
   const info = pair.info || {};
   const socials = Array.isArray(info.socials) ? info.socials : [];
   const find = (test) => {
@@ -235,11 +268,13 @@ function createOriginLookup({ fetchJson, ttlMs = 60_000, readTrades } = {}) {
     }
   }
 
-  async function get(mint) {
+  async function get(mint, hints) {
     const key = String(mint || '').trim();
     if (!key) return { status: 'unknown', reason: 'A mint is required' };
+    const hintedAt = finite(hints && hints.createdAt);
     const cached = cache.get(key);
-    if (cached && Date.now() - cached.at < ttlMs) return cached.result;
+    const cachedMissesClock = cached && cached.result && cached.result.status === 'unknown' && /creation time/.test(cached.result.reason || '');
+    if (cached && Date.now() - cached.at < ttlMs && !(cachedMissesClock && hintedAt != null)) return cached.result;
     let result;
     try {
       let subject = null;
@@ -251,6 +286,22 @@ function createOriginLookup({ fetchJson, ttlMs = 60_000, readTrades } = {}) {
         subject = null;
       }
       if (!subject) subject = await pumpCoin(key);
+      else if (finite(subject.createdAt) == null) {
+        const pumped = await pumpCoin(key);
+        if (pumped && finite(pumped.createdAt) != null) subject.createdAt = pumped.createdAt;
+        if (pumped && !subject.creator && pumped.creator) subject.creator = pumped.creator;
+      }
+      if (subject) {
+        try {
+          const chain = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+          const body = await fetchImpl(`https://frontend-api-v3.pump.fun/candles/${chain}/${encodeURIComponent(key)}?res=1m&count=1&measure=price_quote`);
+          const created = finite(body && body.createdMs);
+          if (created != null) subject.createdAt = finite(subject.createdAt) == null ? created : Math.min(subject.createdAt, created);
+        } catch (err) {
+          // A candle clock is optional. Pair time still stands.
+        }
+      }
+      if (subject && finite(subject.createdAt) == null && hintedAt != null) subject.createdAt = hintedAt;
       if (!subject || (!subject.name && !subject.symbol && !subject.image && !subject.twitter && !subject.telegram && !subject.website)) {
         result = { status: 'unknown', reason: 'Coin name, image, and socials were not read' };
       } else {
@@ -301,7 +352,9 @@ module.exports = {
   classifyOrigin,
   normalizeLabel,
   imageKey,
+  matchReasons,
   createOriginLookup,
   pairToCoin,
-  originLookup
+  originLookup,
+  VAMP_WINDOW_MS
 };

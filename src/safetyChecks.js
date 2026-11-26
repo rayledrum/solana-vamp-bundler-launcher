@@ -39,13 +39,20 @@ function check(id, label, status, reason) {
 }
 
 function overallFromChecks(checks) {
-  const scored = (checks || []).filter(row => row && row.status && row.status !== 'unknown');
-  if (!scored.length) return { overall: 'unknown', score: null };
+  const rows = checks || [];
+  const unknown = rows.filter(row => row && row.status === 'unknown').length;
+  const redsAll = rows.filter(row => row && row.status === 'red').length;
+  const scored = rows.filter(row => row && row.status && row.status !== 'unknown' && row.status !== 'na');
+  if (!scored.length) return { overall: 'unknown', score: null, unknown, reds: redsAll };
   const reds = scored.filter(row => row.status === 'red').length;
   const yellows = scored.filter(row => row.status === 'yellow').length;
+  let overall = reds ? 'red' : yellows ? 'yellow' : 'green';
+  if (overall !== 'red' && unknown >= 8) overall = 'incomplete';
   return {
-    overall: reds ? 'red' : yellows ? 'yellow' : 'green',
-    score: Math.max(0, 100 - reds * 25 - yellows * 10)
+    overall,
+    score: Math.max(0, 100 - reds * 25 - yellows * 10),
+    unknown,
+    reds: redsAll
   };
 }
 
@@ -227,6 +234,7 @@ function classifyLadder(row) {
 }
 
 function classifyMigration(row) {
+  if (row && row.na) return check('migrationDump', 'Migration dump', 'na', 'has not graduated');
   if (!row || (row.flagged == null && row.dumpedSupplyPct == null)) {
     return check('migrationDump', 'Migration dump', 'unknown', 'Post-migration pool trades were not read');
   }
@@ -281,6 +289,7 @@ function classifyScaleOut(row) {
 }
 
 function classifyInstantBond(row) {
+  if (row && row.na) return check('instantBond', 'Near-instant bonding', 'na', 'has not graduated');
   if (!row || row.flagged == null) {
     const why = row && row.durationMs != null ? 'Snipe burst was not read' : 'Create and graduation times were not both read';
     return check('instantBond', 'Near-instant bonding', 'unknown', why);
@@ -327,6 +336,7 @@ function classifyOrigin(row) {
     return check('origin', 'OG or vamp', 'unknown', (row && row.reason) || 'Lookalike search was not read');
   }
   if (row.status === 'og') return check('origin', 'OG or vamp', 'green', `${row.label}. ${row.reason || ''}`.trim());
+  if (row.status === 'possible') return check('origin', 'OG or vamp', 'yellow', `${row.label}. ${row.reason || ''}`.trim());
   const buying = row.ogDevBuying === true ? ' OG dev is buying this vamp.' : '';
   return check('origin', 'OG or vamp', row.ogDevBuying === true ? 'red' : 'yellow', `${row.label}. ${row.reason || ''}${buying}`.trim());
 }
@@ -353,7 +363,7 @@ function classifyBleed(row) {
 
 function classifyFundingClusters(row) {
   if (!row || row.largestClusterSupplyPct == null) {
-    return check('fundingClusters', 'Funding clusters', 'unknown', 'Early-buyer funding was not read');
+    return check('fundingClusters', 'Funding clusters', 'unknown', (row && row.reason) || 'Early-buyer funding was not read');
   }
   const pct = Number(row.largestClusterSupplyPct);
   const devPct = row.devLinkedClusterSupplyPct == null ? null : Number(row.devLinkedClusterSupplyPct);
@@ -385,6 +395,7 @@ function classifyDevFlow(flow) {
 }
 
 function classifyCreatedCoins(coins) {
+  if (coins && coins.emptyIndex) return check('devCoins', 'Dev created coins', 'unknown', 'Pump creator index returned no coins');
   if (!Array.isArray(coins)) return check('devCoins', 'Dev created coins', 'unknown', 'Creator coin list was not read');
   const graduated = coins.filter(coin => coin && coin.complete === true).length;
   const died = coins.filter(coin => coin && coin.complete === false && num(coin.usd_market_cap) != null && coin.usd_market_cap < 1000).length;
@@ -394,6 +405,7 @@ function classifyCreatedCoins(coins) {
 
 function classifyRugHistory(coins, rugcheck) {
   if (rugcheck && rugcheck.rugged === true) return check('rugHistory', 'Rug history', 'red', 'RugCheck marks this token rugged');
+  if (coins && coins.emptyIndex) return check('rugHistory', 'Rug history', 'unknown', 'Pump creator index returned no coins, so rug history was not measured');
   if (!Array.isArray(coins)) return check('rugHistory', 'Rug history', 'unknown', 'Prior coins were not read');
   const collapsed = coins.filter(coin => {
     const peak = num(coin && (coin.peak_market_cap != null ? coin.peak_market_cap : coin.ath_market_cap));
@@ -476,6 +488,43 @@ function readSniperCluster(mint) {
   }
 }
 
+function defaultResearchConnection() {
+  if (!config.HELIUS_CONFIGURED) return null;
+  const { Connection } = require('@solana/web3.js');
+  return new Connection(config.HELIUS_RPC_URL, {
+    commitment: 'confirmed',
+    wsEndpoint: config.HELIUS_WS_URL || undefined
+  });
+}
+
+function authoritiesFromRug(rug) {
+  if (!rug || typeof rug !== 'object') return null;
+  const token = rug.tokenMeta && typeof rug.tokenMeta === 'object' ? rug.tokenMeta : {};
+  const hasMint = Object.prototype.hasOwnProperty.call(rug, 'mintAuthority') || Object.prototype.hasOwnProperty.call(token, 'mintAuthority');
+  const hasFreeze = Object.prototype.hasOwnProperty.call(rug, 'freezeAuthority') || Object.prototype.hasOwnProperty.call(token, 'freezeAuthority');
+  if (!hasMint || !hasFreeze) return null;
+  return {
+    mintAuthority: rug.mintAuthority || token.mintAuthority || null,
+    freezeAuthority: rug.freezeAuthority || token.freezeAuthority || null,
+    extensions: Array.isArray(rug.extensions) ? rug.extensions : []
+  };
+}
+
+function holdersFromRug(rug) {
+  const list = rug && Array.isArray(rug.topHolders) ? rug.topHolders : null;
+  if (!list || !list.length) return null;
+  const supply = num(rug.supply != null ? rug.supply : rug.token && rug.token.supply);
+  if (supply == null || supply <= 0) return null;
+  const accounts = list.map(row => {
+    if (!row || !row.address) return null;
+    const amount = row.amount != null ? row.amount : (row.pct != null ? Math.round(supply * Number(row.pct) / 100) : null);
+    if (amount == null || !Number.isFinite(Number(amount))) return null;
+    return { address: String(row.address), amount: String(amount) };
+  }).filter(Boolean);
+  if (!accounts.length) return null;
+  return { accounts, supplyRaw: String(Math.round(supply)), holderCount: num(rug.totalHolders), exclude: [] };
+}
+
 function emptyBlacklist() {
   return { devs: [], flaggedMints: {}, auto: { ...DEFAULT_AUTO } };
 }
@@ -518,7 +567,9 @@ function createSafetyChecks(options = {}) {
       return null;
     }
   });
-  const connection = options.connection || null;
+  const connection = Object.prototype.hasOwnProperty.call(options, 'connection') ? options.connection : defaultResearchConnection();
+  const candleLookup = options.candleLookup || (async () => null);
+  const persistTape = options.persistTape === true;
   const cache = new Map();
   let lastCall = 0;
 
@@ -745,12 +796,21 @@ function createSafetyChecks(options = {}) {
 
     let creator = (coin && coin.creator) || (rug && (rug.creator || rug.creatorAddress)) || null;
     let coins = null;
+    let emptyCreatorIndex = false;
     if (creator) {
       coins = [];
       try {
         for (let offset = 0; offset < 250; offset += 50) {
           const page = await fetchCreatedCoins(creator, offset, { fetch: pumpFetch });
-          const rows = Array.isArray(page) ? page : (page && page.coins) || [];
+          const rows = Array.isArray(page) ? page : (page && Array.isArray(page.coins) ? page.coins : null);
+          if (!rows) {
+            coins = null;
+            break;
+          }
+          if (!rows.length) {
+            emptyCreatorIndex = coins.length === 0;
+            break;
+          }
           coins.push(...rows);
           if (rows.length < 50) break;
         }
@@ -758,16 +818,26 @@ function createSafetyChecks(options = {}) {
         coins = null;
       }
     }
+    if ((!coins || !coins.length) && rug && Array.isArray(rug.creatorTokens) && rug.creatorTokens.length) {
+      coins = rug.creatorTokens;
+      emptyCreatorIndex = false;
+    } else if (emptyCreatorIndex) {
+      coins = { emptyIndex: true };
+    }
 
-    const authorities = await readAuthorities(key);
-    const holders = await readHolders(key);
+    let authorities = await readAuthorities(key);
+    if (!authorities) authorities = authoritiesFromRug(rug);
+    let holders = await readHolders(key);
+    if (!holders) holders = holdersFromRug(rug);
     if (holders && rug && num(rug.totalHolders) != null) holders.holderCount = rug.totalHolders;
     const curve = await readCurve(key);
     if (!creator && curve && curve.creator) creator = curve.creator;
     if ((!coin || coin.created_timestamp == null) && dex && dex.pairCreatedAt) {
       coin = { ...(coin || {}), created_timestamp: dex.pairCreatedAt, usd_market_cap: coin && coin.usd_market_cap != null ? coin.usd_market_cap : dex.marketCap, name: (coin && coin.name) || (dex.baseToken && dex.baseToken.name) || null, creator: (coin && coin.creator) || creator };
     }
-    if (coins == null && rug && Array.isArray(rug.creatorTokens)) coins = rug.creatorTokens;
+    if (coins == null && rug && Array.isArray(rug.creatorTokens)) {
+      coins = rug.creatorTokens.length ? rug.creatorTokens : { emptyIndex: true };
+    }
     const supplyRaw = holders && holders.supplyRaw;
     const devPct = await creatorBalancePct(creator, key, supplyRaw);
     const createdMs = coin && num(coin.created_timestamp)
@@ -783,44 +853,97 @@ function createSafetyChecks(options = {}) {
       }
       : { ok: false };
 
+    const { readOnDemandTape, analyzeTape, rememberTape } = require('./research/liveTape');
+    const tapePromise = readOnDemandTape({ connection, mint: key, maxFetches: 150 });
+    let tapeTimer;
+    const tapePack = await Promise.race([
+      tapePromise.then(pack => ({ ready: true, pack })),
+      new Promise(resolve => { tapeTimer = setTimeout(() => resolve({ ready: false }), 12000); })
+    ]);
+    clearTimeout(tapeTimer);
+    const tapeNow = tapePack.ready ? tapePack.pack : { tape: null, source: 'pending' };
+    if (persistTape && tapeNow.source === 'chain' && tapeNow.tape) rememberTape(key, tapeNow.tape);
+
+    let chart = null;
+    try { chart = await candleLookup(key); } catch (err) { chart = null; }
+    const supplyUi = curve && curve.tokenTotalSupply > 0
+      ? curve.tokenTotalSupply / 1e6
+      : (holders && holders.supplyRaw ? Number(holders.supplyRaw) / 1e6 : null);
+    const lastClose = chart && Array.isArray(chart.candles) && chart.candles.length ? Number(chart.candles[chart.candles.length - 1].close) : null;
+    const dexPriceUsd = dex && num(dex.priceUsd);
+    const dexPriceNative = dex && num(dex.priceNative);
+    const solUsd = lastClose > 0 && dexPriceUsd > 0 && dexPriceNative > 0 ? dexPriceUsd / dexPriceNative : null;
+    const candleSeries = chart && Array.isArray(chart.candles) && supplyUi > 0 && solUsd > 0
+      ? chart.candles.map(row => ({
+        time: row.time,
+        mcapUsd: Number(row.close) * supplyUi * solUsd,
+        mcapSol: Number(row.close) * supplyUi
+      })).filter(row => Number.isFinite(row.mcapUsd))
+      : null;
+    const priceSol = lastClose > 0 ? lastClose : (dexPriceNative > 0 ? dexPriceNative : null);
+    const graduated = curve ? curve.complete === true : (dex && dex.dexId === 'pumpswap' ? true : dex && dex.dexId === 'pumpfun' ? false : null);
+    let born = createdMs;
+    if (!Number.isFinite(born) && tapeNow.tape && num(tapeNow.tape.createTime) != null) born = num(tapeNow.tape.createTime);
+    if (!Number.isFinite(born) && chart && Array.isArray(chart.candles) && chart.candles[0] && num(chart.candles[0].time) != null) {
+      born = num(chart.candles[0].time);
+    }
+
     let phase = null;
-    try { phase = assessMint(key); } catch (err) { phase = null; }
+    try {
+      phase = assessMint(key, undefined, {
+        snapshots: candleSeries || undefined,
+        tape: tapeNow.tape || undefined
+      });
+    } catch (err) { phase = null; }
+    const fresh = tapeNow.tape ? analyzeTape({
+      mint: key,
+      tape: tapeNow.tape,
+      creator,
+      supply: supplyUi,
+      priceSol,
+      graduated,
+      graduatedAt: null
+    }) : null;
+
+    const tapePending = !tapePack.ready;
+    const loading = { unknown: true, reason: 'Tape is still loading' };
+    const liveOr = (stored, live, fallback) => stored || live || (tapePending ? loading : fallback);
 
     const checks = [
       rug ? classifyRugcheck(rug) : check('rugcheck', 'RugCheck', 'unknown', 'RugCheck request failed'),
       classifyAuthorities(authorities),
       classifyHolders(holders),
-      classifySnipers(sniperLookup(key) || { unknown: true, reason: 'First-block buyers were not read' }),
-      classifyFundingClusters(fundingLookup(key)),
+      classifySnipers(liveOr(sniperLookup(key), fresh && fresh.snipers, { unknown: true, reason: 'First-block buyers were not read' })),
+      classifyFundingClusters(fundingLookup(key) || (fresh ? fresh.funding : (tapePending ? loading : null))),
       classifyCoordinated(coordinationLookup(key)),
       classifyDistribution(distributionLookup(key)),
-      classifyWash(washLookup(key)),
-      classifyHolderPadding(holderLookup(key)),
-      classifyLadder(ladderLookup(key)),
-      classifyMigration(migrationLookup(key)),
-      classifyKolShadow(kolShadowLookup(key)),
-      classifyMcRun(mcRunLookup(key) || (phase && phase.mcRun)),
-      classifyScaleOut(scaleOutLookup(key) || (phase && phase.scaleOut)),
-      classifyInstantBond(bondingLookup(key) || (phase && phase.instantBond)),
+      classifyWash(liveOr(washLookup(key), fresh && fresh.wash, null)),
+      classifyHolderPadding(liveOr(holderLookup(key), fresh && fresh.holderPadding, null)),
+      classifyLadder(liveOr(ladderLookup(key), fresh && fresh.ladder, null)),
+      classifyMigration(liveOr(migrationLookup(key), fresh && fresh.migration, graduated === false ? { na: true } : null)),
+      classifyKolShadow(liveOr(kolShadowLookup(key), fresh && fresh.kolShadow, null)),
+      classifyMcRun(liveOr(mcRunLookup(key), fresh && fresh.mcRun, phase && phase.mcRun)),
+      classifyScaleOut(liveOr(scaleOutLookup(key), fresh && fresh.scaleOut, phase && phase.scaleOut)),
+      classifyInstantBond(liveOr(bondingLookup(key), fresh && fresh.instantBond, (phase && phase.instantBond) || (graduated === false ? { na: true } : null))),
       classifyPump(phase && phase.pumps),
       classifyBleed(phase && phase.bleed),
       classifyNonMigrator(phase && phase.nonMigrator),
-      classifyTopTraders(topTraderLookup(key)),
-      classifyOrigin(await originLookup(key)),
+      classifyTopTraders(topTraderLookup(key) || (fresh && fresh.topTraders)),
+      classifyOrigin(await originLookup(key, { createdAt: born })),
       classifySerial(serialLookup(key), new Set((loadBlacklist().devs || []).map(item => item.address))),
       classifyCurve(curve),
       classifyMarket(dex),
-      classifyAge(createdMs, Date.now()),
+      classifyAge(born, Date.now()),
       classifySocials(socialSource),
       classifyDevHolding(devPct),
       classifyDevAssociated(devLookup(key)),
-      classifyDevFlow({ unknown: true, reason: 'Creator buy and sell counts were not on the coin or RugCheck payload' }),
+      classifyDevFlow(fresh ? fresh.devFlow : { unknown: true, reason: tapePending ? 'Tape is still loading' : 'Creator trades were not read' }),
       classifyCreatedCoins(coins),
       classifyRugHistory(coins, rug),
       rug ? classifyCreatorFlags(rug) : check('creatorFlags', 'RugCheck creator flags', 'unknown', 'RugCheck request failed'),
       check('blacklist', 'Local blacklist', 'green', 'Dev is not on the local blacklist')
     ];
-    if (coinError && !Number.isFinite(createdMs)) {
+    if (coinError && !Number.isFinite(born)) {
       const age = checks.find(row => row.id === 'age');
       if (age && age.status === 'unknown') age.reason = `Pump API 404. ${coinError}`;
     }
@@ -840,16 +963,61 @@ function createSafetyChecks(options = {}) {
       checkedAt: Date.now(),
       overall: summary.overall,
       score: summary.score,
+      unknown: summary.unknown,
+      reds: summary.reds,
+      pending: tapePending,
       creator,
       blacklisted: Boolean(listed),
       blacklistReason: listed ? listed.reason : null,
       checks,
       exitAlert: phase && phase.exitAlert ? phase.exitAlert : { action: null, reasons: null, armAfterPump: null },
-      topTraders: topTraderLookup(key)
+      topTraders: (fresh && fresh.topTraders) || topTraderLookup(key)
     };
     maybeAutoBlacklist(row, book);
     row.auto = loadBlacklist().auto;
     cache.set(key, { at: Date.now(), report: row });
+    if (tapePending) {
+      tapePromise.then(pack => {
+        if (persistTape && pack && pack.source === 'chain' && pack.tape) rememberTape(key, pack.tape);
+        const later = pack && pack.tape ? analyzeTape({
+          mint: key,
+          tape: pack.tape,
+          creator,
+          supply: supplyUi,
+          priceSol,
+          graduated,
+          graduatedAt: null
+        }) : null;
+        if (later) {
+          const replace = {
+            snipers: classifySnipers(later.snipers),
+            fundingClusters: classifyFundingClusters(fundingLookup(key) || later.funding),
+            wash: classifyWash(later.wash),
+            holderPadding: classifyHolderPadding(later.holderPadding),
+            ladderDump: classifyLadder(later.ladder),
+            migrationDump: classifyMigration(later.migration),
+            kolShadow: classifyKolShadow(later.kolShadow),
+            mcRun: classifyMcRun(later.mcRun),
+            scaleOut: classifyScaleOut(later.scaleOut),
+            instantBond: classifyInstantBond(later.instantBond),
+            topTraders: classifyTopTraders(later.topTraders),
+            devFlow: classifyDevFlow(later.devFlow)
+          };
+          row.checks = row.checks.map(item => (item && item.reason === 'Tape is still loading' && replace[item.id]) ? replace[item.id] : item);
+          row.topTraders = later.topTraders;
+          if (!Number.isFinite(born) && num(pack.tape.createTime) != null) {
+            row.checks = row.checks.map(item => item.id === 'age' && item.status === 'unknown' ? classifyAge(num(pack.tape.createTime), Date.now()) : item);
+          }
+        }
+        const again = overallFromChecks(row.checks);
+        row.overall = again.overall;
+        row.score = again.score;
+        row.unknown = again.unknown;
+        row.reds = again.reds;
+        row.pending = false;
+        row.checkedAt = Date.now();
+      }).catch(() => { row.pending = false; });
+    }
     return row;
   }
 
@@ -920,7 +1088,17 @@ async function defaultFetchJson(url) {
 }
 
 const { originLookup } = require('./research/origin');
-const safetyChecks = createSafetyChecks({ originLookup: (mint) => originLookup.get(mint) });
+const safetyChecks = createSafetyChecks({
+  originLookup: (mint, hints) => originLookup.get(mint, hints),
+  persistTape: true,
+  candleLookup: async (mint) => {
+    try {
+      return await require('./pumpfun').getChartCandles(mint, '1m');
+    } catch (err) {
+      return null;
+    }
+  }
+});
 
 module.exports = {
   createSafetyChecks,
@@ -937,5 +1115,7 @@ module.exports = {
   classifyDevAssociated,
   classifyCreatedCoins,
   classifyRugHistory,
+  classifyInstantBond,
+  classifyMigration,
   safetyChecks
 };

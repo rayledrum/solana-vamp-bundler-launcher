@@ -47,6 +47,42 @@ function staticRecord(coin, extra = {}) {
   };
 }
 
+function observationFromSources({ coin, candles, supplyUi, solUsd, curve, dex } = {}) {
+  const fromCoin = finite(coin && coin.usd_market_cap);
+  let mcapUsd = fromCoin;
+  const supply = finite(supplyUi);
+  const sol = finite(solUsd);
+  if (mcapUsd == null && Array.isArray(candles) && candles.length && supply != null && sol != null) {
+    const last = candles[candles.length - 1];
+    const close = finite(last && (last.close != null ? last.close : last.c));
+    if (close != null) mcapUsd = close * supply * sol;
+  }
+  if (mcapUsd == null && dex) mcapUsd = finite(dex.marketCap != null ? dex.marketCap : dex.fdv);
+  let curveProgress = null;
+  if (curve && curve.complete === true) curveProgress = 100;
+  else if (curve && finite(curve.realTokenReserves) != null) {
+    const { bondingProgress, DEFAULT_GLOBAL } = require('../bondingCurve');
+    curveProgress = bondingProgress(curve.realTokenReserves, DEFAULT_GLOBAL.initialRealTokenReserves, false);
+  }
+  let graduated = null;
+  if (coin && (coin.complete === true || coin.complete === false)) graduated = coin.complete;
+  else if (curve && (curve.complete === true || curve.complete === false)) graduated = curve.complete;
+  else if (dex && dex.dexId === 'pumpswap') graduated = true;
+  else if (dex && dex.dexId === 'pumpfun') graduated = false;
+  return {
+    mcapUsd,
+    curveProgress,
+    graduated,
+    buys: finite(coin && coin.buys),
+    sells: finite(coin && coin.sells),
+    uniqueBuyers: finite(coin && coin.unique_buyers),
+    holderCount: finite(coin && coin.holder_count),
+    top10Pct: finite(coin && coin.top10_pct),
+    devHoldPct: finite(coin && coin.dev_hold_pct),
+    devSold: coin && (coin.dev_sold === true || coin.dev_sold === false) ? coin.dev_sold : null
+  };
+}
+
 function snapshotRecord(mint, atMin, obs = {}) {
   return {
     mint: mint || null,
@@ -184,6 +220,7 @@ module.exports = {
   finite,
   staticRecord,
   snapshotRecord,
+  observationFromSources,
   ingestLaunches,
   dueSnapshots,
   takeDueSnapshots,

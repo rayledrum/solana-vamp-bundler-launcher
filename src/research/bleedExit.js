@@ -280,23 +280,30 @@ function applyEntryGate(isSim, gate, amount) {
   return { amount, action: 'allow', reasons: [] };
 }
 
-function assessMint(mint, store) {
-  const root = store || createStore();
-  let snapshots = [];
-  let shadow = null;
-  let serial = null;
-  let observations = [];
-  try {
-    snapshots = root.readJsonl('snapshots.jsonl').filter(row => row && row.mint === mint);
-    shadow = root.readJsonl('kol-shadows.jsonl').filter(row => row && row.mint === mint).pop() || null;
-    const linked = linkSerialDevs(root.readJsonl('serial-devs.jsonl'));
-    serial = linked ? linked.filter(row => row && row.mint === mint).pop() || null : null;
-    observations = root.readJsonl('non-migrators.jsonl');
-  } catch (err) {
-    snapshots = [];
+function assessMint(mint, store, injected) {
+  const extra = injected && typeof injected === 'object' ? injected : {};
+  const root = store && typeof store.readJsonl === 'function' ? store : createStore();
+  let snapshots = Array.isArray(extra.snapshots) ? extra.snapshots : null;
+  let shadow = extra.kolShadow || null;
+  let serial = extra.serial || null;
+  let observations = Array.isArray(extra.observations) ? extra.observations : null;
+  if (!Array.isArray(extra.snapshots) || shadow == null || serial == null || observations == null) {
+    try {
+      if (!Array.isArray(extra.snapshots)) snapshots = root.readJsonl('snapshots.jsonl').filter(row => row && row.mint === mint);
+      if (shadow == null) shadow = root.readJsonl('kol-shadows.jsonl').filter(row => row && row.mint === mint).pop() || null;
+      if (serial == null) {
+        const linked = linkSerialDevs(root.readJsonl('serial-devs.jsonl'));
+        serial = linked ? linked.filter(row => row && row.mint === mint).pop() || null : null;
+      }
+      if (observations == null) observations = root.readJsonl('non-migrators.jsonl');
+    } catch (err) {
+      if (!Array.isArray(snapshots)) snapshots = [];
+      if (observations == null) observations = [];
+    }
   }
+  snapshots = Array.isArray(snapshots) ? snapshots : [];
   const pumps = trackPumps(snapshots.map(row => ({
-    time: row.atMin,
+    time: row.time != null ? row.time : row.atMin,
     mcapUsd: row.mcapUsd,
     mcapSol: row.mcapSol
   })), {
@@ -306,9 +313,11 @@ function assessMint(mint, store) {
     secondPumpMcapUsd: config.SECOND_PUMP_MCAP_USD
   });
   const peak = pumps.pumps && pumps.armAfterPump ? pumps.pumps.find(row => row.number >= pumps.armAfterPump) : null;
-  let tape = null;
-  try { tape = root.readJsonl('tapes.jsonl').filter(row => row && row.mint === mint).pop() || null; } catch (err) { tape = null; }
-  const trades = tape && Array.isArray(tape.trades) ? tape.trades : null;
+  let tape = extra.tape || null;
+  if (!tape) {
+    try { tape = root.readJsonl('tapes.jsonl').filter(row => row && row.mint === mint).pop() || null; } catch (err) { tape = null; }
+  }
+  const trades = Array.isArray(extra.trades) ? extra.trades : (tape && Array.isArray(tape.trades) ? tape.trades : null);
   const linkedWallets = trades ? [...new Set([serial && serial.dev, ...(serial && serial.linkedDevs || [])].filter(Boolean))] : null;
   const bleed = trades ? analyzeBleed({
     mint,

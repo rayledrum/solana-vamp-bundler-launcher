@@ -184,7 +184,7 @@ function analyzeInstantBond(input = {}) {
   const create = finite(input.createTime);
   const done = finite(input.graduatedAt);
   if (input.graduated === false && done == null) {
-    return { mint: input.mint || null, flagged: false, durationMs: null, thresholdMs };
+    return { mint: input.mint || null, flagged: false, durationMs: null, thresholdMs, graduated: false, na: true };
   }
   if (create == null || done == null || done < create) {
     return { mint: input.mint || null, flagged: null, durationMs: null, thresholdMs };
