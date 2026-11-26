@@ -1,0 +1,37 @@
+{
+  "subject": {
+    "mint": "VampMint1111111111111111111111111111111111",
+    "name": "Elon-mas!",
+    "symbol": "ELON",
+    "image": "https://ipfs.io/ipfs/Qm11111111111111111111111111111111111111111111",
+    "twitter": "https://x.com/elonmas",
+    "telegram": "https://t.me/elonmas",
+    "website": "https://elonmas.example/whitepaper",
+    "createdAt": 2000,
+    "trades": [
+      { "wallet": "OgDev111111111111111111111111111111111111", "side": "buy", "sol": 1.2 }
+    ]
+  },
+  "og": {
+    "mint": "OgMint111111111111111111111111111111111111",
+    "name": "elonmas",
+    "symbol": "ELON",
+    "image": "https://gateway.ipfs.io/ipfs/Qm11111111111111111111111111111111111111111111",
+    "twitter": "@elonmas",
+    "telegram": "t.me/elonmas",
+    "website": "elonmas.example",
+    "createdAt": 1000,
+    "graduated": true,
+    "peakMcapUsd": 358620,
+    "creator": "OgDev111111111111111111111111111111111111"
+  },
+  "later": {
+    "mint": "LaterMint111111111111111111111111111111111",
+    "name": "Elonmas",
+    "symbol": "ELON",
+    "image": "https://cf-ipfs.com/ipfs/Qm11111111111111111111111111111111111111111111",
+    "createdAt": 3000,
+    "graduated": false,
+    "peakMcapUsd": null
+  }
+}
