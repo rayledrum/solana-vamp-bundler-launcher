@@ -1088,7 +1088,11 @@ class TradingEngine {
       solPriceUsd: context.solPriceUsd,
       floorUsd: context.floorUsd == null ? config.BLEED_FLOOR_MCAP_USD : context.floorUsd,
       positionTokens: tokens,
-      slices: context.slices
+      slices: context.slices,
+      now,
+      minSliceGapMs: context.minSliceGapMs,
+      minSliceDrawdownPct: context.minSliceDrawdownPct,
+      linkedSells: context.linkedSells
     });
     this.bleedState[mint] = plan.state;
     if (!walletManager.simulationMode || plan.action !== 'sell') {
@@ -1099,7 +1103,12 @@ class TradingEngine {
       walletAddresses: master ? [master] : [],
       fromLadder: true
     });
-    if (result && result.success) plan.state.step = plan.nextStep;
+    if (result && result.success) {
+      plan.state.step = plan.nextStep;
+      plan.state.lastSellAt = now;
+      plan.state.lastMcapUsd = context.mcapUsd;
+      plan.state.linkedSells = context.linkedSells;
+    }
     return { ...alert, ...plan, acted: Boolean(result && result.success), result, at: now };
   }
 

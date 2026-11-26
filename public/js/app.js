@@ -1948,7 +1948,9 @@ function paintSafety(report) {
     return;
   }
   const colors = { green: '#86efac', yellow: '#fcd34d', red: '#fda4af', unknown: '#94a3b8' };
-  score.textContent = report && report.score != null ? `${report.overall || 'unknown'} · ${report.score}` : (report && report.overall) || 'unknown';
+  const unknownCount = (report && report.checks || []).filter(row => row && row.status === 'unknown').length;
+  const headline = report && report.score != null ? `${report.overall || 'unknown'} · ${report.score}` : (report && report.overall) || 'unknown';
+  score.textContent = unknownCount ? `${headline} · ${unknownCount} unknown` : headline;
   score.style.color = colors[(report && report.overall) || 'unknown'] || colors.unknown;
   list.innerHTML = '';
   (report && report.checks || []).forEach(row => {
@@ -1959,7 +1961,8 @@ function paintSafety(report) {
     dot.style.color = colors[row.status] || colors.unknown;
     const text = document.createElement('span');
     const when = row.at ? new Date(row.at).toISOString().slice(11, 19) : '';
-    text.textContent = `${row.label}: ${row.reason || row.status}${when ? ' · ' + when : ''}`;
+    const stateLabel = row.status === 'unknown' ? 'UNKNOWN' : row.status === 'green' ? 'PASS' : (row.status || '');
+    text.textContent = `${stateLabel} ${row.label}: ${row.reason || row.status}${when ? ' · ' + when : ''}`;
     item.append(dot, text);
     list.appendChild(item);
   });

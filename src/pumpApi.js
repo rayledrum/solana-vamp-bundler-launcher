@@ -94,11 +94,50 @@ async function fetchPumpJson(input, options = {}) {
   throw error;
 }
 
+async function fetchPumpPaths(paths, options) {
+  const failures = [];
+  for (const path of paths) {
+    try {
+      return await fetchPumpJson(path, options);
+    } catch (err) {
+      const host = err.host || hostOf(pumpUrl(path));
+      const endpoint = String(path).split('?')[0];
+      console.warn(`[pump] ${host} ${endpoint}: ${err.message}`);
+      failures.push(err);
+    }
+  }
+  const error = new Error(failures.map(err => err.message).join('; ') || 'Pump request failed');
+  error.host = failures.length ? failures[failures.length - 1].host : null;
+  error.status = failures.length ? failures[failures.length - 1].status : null;
+  throw error;
+}
+
+function fetchPumpCoin(mint, options) {
+  const id = encodeURIComponent(mint);
+  return fetchPumpPaths([
+    `/coins/${id}`,
+    `/coins/${id}?sync=true`,
+    `/coins-v2/${id}`,
+    `/coins/v2/${id}`
+  ], options);
+}
+
+function fetchCreatedCoins(creator, offset = 0, options) {
+  const id = encodeURIComponent(creator);
+  const query = `offset=${offset}&limit=50&includeNsfw=false`;
+  return fetchPumpPaths([
+    `/coins-v2/user-created-coins/${id}?${query}`,
+    `/coins/user-created-coins/${id}?${query}`
+  ], options);
+}
+
 module.exports = {
   BROWSER_HEADERS,
   pumpApiBase,
   pumpUrl,
   isPumpFrontendUrl,
   fetchPumpJson,
+  fetchPumpCoin,
+  fetchCreatedCoins,
   hostOf
 };

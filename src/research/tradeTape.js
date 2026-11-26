@@ -72,7 +72,29 @@ async function listCurveSignatures(connection, curve, pace, maxPages) {
   return signatures;
 }
 
-async function readCurveTape({ connection, mint, programId, pace, cache, maxPages = 20, supply } = {}) {
+function selectTapeSignatures(signatures, { maxFetches = 400, focusFrom, focusTo } = {}) {
+  const listed = signatures.filter(row => row && row.signature);
+  const failed = listed.filter(row => row.err).length;
+  const ok = listed.filter(row => !row.err);
+  const timed = ok.filter(row => row.blockTime != null);
+  const create = timed.length ? Math.min(...timed.map(row => row.blockTime)) : null;
+  const first = create == null ? ok.slice(-120) : timed.filter(row => row.blockTime <= create + 180);
+  const focus = timed.filter(row => {
+    if (focusFrom == null) return false;
+    const at = row.blockTime * 1000;
+    return at >= focusFrom && (focusTo == null || at <= focusTo);
+  });
+  const chosen = [];
+  const seen = new Set();
+  [...first, ...focus].forEach(row => {
+    if (chosen.length >= maxFetches || seen.has(row.signature)) return;
+    seen.add(row.signature);
+    chosen.push(row);
+  });
+  return { chosen, failed, listed: listed.length, createTime: create == null ? null : create * 1000 };
+}
+
+async function readCurveTape({ connection, mint, programId, pace, cache, maxPages = 15, supply, maxFetches = 400, focusFrom, focusTo } = {}) {
   if (!connection || typeof connection.getSignaturesForAddress !== 'function' || !mint) return null;
   let curve;
   try {
@@ -87,11 +109,12 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
     return null;
   }
   if (!signatures.length) {
-    return { trades: [], createSlot: null, createTime: null, supply: finite(supply), curve: curve.toBase58() };
+    return { trades: [], createSlot: null, createTime: null, supply: finite(supply), curve: curve.toBase58(), signatures: { listed: 0, failed: 0, fetched: 0 } };
   }
+  const picked = selectTapeSignatures(signatures, { maxFetches, focusFrom, focusTo });
   const oldest = signatures[signatures.length - 1];
   const createSlot = oldest.slot == null ? null : oldest.slot;
-  const createTime = oldest.blockTime == null ? null : oldest.blockTime * 1000;
+  const createTime = picked.createTime != null ? picked.createTime : (oldest.blockTime == null ? null : oldest.blockTime * 1000);
   let curveSupply = finite(supply);
   if (curveSupply == null && typeof connection.getAccountInfo === 'function') {
     try {
@@ -105,10 +128,9 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
   }
   const trades = [];
   let fetched = 0;
-  let failed = 0;
-  for (const sig of signatures) {
-    const key = sig && sig.signature;
-    if (!key) continue;
+  let failedFetches = 0;
+  for (const sig of picked.chosen) {
+    const key = sig.signature;
     if (cache && cache.has(key)) {
       trades.push(...cache.get(key));
       fetched += 1;
@@ -118,13 +140,13 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
     let tx = null;
     try {
       if (typeof connection.getTransaction === 'function') {
-        tx = await connection.getTransaction(key, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+        tx = await connection.getTransaction(key, { maxSupportedTransactionVersion: 1, commitment: 'confirmed' });
       }
     } catch (err) {
       tx = null;
     }
     if (!tx) {
-      failed += 1;
+      failedFetches += 1;
       continue;
     }
     const parsed = tradesFromTransaction(tx, sig);
@@ -132,14 +154,16 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
     trades.push(...parsed);
     fetched += 1;
   }
-  if (fetched === 0 && failed > 0) return null;
+  if (fetched === 0 && failedFetches > 0 && picked.chosen.length) return null;
+  const failedRatio = picked.listed ? picked.failed / picked.listed : null;
   return {
     trades,
     createSlot,
     createTime,
     supply: curveSupply,
     observedUntil: signatures[0] && signatures[0].blockTime != null ? signatures[0].blockTime * 1000 : null,
-    curve: curve.toBase58()
+    curve: curve.toBase58(),
+    signatures: { listed: picked.listed, failed: picked.failed, fetched, failedRatio }
   };
 }
 
@@ -161,6 +185,7 @@ module.exports = {
   tradesFromTransaction,
   tradesFromHelius,
   readCurveTape,
+  selectTapeSignatures,
   researchRpc,
   fundingDefaultOn
 };

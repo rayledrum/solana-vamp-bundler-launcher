@@ -16,6 +16,8 @@ const {
   applyEntryGate,
   compareBleedStrategy
 } = require('../src/research/bleedExit');
+const { selectTapeSignatures } = require('../src/research/tradeTape');
+const { analyzeInstantBond } = require('../src/research/tapeFlags');
 const {
   analyzeNearMigration,
   analyzeForcedMigration,
@@ -51,7 +53,7 @@ test('a peak under 100k arms after pump 1 and a peak above waits for pump 2', ()
     { time: 1, mcapUsd: 80000 },
     { time: 2, mcapUsd: 40000 },
     { time: 3, mcapUsd: 180000 },
-    { time: 4, mcapUsd: 100000 }
+    { time: 4, mcapUsd: 80000 }
   ]);
   assert.equal(twoHigh.pumps.length, 2);
   assert.equal(twoHigh.armed, true);
@@ -109,6 +111,26 @@ test('slow bleed after the armed pump records supply, absorption, and market cap
   });
   assert.equal(plan.action, 'sell');
   assert.equal(plan.sellPct, 50);
+  const paced = planBleedExit({
+    alert,
+    mcapUsd: 78000,
+    floorUsd: 50000,
+    positionTokens: 1000,
+    now: 1000,
+    state: { step: 1, originalTokens: 1000, lastSellAt: 0, lastMcapUsd: 80000, linkedSells: 1 },
+    linkedSells: 1
+  });
+  assert.equal(paced.action, 'hold');
+  assert.equal(paced.reason, 'slice-wait');
+  const later = planBleedExit({
+    alert,
+    mcapUsd: 60000,
+    floorUsd: 50000,
+    positionTokens: 500,
+    now: 120000,
+    state: { step: 1, originalTokens: 1000, lastSellAt: 0, lastMcapUsd: 80000, linkedSells: 1 }
+  });
+  assert.equal(later.action, 'sell');
   const late = planBleedExit({ alert, mcapUsd: 40000, floorUsd: 50000, positionTokens: 1000 });
   assert.equal(late.sellPct, 100);
   const unknown = planBleedExit({ alert, mcapSol: 10, floorUsd: 50000, positionTokens: 1000 });
@@ -268,6 +290,37 @@ test('live mode shows the bleed alert and does not sell', async () => {
     tradingEngine.executeSell = original;
     walletManager.setSimulationMode(true);
   }
+});
+
+test('Elonmas 1m closes are two major pumps and the second arms after the $300k peak', () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'elonmas-1m.json'), 'utf8'));
+  const series = fixture.closes.map(row => ({ time: row.t, mcapUsd: row.mc }));
+  const tracked = trackPumps(series, { minDrawdownPct: 50, minDipDurationMs: 60_000, secondPumpMcapUsd: 100_000 });
+  assert.equal(tracked.pumps.length, 2);
+  assert.equal(tracked.armAfterPump, 2);
+  assert.equal(tracked.armed, true);
+  assert.ok(tracked.pumps[1].peakMcapUsd > 300_000);
+  assert.equal(new Date(tracked.pumps[1].peakAt).toISOString(), '2026-11-26T09:02:00.000Z');
+  const noisy = trackPumps(series, { minDrawdownPct: 25, minDipDurationMs: 0, secondPumpMcapUsd: 100_000 });
+  assert.ok(noisy.pumps.length > 2);
+  const rushed = analyzeInstantBond({
+    createTime: fixture.createdMs,
+    graduatedAt: fixture.createdMs + (5 * 60 + 1) * 1000,
+    graduated: true,
+    snipeBurst: { signatures: 9653, failedRatio: 0.77 }
+  });
+  assert.equal(rushed.flagged, true);
+});
+
+test('failed curve signatures are skipped before they are fetched', () => {
+  const picked = selectTapeSignatures([
+    { signature: 'new', blockTime: 200, err: { InstructionError: [0, 'x'] } },
+    { signature: 'ok-new', blockTime: 180 },
+    { signature: 'ok-old', blockTime: 10 },
+    { signature: 'fail-old', blockTime: 11, err: { InstructionError: [0, 'y'] } }
+  ], { maxFetches: 10 });
+  assert.deepEqual(picked.chosen.map(row => row.signature).sort(), ['ok-new', 'ok-old']);
+  assert.equal(picked.failed, 2);
 });
 
 test('the safety panel names a non-migrator and the prior coin', async () => {

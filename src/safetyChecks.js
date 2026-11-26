@@ -8,7 +8,7 @@ const { canonicalPoolPda, decodePool } = require('./pumpSwap');
 const { bondingProgress, DEFAULT_GLOBAL } = require('./bondingCurve');
 const config = require('./config');
 const { createStore } = require('./research/store');
-const { pumpUrl, fetchPumpJson, isPumpFrontendUrl, hostOf } = require('./pumpApi');
+const { pumpUrl, fetchPumpJson, fetchPumpCoin, fetchCreatedCoins, isPumpFrontendUrl, hostOf } = require('./pumpApi');
 const { linkSerialDevs } = require('./research/serialDev');
 const { assessMint } = require('./research/bleedExit');
 const { ValidationError } = require('./validation');
@@ -281,12 +281,19 @@ function classifyScaleOut(row) {
 }
 
 function classifyInstantBond(row) {
-  if (!row || row.flagged == null) return check('instantBond', 'Near-instant bonding', 'unknown', 'Create and graduation times were not both read');
+  if (!row || row.flagged == null) {
+    const why = row && row.durationMs != null ? 'Snipe burst was not read' : 'Create and graduation times were not both read';
+    return check('instantBond', 'Near-instant bonding', 'unknown', why);
+  }
   if (!row.flagged) {
     const seen = row.durationMs == null ? 'Coin has not graduated' : `Graduated in ${Math.round(row.durationMs / 1000)}s`;
     return check('instantBond', 'Near-instant bonding', 'green', seen);
   }
-  return check('instantBond', 'Near-instant bonding', 'red', `Graduated in ${Math.round(row.durationMs / 1000)}s`);
+  const seconds = Math.round(row.durationMs / 1000);
+  const reason = row.rushed === true
+    ? `Rushed bonding: graduated in ${seconds}s with a failed-snipe burst`
+    : `Graduated in ${seconds}s`;
+  return check('instantBond', 'Near-instant bonding', 'red', reason);
 }
 
 function classifyTopTraders(row) {
@@ -326,7 +333,7 @@ function classifyPump(row) {
 }
 
 function classifyBleed(row) {
-  if (!row || row.flagged == null) return check('bleed', 'Slow bleed', 'unknown', 'Linked sells after the armed pump were not read');
+  if (!row || row.flagged == null) return check('bleed', 'Slow bleed', 'unknown', (row && row.reason) || 'Linked sells after the armed pump were not read');
   if (!row.flagged) return check('bleed', 'Slow bleed', 'green', 'No slow bleed after the armed pump');
   const sol = row.soldSol == null ? 'unknown SOL' : `${Number(row.soldSol).toFixed(3)} SOL`;
   const supply = row.soldSupplyPct == null ? 'unknown supply' : `${Number(row.soldSupplyPct).toFixed(1)}% of supply`;
@@ -701,21 +708,38 @@ function createSafetyChecks(options = {}) {
 
     let rug = null;
     let coin = null;
+    let coinError = null;
     let dex = null;
     try { rug = await external(`${RUGCHECK}${key}/report/summary`); } catch (err) { rug = null; }
-    try { coin = await external(pumpCoinUrl(key)); } catch (err) { coin = null; }
+    if (!rug || !(rug.creator || rug.creatorAddress)) {
+      try {
+        const full = await external(`${RUGCHECK}${key}/report`);
+        if (full && typeof full === 'object') rug = { ...(rug || {}), ...full };
+      } catch (err) { /* summary remains */ }
+    }
+    const pumpFetch = async (url) => {
+      try {
+        const body = await fetchJson(url);
+        return { ok: true, status: 200, json: async () => body };
+      } catch (err) {
+        const matched = /HTTP (\d+)/.exec(err && err.message || '');
+        return { ok: false, status: matched ? Number(matched[1]) : 500, json: async () => ({}) };
+      }
+    };
+    try { coin = await fetchPumpCoin(key, { fetch: pumpFetch }); } catch (err) { coinError = err.message; coin = null; }
+    if (Array.isArray(coin)) coin = coin.find(row => row && row.mint === key) || null;
     try {
       const body = await external(`https://api.dexscreener.com/latest/dex/tokens/${key}`);
       dex = body && Array.isArray(body.pairs) ? body.pairs[0] : null;
     } catch (err) { dex = null; }
 
-    const creator = (coin && coin.creator) || (rug && (rug.creator || rug.creatorAddress)) || null;
+    let creator = (coin && coin.creator) || (rug && (rug.creator || rug.creatorAddress)) || null;
     let coins = null;
     if (creator) {
       coins = [];
       try {
         for (let offset = 0; offset < 250; offset += 50) {
-          const page = await external(pumpUserUrl(creator, offset));
+          const page = await fetchCreatedCoins(creator, offset, { fetch: pumpFetch });
           const rows = Array.isArray(page) ? page : (page && page.coins) || [];
           coins.push(...rows);
           if (rows.length < 50) break;
@@ -729,6 +753,11 @@ function createSafetyChecks(options = {}) {
     const holders = await readHolders(key);
     if (holders && rug && num(rug.totalHolders) != null) holders.holderCount = rug.totalHolders;
     const curve = await readCurve(key);
+    if (!creator && curve && curve.creator) creator = curve.creator;
+    if ((!coin || coin.created_timestamp == null) && dex && dex.pairCreatedAt) {
+      coin = { ...(coin || {}), created_timestamp: dex.pairCreatedAt, usd_market_cap: coin && coin.usd_market_cap != null ? coin.usd_market_cap : dex.marketCap, name: (coin && coin.name) || (dex.baseToken && dex.baseToken.name) || null, creator: (coin && coin.creator) || creator };
+    }
+    if (coins == null && rug && Array.isArray(rug.creatorTokens)) coins = rug.creatorTokens;
     const supplyRaw = holders && holders.supplyRaw;
     const devPct = await creatorBalancePct(creator, key, supplyRaw);
     const createdMs = coin && num(coin.created_timestamp)
@@ -760,9 +789,9 @@ function createSafetyChecks(options = {}) {
       classifyLadder(ladderLookup(key)),
       classifyMigration(migrationLookup(key)),
       classifyKolShadow(kolShadowLookup(key)),
-      classifyMcRun(mcRunLookup(key)),
-      classifyScaleOut(scaleOutLookup(key)),
-      classifyInstantBond(bondingLookup(key)),
+      classifyMcRun(mcRunLookup(key) || (phase && phase.mcRun)),
+      classifyScaleOut(scaleOutLookup(key) || (phase && phase.scaleOut)),
+      classifyInstantBond(bondingLookup(key) || (phase && phase.instantBond)),
       classifyPump(phase && phase.pumps),
       classifyBleed(phase && phase.bleed),
       classifyNonMigrator(phase && phase.nonMigrator),
@@ -780,6 +809,10 @@ function createSafetyChecks(options = {}) {
       rug ? classifyCreatorFlags(rug) : check('creatorFlags', 'RugCheck creator flags', 'unknown', 'RugCheck request failed'),
       check('blacklist', 'Local blacklist', 'green', 'Dev is not on the local blacklist')
     ];
+    if (coinError && !Number.isFinite(createdMs)) {
+      const age = checks.find(row => row.id === 'age');
+      if (age && age.status === 'unknown') age.reason = `Pump API 404. ${coinError}`;
+    }
 
     const book = loadBlacklist();
     const listed = creator && book.devs.find(row => row.address === creator);
