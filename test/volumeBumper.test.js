@@ -7,6 +7,7 @@ process.env.WALLETS_FILE = path.join(os.tmpdir(), `bump-wallets-${process.pid}.j
 const walletManager = require('../src/walletManager');
 const tradingEngine = require('../src/tradingEngine');
 const { chooseBumpSide, createRandomStrategy } = require('../src/volumeStrategy');
+const realBuy = tradingEngine.executeBuy.bind(tradingEngine);
 const realSell = tradingEngine.executeSell.bind(tradingEngine);
 
 function addresses() {
@@ -421,4 +422,53 @@ test('a 100% manual sell, cascade, panic, and mint change stop the bumper', asyn
   assert.equal(tradingEngine.bumpLastError, 'Stopped: token changed');
   assert.equal(tradingEngine.activeToken, 'OtherMint');
   assert.ok(switched.calls.sells.some(row => row.address === switched.bought));
+});
+
+test('session spend is net of sells and floors at zero', async () => {
+  quiet();
+  tradingEngine.executeBuy = realBuy;
+  tradingEngine.executeSell = realSell;
+  const address = addresses()[0];
+  walletManager.setSimSol(address, 1);
+  tradingEngine.sessionSpentSol = 0;
+  tradingEngine.curve = null;
+  const bought = await tradingEngine.executeBuy({ solAmount: 0.01, walletAddresses: [address] });
+  assert.equal(bought.success, true);
+  assert.equal(Number(tradingEngine.sessionSpentSol.toFixed(4)), 0.01);
+  const sold = await tradingEngine.executeSell({ pct: 100, walletAddresses: [address] });
+  assert.equal(sold.success, true);
+  assert.ok(tradingEngine.sessionSpentSol < 0.01);
+  assert.ok(tradingEngine.sessionSpentSol >= 0);
+  tradingEngine.sessionSpentSol = 0.001;
+  tradingEngine.noteSessionSell(5);
+  assert.equal(tradingEngine.sessionSpentSol, 0);
+});
+
+test('the bumper stops before a buy that would pass the session cap without counting an error', async () => {
+  quiet();
+  const calls = mockTrades();
+  const clock = manualClock();
+  tradingEngine.startVolumeBumper(0.01, {
+    reserveSol: 0,
+    strategy: 'round-trip',
+    minDelaySeconds: 1,
+    maxDelaySeconds: 1,
+    maxCycles: 100,
+    sessionBudget: 0.5,
+    schedule: clock.schedule,
+    rng: () => 0
+  });
+  await clock.fire();
+  assert.equal(calls.buys.length, 1);
+  tradingEngine.sessionSpentSol = 0.5;
+  await clock.fire();
+  assert.equal(calls.sells.length, 1);
+  assert.equal(tradingEngine.isBumping, true);
+  assert.equal(tradingEngine.bumpErrors, 0);
+  await clock.fire();
+  assert.equal(calls.buys.length, 1);
+  assert.equal(tradingEngine.isBumping, false);
+  assert.equal(tradingEngine.bumpErrors, 0);
+  assert.equal(tradingEngine.bumpLastError, 'Session spend cap reached. Bumper stopped.');
+  assert.equal(tradingEngine.bumpSnapshot().sessionSpentSol, 0.5);
 });

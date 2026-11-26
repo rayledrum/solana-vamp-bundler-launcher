@@ -57,6 +57,13 @@ function chooseBumpSide(openCount, maxOpen, rng) {
   return roll < open / max ? 'sell' : 'buy';
 }
 
+function sessionCapStop(engine, solAmount) {
+  if (engine.sessionBuyWouldExceed && engine.sessionBuyWouldExceed(solAmount)) {
+    return { actions: [], stopReason: 'Session spend cap reached. Bumper stopped.' };
+  }
+  return null;
+}
+
 function sellFraction(rng) {
   const roll = typeof rng === 'function' ? rng() : Math.random();
   return Math.min(1, 0.25 + (Number.isFinite(roll) ? roll : 0) * 0.75);
@@ -80,6 +87,8 @@ function createRoundTripStrategy(options = {}) {
         return { actions };
       }
       if (!engine.isBumping || engine.activeToken !== mint || !engine.canBumpBuy()) return { actions };
+      const capped = sessionCapStop(engine, solAmount);
+      if (capped) return capped;
       const busy = new Set(open.map(row => row.address));
       const candidates = engine.bumpSubWallets(solAmount).filter(address => !busy.has(address));
       if (!candidates.length) return { actions };
@@ -132,6 +141,8 @@ function createRandomStrategy(options = {}) {
         return { actions };
       }
       if (!engine.isBumping || engine.activeToken !== mint || !engine.canBumpBuy()) return { actions };
+      const capped = sessionCapStop(engine, solAmount);
+      if (capped) return capped;
       const busy = new Set(open.map(row => row.address));
       const candidates = engine.bumpSubWallets(solAmount).filter(address => !busy.has(address));
       if (!candidates.length) return { actions };
