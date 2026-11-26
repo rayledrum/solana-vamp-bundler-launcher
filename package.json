@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "collect": "node src/research/collect.js",
+    "backfill": "node src/research/backfill.js",
+    "backtest": "node src/research/backtest.js"
   },
   "keywords": [],
   "author": "",

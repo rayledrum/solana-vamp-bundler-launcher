@@ -76,6 +76,8 @@ function bindShellActions() {
     if (name === 'delayInput') return handleDelayInputChange(el.value);
     if (name === 'toggleSelectAll') return toggleSelectAllRows(el.checked);
     if (name === 'toggleSafetyAuto') return toggleSafetyAuto(el.checked);
+    if (name === 'saveExitLadder') return saveExitLadder(el.checked);
+    if (name === 'refreshResearch') return refreshResearch();
     if (name === 'logoSelect') return handleLogoSelect(event);
     if (name === 'bundleMetrics') return calculateBundleMetrics();
     const fn = window[name];
@@ -104,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindTrackedCaInputs();
   connectWebSocket();
   loadStatus();
+  refreshResearch();
   loadMasterWallet();
   loadSubWallets();
   loadTrendingVampTokens();
@@ -1989,6 +1992,47 @@ async function toggleSafetyAuto(checked) {
     });
   } catch (err) {
     showToast('Safety setting failed: ' + err.message, 'error');
+  }
+}
+
+async function refreshResearch() {
+  const metaEl = document.getElementById('researchMeta');
+  const sniperEl = document.getElementById('researchSnipers');
+  if (!metaEl) return;
+  try {
+    const res = await apiFetch('/api/research/meta');
+    const data = await res.json().catch(() => ({}));
+    const themes = data.windows && data.windows['1h'] || [];
+    metaEl.textContent = themes.length
+      ? themes.slice(0, 4).map(row => `${row.theme} ${row.momentum.toFixed(1)}`).join(' · ')
+      : 'No theme sample yet.';
+    const snipers = await apiFetch('/api/research/snipers');
+    const body = await snipers.json().catch(() => ({}));
+    const own = (body.ownLaunches || []).filter(row => row.known);
+    if (sniperEl) {
+      sniperEl.textContent = own.length
+        ? own.map(row => `${row.mint.slice(0, 4)} same-block ${row.sameBlockSupplyPct == null ? '—' : row.sameBlockSupplyPct.toFixed(1) + '%'}`).join(' · ')
+        : 'No own-launch sniper sample yet.';
+    }
+  } catch (err) {
+    metaEl.textContent = 'Research unavailable.';
+  }
+}
+
+async function saveExitLadder(enabled) {
+  try {
+    const res = await apiFetch('/api/research/exit-ladder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: Boolean(enabled) })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Exit ladder is simulation-only');
+    showToast(enabled ? 'Sim exit ladder on' : 'Exit ladder off', 'info');
+  } catch (err) {
+    const box = document.getElementById('exitLadderEnabled');
+    if (box) box.checked = false;
+    showToast(err.message, 'error');
   }
 }
 

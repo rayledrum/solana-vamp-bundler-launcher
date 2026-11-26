@@ -20,6 +20,9 @@ const { readPumpGlobal } = require('./bondingCurve');
 const { PumpSwapFeed } = require('./pumpSwap');
 const { marketCapFromFeed } = require('../public/js/chartScale');
 const { safetyChecks } = require('./safetyChecks');
+const { createStore } = require('./research/store');
+const { loadMeta } = require('./research/meta');
+const { ownLaunchSnipers } = require('./research/snipers');
 const {
   parseStrictBoolean,
   requirePositive,
@@ -569,6 +572,51 @@ app.post('/api/vamp/mutate', (req, res) => {
     const { tokenData, mode } = req.body || {};
     const mutated = vampScanner.generateVampMutation(tokenData, mode);
     res.json({ success: true, mutated });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.get('/api/research/meta', async (req, res) => {
+  try {
+    const report = await loadMeta({ store: createStore() });
+    res.json({ success: true, ...report });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.get('/api/research/snipers', (req, res) => {
+  try {
+    const store = createStore();
+    const rows = store.readJsonl('snipers.jsonl');
+    res.json({ success: true, rows, ownLaunches: ownLaunchSnipers(safetyChecks.listOwnLaunches(), rows) });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.get('/api/research/exit-ladder', (req, res) => {
+  res.json({ success: true, simulation: walletManager.simulationMode, ladder: tradingEngine.exitLadder });
+});
+
+app.post('/api/research/exit-ladder', (req, res) => {
+  try {
+    const ladder = tradingEngine.configureExitLadder(req.body || {});
+    res.json({ success: true, ladder });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/research/exit-ladder/tick', async (req, res) => {
+  try {
+    if (!walletManager.simulationMode) {
+      return res.status(400).json({ error: 'Exit ladder ticks are simulation-only' });
+    }
+    const quote = req.body && req.body.mcapUsd != null ? req.body : {};
+    const result = await tradingEngine.reviewExitLadder(tradingEngine.activeToken, quote, req.body && req.body.now);
+    res.json({ success: true, result });
   } catch (err) {
     sendError(res, err);
   }

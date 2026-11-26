@@ -1,0 +1,17 @@
+{
+  "mint": "2sucMuqdr6q1YuoiWsxNUrk9ou2LvCTJ4gGNMBaeSVUy",
+  "wallet": "GCDvRxXXJb7XE4Js3mPCMBWhsoiVinJ3yMJbWCqgxaiE",
+  "signatures": [
+    {
+      "signature": "tradeSig",
+      "slot": 101,
+      "blockTime": 1700000060
+    },
+    {
+      "signature": "createSig",
+      "slot": 100,
+      "blockTime": 1700000000
+    }
+  ],
+  "log": "Program data: vdt/007mYe4b5jab9f9y2KVlxX7Bu8Pq40WxOwgDviWAKsPWKjwAngDKmjsAAAAAAIhSanQAAAAB4b9Nh/suCHaqZ93qUSsSS1N6kUpevhd1NDiGYKrnZkM88VNlAAAAAACsI/wGAAAAABCl1OgAAAA="
+}
