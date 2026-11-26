@@ -19,6 +19,7 @@ const { fetchSingleVersionedTx, sendAndConfirmVersioned } = require('./portalTx'
 const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTradeFeeSol } = require('./pnl');
 const { pumpPortalFeedEvent } = require('./curveFeed');
 const { curveState, MIGRATION_DESTINATION, ammOut } = require('./bondingCurve');
+const { safetyChecks } = require('./safetyChecks');
 const { createVolumeStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
 
 class TradingEngine {
@@ -49,6 +50,7 @@ class TradingEngine {
     this.seedPromise = null;
     this.seedPromiseMint = null;
     this.portalFetch = fetchSingleVersionedTx;
+    this.safetyBlock = (mint) => safetyChecks.buyBlockReason(mint);
     this.seenTradeSigs = new Set();
     this.pumpPortalNotice = '';
   }
@@ -848,6 +850,10 @@ class TradingEngine {
     const mint = this.activeToken;
     if (!mint) throw new ValidationError('No active token is currently selected');
     const amountPerWallet = requireSolTradeAmount(solAmount);
+    if (typeof this.safetyBlock === 'function') {
+      const blocked = await this.safetyBlock(mint);
+      if (blocked) throw new ValidationError(blocked);
+    }
     const isSim = walletManager.simulationMode;
     const targets = walletAddresses.length ? this.knownTargets(walletAddresses) : (isSim ? this.fundedSimWallets() : this.knownTargets([]));
 
