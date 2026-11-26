@@ -23,6 +23,18 @@ function passesFilters(coin, filters = {}) {
     const pct = coin.coordination && coin.coordination.coordinatedSupplyPct;
     if (pct == null || pct > filters.maxCoordinatedPct) return false;
   }
+  if (filters.maxWashVolumePct != null) {
+    const pct = coin.wash && coin.wash.washVolumePct;
+    if (pct == null || pct > filters.maxWashVolumePct) return false;
+  }
+  if (filters.maxPaddedHolderPct != null) {
+    const pct = coin.holders && coin.holders.paddedHolderPct;
+    if (pct == null || pct > filters.maxPaddedHolderPct) return false;
+  }
+  if (filters.maxMigrationDumpPct != null) {
+    const pct = coin.migration && coin.migration.dumpedSupplyPct;
+    if (pct == null || pct > filters.maxMigrationDumpPct) return false;
+  }
   return true;
 }
 
@@ -73,7 +85,14 @@ function simulatePath(coin, ladder, costs) {
   const endMultiple = last ? last.mcapUsd / entry.mcapUsd : 1;
   proceeds += remaining * endMultiple * drag;
   const pnl = proceeds - 1;
-  return { mint: coin.mint, pnl, entryMcapUsd: entry.mcapUsd, endMcapUsd: last ? last.mcapUsd : null };
+  return {
+    mint: coin.mint,
+    pnl,
+    entryMcapUsd: entry.mcapUsd,
+    endMcapUsd: last ? last.mcapUsd : null,
+    migrationDumpPct: coin.migration && coin.migration.dumpedSupplyPct != null ? coin.migration.dumpedSupplyPct : null,
+    migrationFirstDumpMs: coin.migration && coin.migration.firstDumpMs != null ? coin.migration.firstDumpMs : null
+  };
 }
 
 function bucket(pnl) {
@@ -151,4 +170,27 @@ function compareLadders(coins, ladders, costs = {}) {
   }));
 }
 
-module.exports = { runBacktest, formatReport, passesFilters, median, compareLadders };
+function summarizePaths(list) {
+  const pnls = list.map(row => row.pnl);
+  return {
+    n: list.length,
+    hitRate: list.length ? pnls.filter(value => value > 0).length / list.length : null,
+    avgPnl: list.length ? pnls.reduce((sum, value) => sum + value, 0) / list.length : null,
+    medianPnl: median(pnls)
+  };
+}
+
+function compareMigrationDumps(coins, costs = {}) {
+  const dumped = [];
+  const clean = [];
+  (coins || []).forEach(coin => {
+    const row = coin && coin.migration;
+    if (!row || row.flagged == null || row.dumpedSupplyPct == null) return;
+    const path = simulatePath(coin, {}, { feePct: costs.feePct == null ? 1 : costs.feePct, slippagePct: costs.slippagePct == null ? 1 : costs.slippagePct });
+    if (!path) return;
+    (row.flagged ? dumped : clean).push(path);
+  });
+  return { dumped: summarizePaths(dumped), clean: summarizePaths(clean) };
+}
+
+module.exports = { runBacktest, formatReport, passesFilters, median, compareLadders, compareMigrationDumps };
