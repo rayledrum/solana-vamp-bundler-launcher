@@ -2,6 +2,7 @@ const { createStore } = require('./store');
 const { ingestLaunches, takeDueSnapshots, pollNewCoins, createPacer } = require('./collector');
 const { analyzeEarlyBuys, updateRegistry } = require('./snipers');
 const { analyzeDevExit } = require('./devExit');
+const { clusterFunding } = require('./funding');
 const fs = require('fs');
 const { safetyChecks } = require('../safetyChecks');
 
@@ -72,6 +73,13 @@ async function runCollect(options = {}) {
         observedUntil: pack && pack.observedUntil,
         trades: pack && pack.trades,
         snapshots: pack && pack.snapshots
+      }));
+      store.append('funding-clusters.jsonl', clusterFunding({
+        mint: coin.mint,
+        dev: pack && pack.dev,
+        buyers: analysis.buys,
+        fundings: pack && pack.fundings,
+        trades: pack && pack.trades
       }));
     }
     updateRegistry(registry, analyses);

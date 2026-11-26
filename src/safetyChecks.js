@@ -156,6 +156,18 @@ function classifySocials(source) {
   return check('socials', 'Socials', 'green', present.join(', '));
 }
 
+function classifyFundingClusters(row) {
+  if (!row || row.largestClusterSupplyPct == null) {
+    return check('fundingClusters', 'Funding clusters', 'unknown', 'Early-buyer funding was not read');
+  }
+  const pct = Number(row.largestClusterSupplyPct);
+  const devPct = row.devLinkedClusterSupplyPct == null ? null : Number(row.devLinkedClusterSupplyPct);
+  const status = pct >= 20 || (devPct != null && devPct >= 10) ? 'red' : pct >= 8 ? 'yellow' : 'green';
+  const count = row.clusterCount == null ? 'unknown count' : `${row.clusterCount} cluster${row.clusterCount === 1 ? '' : 's'}`;
+  const dev = devPct == null ? '' : `; dev-linked ${devPct.toFixed(1)}%`;
+  return check('fundingClusters', 'Funding clusters', status, `${count}; largest ${pct.toFixed(1)}% of supply${dev}`);
+}
+
 function classifyDevAssociated(pct) {
   if (pct == null || !Number.isFinite(Number(pct))) {
     return check('devAssociated', 'Dev-associated hold', 'unknown', 'Dev-linked wallets were not identified');
@@ -238,6 +250,17 @@ function readDevAssociated(mint) {
   }
 }
 
+function readFundingClusters(mint) {
+  try {
+    const rows = createStore().readJsonl('funding-clusters.jsonl');
+    const row = rows.filter(item => item && item.mint === mint).pop();
+    if (!row || row.largestClusterSupplyPct == null) return null;
+    return row;
+  } catch (err) {
+    return null;
+  }
+}
+
 function readSniperCluster(mint) {
   try {
     const rows = createStore().readJsonl('snipers.jsonl');
@@ -261,6 +284,7 @@ function createSafetyChecks(options = {}) {
   const fetchJson = options.fetchJson || defaultFetchJson;
   const sniperLookup = options.sniperLookup || readSniperCluster;
   const devLookup = options.devLookup || readDevAssociated;
+  const fundingLookup = options.fundingLookup || readFundingClusters;
   const connection = options.connection || null;
   const cache = new Map();
   let lastCall = 0;
@@ -507,6 +531,7 @@ function createSafetyChecks(options = {}) {
       classifyAuthorities(authorities),
       classifyHolders(holders),
       classifySnipers(sniperLookup(key) || { unknown: true, reason: 'First-block buyers were not read' }),
+      classifyFundingClusters(fundingLookup(key)),
       classifyCurve(curve),
       classifyMarket(dex),
       classifyAge(createdMs, Date.now()),

@@ -19,6 +19,7 @@ const { analyzeDevExit, compareDevExit } = require('../src/research/devExit');
 const { compareLadders } = require('../src/research/backtest');
 const { createSafetyChecks } = require('../src/safetyChecks');
 const { runCollect } = require('../src/research/collect');
+const { clusterFunding, compareFundingClusters, traceFunding, CEX_WALLETS } = require('../src/research/funding');
 
 function tempStore() {
   return createStore(fs.mkdtempSync(path.join(os.tmpdir(), 'research-')));
@@ -261,4 +262,96 @@ test('collection stores sniper rows only from supplied trades', async () => {
   const exits = store.readJsonl('dev-exits.jsonl');
   assert.equal(exits[0].fullyExited, null);
   assert.equal(exits[0].associatedHoldPct, null);
+  const funding = store.readJsonl('funding-clusters.jsonl');
+  assert.equal(funding[0].clusterCount, null);
+});
+
+test('same-amount funding forms a cluster and a CEX does not', async () => {
+  const binance = Object.keys(CEX_WALLETS)[0];
+  const clustered = clusterFunding({
+    mint: 'MintA',
+    dev: 'Dev',
+    buyers: [
+      { wallet: 'A', supplyPct: 4 },
+      { wallet: 'B', supplyPct: 4.2 },
+      { wallet: 'C', supplyPct: 3 },
+      { wallet: 'D', supplyPct: 3 }
+    ],
+    fundings: [
+      { wallet: 'A', funder: 'Mid', amount: 1, time: 1_000 },
+      { wallet: 'B', funder: 'Mid', amount: 1.02, time: 2_000 },
+      { wallet: 'Mid', funder: 'Root', amount: 3, time: 500 },
+      { wallet: 'C', funder: binance, amount: 1, time: 1_000, cex: true },
+      { wallet: 'D', funder: binance, amount: 1, time: 1_500, cex: true }
+    ],
+    trades: [
+      { side: 'sell', wallet: 'A', time: 50_000 },
+      { side: 'sell', wallet: 'B', time: 80_000 }
+    ]
+  });
+  assert.equal(clustered.clusterCount, 1);
+  assert.equal(clustered.clusters[0].funder, 'Root');
+  assert.equal(clustered.clusters[0].walletCount, 2);
+  assert.equal(clustered.clusters[0].devLinked, false);
+  assert.equal(clustered.clusters[0].supplyPct, 8.2);
+  assert.deepEqual(clustered.clusters[0].sellTimes.map(row => row.soldAt), [50_000, 80_000]);
+  assert.equal(clustered.fundings.find(row => row.wallet === 'C').cex, 'Binance');
+  const devLinked = clusterFunding({
+    mint: 'MintB',
+    dev: 'Dev',
+    buyers: [{ wallet: 'E', supplyPct: 6 }, { wallet: 'F', supplyPct: 6 }],
+    fundings: [
+      { wallet: 'E', funder: 'Dev', amount: 0.5, time: 10 },
+      { wallet: 'F', funder: 'Dev', amount: 0.5, time: 20 }
+    ]
+  });
+  assert.equal(devLinked.clusters[0].devLinked, true);
+  assert.equal(devLinked.devLinkedClusterSupplyPct, 12);
+  const missing = clusterFunding({
+    mint: 'MintC',
+    buyers: [{ wallet: 'A' }, { wallet: 'B' }],
+    fundings: [{ wallet: 'A', funder: 'Root', amount: 1, time: 1, traced: true }, { wallet: 'B', traced: false }]
+  });
+  assert.equal(missing.clusterCount, null);
+  const compared = compareFundingClusters([
+    { pnl: -0.3, funding: { largestClusterSupplyPct: 20, devLinked: true } },
+    { pnl: 0.2, funding: { largestClusterSupplyPct: 18, devLinked: false } },
+    { pnl: 1, funding: { largestClusterSupplyPct: null, devLinked: false } }
+  ]);
+  assert.equal(compared.devCluster.n, 1);
+  assert.equal(compared.otherCluster.n, 1);
+  assert.equal(compared.devCluster.hitRate, 0);
+  const filtered = runBacktest({
+    coins: [
+      { mint: 'Big', funding: { largestClusterSupplyPct: 30 }, snapshots: [{ atMin: 1, mcapUsd: 5000 }, { atMin: 10, mcapUsd: 2000 }] },
+      { mint: 'Small', funding: { largestClusterSupplyPct: 2 }, snapshots: [{ atMin: 1, mcapUsd: 5000 }, { atMin: 10, mcapUsd: 8000 }] }
+    ],
+    filters: { maxClusterSupplyPct: 10 },
+    ladder: { milestones: [], moonbagPct: 0, stallMinutes: 999 }
+  });
+  assert.equal(filtered.trades, 1);
+  assert.equal(filtered.paths[0].mint, 'Small');
+  let rpcCalls = 0;
+  const cache = new Map();
+  const connection = {
+    async getSignaturesForAddress() {
+      rpcCalls += 1;
+      return [{ signature: 'sig', blockTime: 100 }];
+    },
+    async getParsedTransaction() {
+      rpcCalls += 1;
+      return { transaction: { message: { instructions: [{ parsed: { type: 'transfer', info: { source: 'Hopper', destination: 'WalletA', lamports: 1_000_000_000 } } }] } } };
+    }
+  };
+  const traced = await traceFunding({
+    connection,
+    buyers: [{ wallet: 'WalletA' }],
+    before: 100 * 1000 + 1000,
+    cache,
+    pace: async () => {}
+  });
+  assert.equal(traced[0].funder, 'Hopper');
+  assert.equal(traced[0].amount, 1);
+  await traceFunding({ connection, buyers: [{ wallet: 'WalletA' }], before: 100 * 1000 + 1000, cache, pace: async () => {} });
+  assert.equal(rpcCalls, 2);
 });

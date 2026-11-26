@@ -15,6 +15,10 @@ function passesFilters(coin, filters = {}) {
     const pct = coin.snipers && coin.snipers.sameBlockSupplyPct;
     if (pct == null || pct > filters.maxSameBlockPct) return false;
   }
+  if (filters.maxClusterSupplyPct != null) {
+    const pct = coin.funding && coin.funding.largestClusterSupplyPct;
+    if (pct == null || pct > filters.maxClusterSupplyPct) return false;
+  }
   return true;
 }
 
