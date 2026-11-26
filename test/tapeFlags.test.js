@@ -102,10 +102,18 @@ test('a dense sell trail while market cap rises is a scale-out', () => {
 });
 
 test('graduation under the threshold is near-instant bonding', () => {
-  const fast = analyzeInstantBond({ mint: 'MintA', createTime: 0, graduatedAt: 12_000, graduated: true });
+  const fast = analyzeInstantBond({
+    mint: 'MintA',
+    createTime: 0,
+    graduatedAt: 5 * 60 * 1000,
+    graduated: true,
+    snipeBurst: { signatures: 9653, failedRatio: 0.77 }
+  });
   assert.equal(fast.flagged, true);
-  assert.equal(fast.durationMs, 12_000);
-  const normal = analyzeInstantBond({ mint: 'MintB', createTime: 0, graduatedAt: 90_000, graduated: true, thresholdMs: 60_000 });
+  assert.equal(fast.rushed, true);
+  const quiet = analyzeInstantBond({ mint: 'MintA', createTime: 0, graduatedAt: 12_000, graduated: true, snipeBurst: { signatures: 4, failedRatio: 0 } });
+  assert.equal(quiet.flagged, false);
+  const normal = analyzeInstantBond({ mint: 'MintB', createTime: 0, graduatedAt: 15 * 60 * 1000, graduated: true, snipeBurst: { signatures: 9653, failedRatio: 0.77 } });
   assert.equal(normal.flagged, false);
   assert.equal(analyzeInstantBond({ mint: 'MintC', graduated: true }).flagged, null);
   assert.equal(passesFilters({ bonding: { graduated: true, durationMs: 12_000 } }, { minBondingSec: 60 }), false);

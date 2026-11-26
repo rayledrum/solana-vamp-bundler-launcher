@@ -1,5 +1,5 @@
 const DEFAULT_WINDOW_MS = 30 * 60 * 1000;
-const DEFAULT_BOND_MS = 60 * 1000;
+const DEFAULT_BOND_MS = 10 * 60 * 1000;
 const MC_RUN_MIN_BUYS = 5;
 const MC_RUN_RATIO = 3;
 const SCALE_MIN_SELLS = 4;
@@ -190,7 +190,15 @@ function analyzeInstantBond(input = {}) {
     return { mint: input.mint || null, flagged: null, durationMs: null, thresholdMs };
   }
   const durationMs = done - create;
-  return { mint: input.mint || null, flagged: durationMs < thresholdMs, durationMs, thresholdMs };
+  if (!(durationMs < thresholdMs)) {
+    return { mint: input.mint || null, flagged: false, durationMs, thresholdMs, rushed: false };
+  }
+  const burst = input.snipeBurst;
+  if (!burst || finite(burst.signatures) == null || finite(burst.failedRatio) == null) {
+    return { mint: input.mint || null, flagged: null, durationMs, thresholdMs, rushed: null };
+  }
+  const rushed = burst.signatures >= 100 && burst.failedRatio >= 0.5;
+  return { mint: input.mint || null, flagged: rushed, durationMs, thresholdMs, rushed };
 }
 
 module.exports = {

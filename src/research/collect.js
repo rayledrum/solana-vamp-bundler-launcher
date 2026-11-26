@@ -416,6 +416,16 @@ async function fillTapes({ store, coins, readTape, traceFunding: trace, pace, fu
       holders: pack.holders,
       treasury: pack.treasury || launch.treasury
     });
+    store.append('tapes.jsonl', {
+      mint,
+      createTime: pack.createTime || null,
+      createSlot: pack.createSlot || null,
+      supply: pack.supply || null,
+      graduated: pack.graduated == null ? null : pack.graduated,
+      graduatedAt: pack.graduatedAt || null,
+      signatures: pack.signatures || null,
+      trades
+    });
     slot.tape = true;
     tapes += 1;
     } catch (err) {

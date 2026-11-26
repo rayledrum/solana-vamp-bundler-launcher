@@ -4,7 +4,7 @@ const { labelNonMigrators } = require('./nonMigrator');
 const config = require('../config');
 
 const DEFAULT_RISE_PCT = 50;
-const DEFAULT_DRAWDOWN_PCT = 25;
+const DEFAULT_DRAWDOWN_PCT = 50;
 const DEFAULT_SECOND_PUMP_USD = 100_000;
 const DEFAULT_FLOOR_USD = 50_000;
 const DEFAULT_SLICES = [50, 25, 25];
@@ -45,7 +45,9 @@ function trackPumps(series, options = {}) {
   }
   const minRise = finite(options.minRisePct) == null ? DEFAULT_RISE_PCT : finite(options.minRisePct);
   const minDrawdown = finite(options.minDrawdownPct) == null ? DEFAULT_DRAWDOWN_PCT : finite(options.minDrawdownPct);
+  const minDipMs = finite(options.minDipDurationMs) == null ? 0 : finite(options.minDipDurationMs);
   const threshold = finite(options.secondPumpMcapUsd) == null ? DEFAULT_SECOND_PUMP_USD : finite(options.secondPumpMcapUsd);
+  const minPump2 = finite(options.minPump2McapUsd) == null ? threshold : finite(options.minPump2McapUsd);
   const solPriceUsd = finite(options.solPriceUsd);
   const useUsd = series.some(row => finite(row && row.mcapUsd) != null);
   const points = series.map(row => ({
@@ -65,6 +67,7 @@ function trackPumps(series, options = {}) {
   let high = null;
   let highAt = null;
   let highUsd = null;
+  let dipAt = null;
   points.forEach(point => {
     if (!rising) {
       if (point.value < trough) trough = point.value;
@@ -73,6 +76,7 @@ function trackPumps(series, options = {}) {
         high = point.value;
         highAt = point.time;
         highUsd = point.usd;
+        dipAt = null;
       }
       return;
     }
@@ -80,22 +84,37 @@ function trackPumps(series, options = {}) {
       high = point.value;
       highAt = point.time;
       highUsd = point.usd;
-    } else if (high > 0 && ((high - point.value) / high) * 100 >= minDrawdown) {
+      dipAt = null;
+      return;
+    }
+    const drawdownPct = high > 0 ? ((high - point.value) / high) * 100 : 0;
+    if (drawdownPct < minDrawdown) {
+      dipAt = null;
+      return;
+    }
+    if (dipAt == null) dipAt = point.time;
+    if (point.time - dipAt < minDipMs) return;
+    const major = pumps.some(pump => pump.peakMcapUsd != null && pump.peakMcapUsd >= threshold) || (highUsd != null && highUsd >= threshold);
+    const wiggle = pumps.length >= 1 && major && highUsd != null && highUsd < minPump2;
+    if (!wiggle) {
       pumps.push({
         number: pumps.length + 1,
         peakAt: highAt,
         peakValue: high,
         peakMcapUsd: highUsd,
-        drawdownPct: ((high - point.value) / high) * 100
+        drawdownPct
       });
-      rising = false;
-      trough = point.value;
-      high = null;
     }
+    rising = false;
+    trough = point.value;
+    high = null;
+    dipAt = null;
   });
   const armed = armAfterPump == null ? null : pumps.some(pump => pump.number >= armAfterPump);
   return {
     pumps,
+    rising,
+    activePump: rising ? pumps.length + 1 : null,
     peakMcapUsd: usdValues.length ? Math.max(...usdValues) : null,
     aboveSecondPumpThreshold,
     armAfterPump,
@@ -180,7 +199,7 @@ function buildExitAlert(input = {}) {
   };
 }
 
-function planBleedExit({ alert, state, mcapUsd, mcapSol, solPriceUsd, floorUsd, positionTokens, slices }) {
+function planBleedExit({ alert, state, mcapUsd, mcapSol, solPriceUsd, floorUsd, positionTokens, slices, now, minSliceGapMs, minSliceDrawdownPct, linkedSells }) {
   const book = state || { step: 0, originalTokens: null };
   const floor = finite(floorUsd) == null ? DEFAULT_FLOOR_USD : finite(floorUsd);
   const planSlices = Array.isArray(slices) && slices.length ? slices : DEFAULT_SLICES;
@@ -196,6 +215,16 @@ function planBleedExit({ alert, state, mcapUsd, mcapSol, solPriceUsd, floorUsd, 
   }
   if (book.step >= planSlices.length) {
     return { action: 'hold', sellPct: 0, reason: 'slices-done', state: book, nextStep: book.step };
+  }
+  if (book.step > 0) {
+    const gap = finite(minSliceGapMs) == null ? 60_000 : finite(minSliceGapMs);
+    const drawdown = finite(minSliceDrawdownPct) == null ? 10 : finite(minSliceDrawdownPct);
+    const waited = book.lastSellAt != null && finite(now) != null && now - book.lastSellAt >= gap;
+    const deeper = book.lastMcapUsd > 0 && usd <= book.lastMcapUsd * (1 - drawdown / 100);
+    const moreSells = finite(linkedSells) != null && finite(book.linkedSells) != null && linkedSells > book.linkedSells;
+    if (!waited && !deeper && !moreSells) {
+      return { action: 'hold', sellPct: 0, reason: 'slice-wait', state: book, nextStep: book.step };
+    }
   }
   const portion = book.originalTokens * (planSlices[book.step] / 100);
   const sellPct = Math.min(100, (portion / positionTokens) * 100);
@@ -273,10 +302,42 @@ function assessMint(mint, store) {
   })), {
     minRisePct: config.PUMP_MIN_RISE_PCT,
     minDrawdownPct: config.PUMP_MIN_DRAWDOWN_PCT,
+    minDipDurationMs: config.PUMP_MIN_DIP_MS,
     secondPumpMcapUsd: config.SECOND_PUMP_MCAP_USD
   });
   const peak = pumps.pumps && pumps.armAfterPump ? pumps.pumps.find(row => row.number >= pumps.armAfterPump) : null;
-  const bleed = analyzeBleed({ armed: pumps.armed, peakAt: peak && peak.peakAt, trades: null });
+  let tape = null;
+  try { tape = root.readJsonl('tapes.jsonl').filter(row => row && row.mint === mint).pop() || null; } catch (err) { tape = null; }
+  const trades = tape && Array.isArray(tape.trades) ? tape.trades : null;
+  const linkedWallets = trades ? [...new Set([serial && serial.dev, ...(serial && serial.linkedDevs || [])].filter(Boolean))] : null;
+  const bleed = trades ? analyzeBleed({
+    mint,
+    armed: pumps.armed,
+    peakAt: peak && peak.peakAt,
+    trades,
+    linkedWallets,
+    supply: tape.supply,
+    peakMcapUsd: peak && peak.peakMcapUsd,
+    mcapUsd: snapshots.reduce((best, row) => finite(row && row.mcapUsd) != null ? row.mcapUsd : best, null)
+  }) : {
+    mint,
+    flagged: null,
+    bleedStart: null,
+    soldSol: null,
+    soldSupplyPct: null,
+    buyAbsorptionRatio: null,
+    mcapFromPeak: null,
+    reason: config.HELIUS_CONFIGURED ? 'Tape was not stored for this mint' : 'no tape: set HELIUS_API_KEY'
+  };
+  const mcRun = trades ? require('./tapeFlags').analyzeMcRun({ mint, trades }) : null;
+  const scaleOut = trades ? require('./tapeFlags').analyzeScaleOut({ mint, trades, supply: tape && tape.supply }) : null;
+  const instantBond = tape ? require('./tapeFlags').analyzeInstantBond({
+    mint,
+    createTime: tape.createTime,
+    graduatedAt: tape.graduatedAt,
+    graduated: tape.graduated,
+    snipeBurst: tape.signatures ? { signatures: tape.signatures.listed, failedRatio: tape.signatures.failedRatio } : null
+  }) : null;
   const latest = snapshots[snapshots.length - 1] || null;
   const nonMigrator = labelNonMigrators({
     mint,
@@ -302,6 +363,9 @@ function assessMint(mint, store) {
     nonMigrator,
     curveProgress: latest && finite(latest.curveProgress),
     graduated: latest ? latest.graduated : null,
+    mcRun,
+    scaleOut,
+    instantBond,
     exitAlert
   };
 }

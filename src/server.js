@@ -609,6 +609,33 @@ app.post('/api/research/exit-ladder', (req, res) => {
   }
 });
 
+app.get('/api/research/farm-ride/:mint', (req, res) => {
+  try {
+    res.json({ success: true, ...tradingEngine.reviewFarmRide(req.params.mint, {}) });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/research/farm-ride', (req, res) => {
+  try {
+    tradingEngine.farmRideEnabled = Boolean(req.body && req.body.enabled);
+    res.json({ success: true, enabled: tradingEngine.farmRideEnabled, simulation: walletManager.simulationMode });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/research/farm-ride/tick', async (req, res) => {
+  try {
+    const context = req.body || {};
+    const result = await tradingEngine.actOnFarmRide(tradingEngine.activeToken, context, context.now);
+    res.json({ success: true, result });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.get('/api/research/bleed-exit/:mint', (req, res) => {
   try {
     const { assessMint } = require('./research/bleedExit');

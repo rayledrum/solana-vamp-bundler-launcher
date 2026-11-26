@@ -33,9 +33,11 @@ function decodeBondingCurve(data) {
   const realSolReserves = buf.readBigUInt64LE(offset); offset += 8;
   const tokenTotalSupply = buf.readBigUInt64LE(offset); offset += 8;
   const complete = buf[offset] === 1;
+  const creator = buf.length >= offset + 33 ? new PublicKey(buf.subarray(offset + 1, offset + 33)).toBase58() : null;
   const tokenUi = Number(virtualTokenReserves) / 1e6;
   const solUi = Number(virtualSolReserves) / 1e9;
   const reserves = {
+    creator,
     virtualTokenReserves: Number(virtualTokenReserves),
     virtualSolReserves: Number(virtualSolReserves),
     realTokenReserves: Number(realTokenReserves),

@@ -77,6 +77,7 @@ function bindShellActions() {
     if (name === 'toggleSelectAll') return toggleSelectAllRows(el.checked);
     if (name === 'toggleSafetyAuto') return toggleSafetyAuto(el.checked);
     if (name === 'saveExitLadder') return saveExitLadder(el.checked);
+    if (name === 'saveFarmRide') return saveFarmRide(el.checked);
     if (name === 'refreshResearch') return refreshResearch();
     if (name === 'logoSelect') return handleLogoSelect(event);
     if (name === 'bundleMetrics') return calculateBundleMetrics();
@@ -1947,7 +1948,9 @@ function paintSafety(report) {
     return;
   }
   const colors = { green: '#86efac', yellow: '#fcd34d', red: '#fda4af', unknown: '#94a3b8' };
-  score.textContent = report && report.score != null ? `${report.overall || 'unknown'} · ${report.score}` : (report && report.overall) || 'unknown';
+  const unknownCount = (report && report.checks || []).filter(row => row && row.status === 'unknown').length;
+  const headline = report && report.score != null ? `${report.overall || 'unknown'} · ${report.score}` : (report && report.overall) || 'unknown';
+  score.textContent = unknownCount ? `${headline} · ${unknownCount} unknown` : headline;
   score.style.color = colors[(report && report.overall) || 'unknown'] || colors.unknown;
   list.innerHTML = '';
   (report && report.checks || []).forEach(row => {
@@ -1958,7 +1961,8 @@ function paintSafety(report) {
     dot.style.color = colors[row.status] || colors.unknown;
     const text = document.createElement('span');
     const when = row.at ? new Date(row.at).toISOString().slice(11, 19) : '';
-    text.textContent = `${row.label}: ${row.reason || row.status}${when ? ' · ' + when : ''}`;
+    const stateLabel = row.status === 'unknown' ? 'UNKNOWN' : row.status === 'green' ? 'PASS' : (row.status || '');
+    text.textContent = `${stateLabel} ${row.label}: ${row.reason || row.status}${when ? ' · ' + when : ''}`;
     item.append(dot, text);
     list.appendChild(item);
   });
@@ -2032,6 +2036,33 @@ function paintTopTraders(row) {
   host.append(title, table);
 }
 
+async function saveFarmRide(enabled) {
+  try {
+    const res = await apiFetch('/api/research/farm-ride', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: Boolean(enabled) })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Farm ride setting failed');
+    showToast(enabled ? 'Sim farm ride on' : 'Farm ride off', 'info');
+  } catch (err) {
+    const box = document.getElementById('farmRideEnabled');
+    if (box) box.checked = false;
+    showToast(err.message, 'error');
+  }
+}
+
+function paintFarmRide(decision) {
+  const el = document.getElementById('farmRideStatus');
+  if (!el) return;
+  if (!decision || decision.eligible == null) {
+    el.textContent = `Farm ride: unknown${decision && decision.reasons && decision.reasons.length ? '. ' + decision.reasons.join('; ') : ''}`;
+    return;
+  }
+  el.textContent = `Farm ride: ${decision.eligible ? 'eligible' : 'not eligible'}. ${(decision.reasons || []).join('; ')}`;
+}
+
 async function loadSafety(mint) {
   if (!mint) return;
   try {
@@ -2039,6 +2070,13 @@ async function loadSafety(mint) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Safety check failed');
     paintSafety(data.report);
+    try {
+      const farm = await apiFetch(`/api/research/farm-ride/${encodeURIComponent(mint)}`);
+      const farmBody = await farm.json().catch(() => ({}));
+      if (farm.ok) paintFarmRide(farmBody.decision);
+    } catch (err) {
+      paintFarmRide(null);
+    }
     const box = document.getElementById('safetyAutoBlacklist');
     if (box && data.report && data.report.auto) box.checked = data.report.auto.enabled !== false;
   } catch (err) {
