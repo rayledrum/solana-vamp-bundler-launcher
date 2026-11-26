@@ -12,6 +12,7 @@ const {
 const axios = require('axios');
 const config = require('./config');
 const { curveState, tokensOutForSol, solOutForTokens } = require('./bondingCurve');
+const { readMintMetadata } = require('./tokenMetadata');
 
 const TOTAL_SUPPLY = 1000000000;
 
@@ -250,6 +251,7 @@ class PumpFunService {
         result.priceNative = pump.priceNative;
         result.source = pump.source;
         result.servedRes = pump.servedRes;
+        await this.attachMintIdentity(mint, result);
         return result;
       }
     } catch (err) {
@@ -265,6 +267,7 @@ class PumpFunService {
         result.servedRes = gecko.servedRes;
         result.symbol = gecko.symbol || result.symbol;
         result.name = gecko.name || result.name;
+        await this.attachMintIdentity(mint, result);
         return result;
       }
     } catch (err) {
@@ -275,9 +278,24 @@ class PumpFunService {
     const now = Date.now();
     result.priceNative = seed;
     result.candles = [{ time: now, open: seed, high: seed, low: seed, close: seed, volume: 0 }];
+    await this.attachMintIdentity(mint, result);
     return result;
   }
 }
+
+PumpFunService.prototype.lookupMintMetadata = function lookupMintMetadata(mint) {
+  const walletManager = require('./walletManager');
+  return readMintMetadata(walletManager.connection, mint);
+};
+
+PumpFunService.prototype.attachMintIdentity = async function attachMintIdentity(mint, result) {
+  try {
+    const meta = await this.lookupMintMetadata(mint);
+    if (meta && meta.symbol) result.symbol = meta.symbol;
+    if (meta && meta.name) result.name = meta.name;
+  } catch (err) { /* candles still render; the header keeps the short mint */ }
+  return result;
+};
 
 PumpFunService.prototype.solPriceUsd = function solPriceUsd() {
   const rate = Number(this._solUsd);

@@ -134,6 +134,35 @@ class PumpSwapFeed {
     this.supply = 1_000_000_000;
   }
 
+  async readPrice(mint) {
+    if (!this.connection || !mint || typeof this.connection.getAccountInfo !== 'function') return null;
+    const poolKey = canonicalPoolPda(mint);
+    const poolInfo = await this.connection.getAccountInfo(poolKey, 'confirmed');
+    const decoded = decodePool(poolInfo && poolInfo.data);
+    if (!decoded || decoded.baseMint !== String(mint) || decoded.quoteMint !== WSOL_MINT.toBase58()) return null;
+    let supply = this.supply || 1_000_000_000;
+    try {
+      const value = await this.supplyUi(mint);
+      if (Number(value) > 0) supply = Number(value);
+    } catch (err) { /* default supply */ }
+    if (typeof this.connection.getMultipleAccountsInfo !== 'function') return null;
+    const infos = await this.connection.getMultipleAccountsInfo([
+      new PublicKey(decoded.baseVault),
+      new PublicKey(decoded.quoteVault)
+    ], 'confirmed');
+    const baseRaw = tokenAmount(infos && infos[0] && infos[0].data);
+    const quoteRaw = tokenAmount(infos && infos[1] && infos[1].data);
+    const priceSol = priceFromReserves({ baseRaw, quoteRaw, baseDecimals: this.baseDecimals });
+    if (!(priceSol > 0)) return null;
+    return {
+      priceSol,
+      marketCapSol: priceSol * supply,
+      realSol: Number(quoteRaw) / 1e9,
+      complete: true,
+      progressPct: 100
+    };
+  }
+
   async start(mint) {
     this.stop();
     this.mint = mint;
