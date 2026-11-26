@@ -1,5 +1,11 @@
+const { pumpUrl } = require('../pumpApi');
+
 const SNAPSHOT_MINUTES = [1, 5, 15, 30, 60, 240];
-const POLL_URL = 'https://frontend-api.pump.fun/coins?offset=0&limit=40&sort=created_timestamp&order=DESC&includeNsfw=false';
+const COINS_PATH = '/coins?offset=0&limit=40&sort=created_timestamp&order=DESC&includeNsfw=false';
+
+function coinsPollUrl() {
+  return pumpUrl(COINS_PATH);
+}
 
 function finite(value) {
   if (value == null || value === '') return null;
@@ -113,7 +119,9 @@ async function takeDueSnapshots({ store, observe, now = Date.now(), pace }) {
     try {
       obs = observe ? await observe(item.mint, item.atMin) : {};
     } catch (err) {
-      obs = {};
+      const host = err && err.host ? ` ${err.host}` : '';
+      console.error(`[collect] snapshot ${item.mint} failed${host}: ${err && err.message ? err.message : err}`);
+      continue;
     }
     const row = snapshotRecord(item.mint, item.atMin, obs || {});
     store.append('snapshots.jsonl', row);
@@ -164,13 +172,15 @@ function createPacer(minIntervalMs) {
 }
 
 async function pollNewCoins(fetchJson) {
-  const body = await fetchJson(POLL_URL);
+  const body = await fetchJson(coinsPollUrl());
   return Array.isArray(body) ? body : [];
 }
 
 module.exports = {
   SNAPSHOT_MINUTES,
-  POLL_URL,
+  COINS_PATH,
+  coinsPollUrl,
+  get POLL_URL() { return coinsPollUrl(); },
   finite,
   staticRecord,
   snapshotRecord,
