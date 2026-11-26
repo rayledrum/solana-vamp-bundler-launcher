@@ -1933,6 +1933,7 @@ function paintSafety(report) {
   const score = document.getElementById('safetyScore');
   const list = document.getElementById('safetyChecks');
   const banner = document.getElementById('safetyBanner');
+  const exitAlert = document.getElementById('exitAlert');
   if (!score || !list) return;
   safetyCreator = report && report.creator || null;
   if (report && report.ownLaunch) {
@@ -1940,6 +1941,9 @@ function paintSafety(report) {
     score.style.color = '#86efac';
     list.innerHTML = '';
     if (banner) banner.style.display = 'none';
+    if (exitAlert) exitAlert.style.display = 'none';
+    const topTraders = document.getElementById('topTraders');
+    if (topTraders) topTraders.style.display = 'none';
     return;
   }
   const colors = { green: '#86efac', yellow: '#fcd34d', red: '#fda4af', unknown: '#94a3b8' };
@@ -1967,6 +1971,65 @@ function paintSafety(report) {
       banner.textContent = '';
     }
   }
+  if (exitAlert) {
+    const alert = report && report.exitAlert;
+    const reasons = alert && Array.isArray(alert.reasons) ? alert.reasons : [];
+    if (alert && alert.action === 'sell' && reasons.length) {
+      exitAlert.style.display = 'block';
+      exitAlert.textContent = `Exit alert: ${reasons.join('; ')}. Sim sells the ladder. Live does not auto-sell.`;
+    } else {
+      exitAlert.style.display = 'none';
+      exitAlert.textContent = '';
+    }
+  }
+  paintTopTraders(report && report.topTraders);
+}
+
+function paintTopTraders(row) {
+  const host = document.getElementById('topTraders');
+  if (!host) return;
+  host.textContent = '';
+  if (!row || !Array.isArray(row.wallets)) {
+    host.style.display = 'none';
+    return;
+  }
+  host.style.display = 'block';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:9.5px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#78909c;margin-bottom:4px;';
+  const linked = row.linkedProfitPct == null ? '—' : `${Number(row.linkedProfitPct).toFixed(1)}%`;
+  const organic = row.organicProfitPct == null ? '—' : `${Number(row.organicProfitPct).toFixed(1)}%`;
+  title.textContent = `Top traders · linked profit ${linked} · organic ${organic}`;
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:10px;color:#cbd5e1;';
+  const head = document.createElement('tr');
+  ['Wallet', 'PnL', 'SOL in', 'SOL out', 'Bought', 'Received', 'Tags'].forEach(label => {
+    const cell = document.createElement('th');
+    cell.textContent = label;
+    cell.style.cssText = 'text-align:left;font-weight:700;color:#78909c;padding:2px 4px;';
+    head.appendChild(cell);
+  });
+  table.appendChild(head);
+  row.wallets.slice(0, 20).forEach(item => {
+    const line = document.createElement('tr');
+    const tags = ['coordinated', 'kol', 'kolShadow', 'serialDev', 'sniper'].filter(key => item[key] === true).join(' ');
+    const cells = [
+      item.wallet ? String(item.wallet).slice(0, 4) : '—',
+      item.pnl == null ? '—' : Number(item.pnl).toFixed(3),
+      item.solIn == null ? '—' : Number(item.solIn).toFixed(3),
+      item.solOut == null ? '—' : Number(item.solOut).toFixed(3),
+      item.tokensBought == null ? '—' : String(item.tokensBought),
+      item.tokensReceived == null ? '—' : String(item.tokensReceived),
+      tags || '—'
+    ];
+    cells.forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      cell.style.cssText = 'padding:2px 4px;font-family:monospace;';
+      line.appendChild(cell);
+    });
+    table.appendChild(line);
+  });
+  host.append(title, table);
 }
 
 async function loadSafety(mint) {

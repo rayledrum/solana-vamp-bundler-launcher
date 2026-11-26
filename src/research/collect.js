@@ -7,6 +7,8 @@ const { readCurveTape, researchRpc, fundingDefaultOn } = require('./tradeTape');
 const { scoreCoordination } = require('./coordination');
 const { analyzeDistribution, loadKolList } = require('./distribution');
 const { analyzeKolShadow, analyzeMcRun, analyzeScaleOut, analyzeInstantBond } = require('./tapeFlags');
+const { analyzeNearMigration, analyzeForcedMigration } = require('./nonMigrator');
+const { analyzeTopTraders } = require('./topTraders');
 const { analyzeWash } = require('./wash');
 const { analyzeHolderPadding } = require('./holderPadding');
 const { analyzeLadderDump } = require('./ladderDump');
@@ -210,6 +212,45 @@ function appendBehavior(store, input) {
   const clusterWallets = Array.isArray(coordination.clusters)
     ? [...new Set(coordination.clusters.flatMap(row => row.wallets || []))]
     : null;
+  const linkedWallets = (input.dev || linked.length || (clusterWallets && clusterWallets.length))
+    ? [input.dev, ...linked, ...(clusterWallets || [])].filter(Boolean)
+    : null;
+  const nearMigration = analyzeNearMigration({
+    mint: input.mint,
+    curveProgress: input.curveProgress,
+    graduated: input.graduated == null ? null : input.graduated,
+    trades: input.trades,
+    linkedWallets,
+    progress: input.progress
+  });
+  const forcedDump = analyzeForcedMigration({
+    mint: input.mint,
+    graduated: input.graduated == null ? null : input.graduated,
+    graduatedAt: input.graduatedAt,
+    trades: input.poolTrades || input.trades,
+    linkedWallets,
+    supply: input.supply
+  });
+  const serialWallets = [input.dev, ...(input.serialWallets || [])].filter(Boolean);
+  store.append('top-traders.jsonl', analyzeTopTraders({
+    mint: input.mint,
+    trades: input.trades,
+    createTime: input.createTime,
+    priceSol: input.priceSol,
+    clusterWallets,
+    kolWallets: loadKolList(),
+    shadowWallets: shadow && shadow.wallets,
+    serialWallets,
+    registry: input.registry
+  }));
+  store.append('non-migrators.jsonl', {
+    mint: input.mint,
+    dev: input.dev || null,
+    nearMigration: nearMigration.flagged,
+    forcedDump: forcedDump.flagged,
+    curveProgress: nearMigration.curveProgress,
+    graduated: input.graduated === true ? true : (input.graduated === false ? false : null)
+  });
   const coin = input.coin || {};
   const socials = coin.socials || {};
   store.append('wash.jsonl', analyzeWash({ mint: input.mint, trades: input.trades, fundings: input.fundings }));

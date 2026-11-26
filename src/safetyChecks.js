@@ -10,6 +10,7 @@ const config = require('./config');
 const { createStore } = require('./research/store');
 const { pumpUrl, fetchPumpJson, isPumpFrontendUrl, hostOf } = require('./pumpApi');
 const { linkSerialDevs } = require('./research/serialDev');
+const { assessMint } = require('./research/bleedExit');
 const { ValidationError } = require('./validation');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -288,6 +289,52 @@ function classifyInstantBond(row) {
   return check('instantBond', 'Near-instant bonding', 'red', `Graduated in ${Math.round(row.durationMs / 1000)}s`);
 }
 
+function classifyTopTraders(row) {
+  if (!row || row.linkedProfitPct == null) {
+    return check('topTraders', 'Top traders', 'unknown', 'Wallet profit from the tape was not read');
+  }
+  const pct = Number(row.linkedProfitPct);
+  const organic = row.organicProfitPct == null ? 'unknown' : `${Number(row.organicProfitPct).toFixed(1)}%`;
+  const status = pct >= 50 ? 'red' : pct >= 25 ? 'yellow' : 'green';
+  const count = Array.isArray(row.wallets) ? row.wallets.length : 0;
+  return check('topTraders', 'Top traders', status, `${count} wallets. ${pct.toFixed(1)}% of profit to linked wallets, ${organic} organic`);
+}
+
+function classifyNonMigrator(row) {
+  if (!row || row.nonMigrator == null) {
+    return check('nonMigrator', 'Non-migrator', 'unknown', 'Prior coins near migration were not read');
+  }
+  if (!row.nonMigrator) return check('nonMigrator', 'Non-migrator', 'green', 'No prior coin stalled at the migration line');
+  const history = Array.isArray(row.history) ? row.history : [];
+  const detail = history.map(item => {
+    const parts = [];
+    if (item.nearMigration) parts.push('near migration');
+    if (item.forcedDump) parts.push('forced migration dump');
+    return `${item.mint} ${parts.join(' and ') || 'pattern'}`;
+  }).join('; ');
+  return check('nonMigrator', 'Non-migrator', 'red', `Dev is a non-migrator. ${detail || 'Prior coins showed the pattern'}`);
+}
+
+function classifyPump(row) {
+  if (!row || !Array.isArray(row.pumps) || row.aboveSecondPumpThreshold == null) {
+    return check('pumpPhase', 'Pump phase', 'unknown', 'Market cap series was not read in USD');
+  }
+  const rule = row.armAfterPump === 1
+    ? 'peak stayed below the second-pump threshold, so pump 1 arms the exit'
+    : 'peak cleared the second-pump threshold, so pump 2 arms the exit';
+  return check('pumpPhase', 'Pump phase', row.armed ? 'yellow' : 'green', `${row.pumps.length} pumps. ${rule}`);
+}
+
+function classifyBleed(row) {
+  if (!row || row.flagged == null) return check('bleed', 'Slow bleed', 'unknown', 'Linked sells after the armed pump were not read');
+  if (!row.flagged) return check('bleed', 'Slow bleed', 'green', 'No slow bleed after the armed pump');
+  const sol = row.soldSol == null ? 'unknown SOL' : `${Number(row.soldSol).toFixed(3)} SOL`;
+  const supply = row.soldSupplyPct == null ? 'unknown supply' : `${Number(row.soldSupplyPct).toFixed(1)}% of supply`;
+  const absorb = row.buyAbsorptionRatio == null ? 'absorption unknown' : `buy absorption ${Number(row.buyAbsorptionRatio).toFixed(2)}`;
+  const fromPeak = row.mcapFromPeak == null ? 'MC from peak unknown' : `MC at ${Math.round(row.mcapFromPeak * 100)}% of peak`;
+  return check('bleed', 'Slow bleed', 'red', `Started ${row.bleedStart}. Sold ${sol} (${supply}). ${absorb}. ${fromPeak}`);
+}
+
 function classifyFundingClusters(row) {
   if (!row || row.largestClusterSupplyPct == null) {
     return check('fundingClusters', 'Funding clusters', 'unknown', 'Early-buyer funding was not read');
@@ -436,6 +483,7 @@ function createSafetyChecks(options = {}) {
   const mcRunLookup = options.mcRunLookup || (mint => readNamed('mc-runs.jsonl', mint));
   const scaleOutLookup = options.scaleOutLookup || (mint => readNamed('scale-outs.jsonl', mint));
   const bondingLookup = options.bondingLookup || (mint => readNamed('bonding.jsonl', mint));
+  const topTraderLookup = options.topTraderLookup || (mint => readNamed('top-traders.jsonl', mint));
   const serialLookup = options.serialLookup || (mint => {
     try {
       const rows = linkSerialDevs(createStore().readJsonl('serial-devs.jsonl'));
@@ -696,6 +744,9 @@ function createSafetyChecks(options = {}) {
       }
       : { ok: false };
 
+    let phase = null;
+    try { phase = assessMint(key); } catch (err) { phase = null; }
+
     const checks = [
       rug ? classifyRugcheck(rug) : check('rugcheck', 'RugCheck', 'unknown', 'RugCheck request failed'),
       classifyAuthorities(authorities),
@@ -712,6 +763,10 @@ function createSafetyChecks(options = {}) {
       classifyMcRun(mcRunLookup(key)),
       classifyScaleOut(scaleOutLookup(key)),
       classifyInstantBond(bondingLookup(key)),
+      classifyPump(phase && phase.pumps),
+      classifyBleed(phase && phase.bleed),
+      classifyNonMigrator(phase && phase.nonMigrator),
+      classifyTopTraders(topTraderLookup(key)),
       classifySerial(serialLookup(key), new Set((loadBlacklist().devs || []).map(item => item.address))),
       classifyCurve(curve),
       classifyMarket(dex),
@@ -744,7 +799,9 @@ function createSafetyChecks(options = {}) {
       creator,
       blacklisted: Boolean(listed),
       blacklistReason: listed ? listed.reason : null,
-      checks
+      checks,
+      exitAlert: phase && phase.exitAlert ? phase.exitAlert : { action: null, reasons: null, armAfterPump: null },
+      topTraders: topTraderLookup(key)
     };
     maybeAutoBlacklist(row, book);
     row.auto = loadBlacklist().auto;

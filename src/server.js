@@ -609,6 +609,25 @@ app.post('/api/research/exit-ladder', (req, res) => {
   }
 });
 
+app.get('/api/research/bleed-exit/:mint', (req, res) => {
+  try {
+    const { assessMint } = require('./research/bleedExit');
+    res.json({ success: true, simulation: walletManager.simulationMode, ...assessMint(req.params.mint) });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/research/bleed-exit/tick', async (req, res) => {
+  try {
+    const context = req.body || {};
+    const result = await tradingEngine.reviewBleedExit(tradingEngine.activeToken, context, context.now);
+    res.json({ success: true, simulation: walletManager.simulationMode, result });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.post('/api/research/exit-ladder/tick', async (req, res) => {
   try {
     if (!walletManager.simulationMode) {
