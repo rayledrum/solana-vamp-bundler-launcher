@@ -99,6 +99,16 @@ function tokensOutForSol(solAmount, currentRealSol = 0, globals = DEFAULT_GLOBAL
   return Number(capped) / 1e6;
 }
 
+// Constant product against raw reserves. amountInRaw and both reserves share their own units.
+function ammOut(amountInRaw, reserveIn, reserveOut) {
+  const amount = BigInt(amountInRaw || 0);
+  const rin = BigInt(reserveIn || 0);
+  const rout = BigInt(reserveOut || 0);
+  if (amount <= 0n || rin <= 0n || rout <= 0n) return 0n;
+  const nextOut = (rin * rout) / (rin + amount);
+  return rout > nextOut ? rout - nextOut : 0n;
+}
+
 function solOutForTokens(tokenUi, currentRealSol = 0, globals = DEFAULT_GLOBAL) {
   const raw = BigInt(Math.max(0, Math.floor(Number(tokenUi) * 1e6)));
   const already = BigInt(Math.max(0, Math.round(Number(currentRealSol) * 1e9)));
@@ -122,5 +132,6 @@ module.exports = {
   bondingProgress,
   curveState,
   tokensOutForSol,
-  solOutForTokens
+  solOutForTokens,
+  ammOut
 };

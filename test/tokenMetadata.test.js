@@ -135,6 +135,10 @@ test('simulation stats use one chain snapshot instead of an empty modeled curve'
     const again = await tradingEngine.getLiveStats();
     assert.equal(calls, 1);
     assert.equal(again.curveProgressPct, 100);
+    tradingEngine.snapshotAt = Date.now() - tradingEngine.snapshotTtlMs - 1;
+    const refreshed = await tradingEngine.getLiveStats();
+    assert.equal(calls, 2);
+    assert.equal(refreshed.curveProgressPct, 100);
   } finally {
     pumpfun.getTokenDexInfo = originalDex;
     tradingEngine.onChainSnapshot = null;

@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const { Connection } = require('@solana/web3.js');
 const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const config = require('./config');
@@ -228,11 +229,11 @@ wss.on('connection', ws => {
 
 setInterval(async () => {
   try {
-    let slot = 471866000;
-    if (!walletManager.simulationMode && config.HELIUS_CONFIGURED) {
-      slot = await walletManager.connection.getSlot('processed');
-    } else {
-      slot += Math.floor(Math.random() * 5);
+    let slot = null;
+    try {
+      slot = await slotConnection().getSlot('processed');
+    } catch (err) {
+      slot = null;
     }
     broadcast({
       type: 'HEARTBEAT',
@@ -251,13 +252,11 @@ app.get('/api/status', async (req, res) => {
   try {
     let slot = null;
     let rpcHealthy = false;
-    if (config.HELIUS_CONFIGURED || !walletManager.simulationMode) {
-      try {
-        slot = await walletManager.connection.getSlot('confirmed');
-        rpcHealthy = true;
-      } catch (err) {
-        rpcHealthy = false;
-      }
+    try {
+      slot = await slotConnection().getSlot('confirmed');
+      rpcHealthy = true;
+    } catch (err) {
+      rpcHealthy = false;
     }
 
     res.json({
@@ -648,8 +647,34 @@ app.post('/api/trading/cascade-sell', withMutationLock(async (req, res) => {
   res.status(result.success ? 200 : 502).json(result);
 }));
 
+function slotConnection() {
+  if (!walletManager.simulationMode && config.HELIUS_CONFIGURED) return walletManager.connection;
+  if (!slotConnection.publicRpc) slotConnection.publicRpc = new Connection(config.SOLANA_PUBLIC_RPC_URL, 'confirmed');
+  return slotConnection.publicRpc;
+}
+
+app.get('/api/trading/bumper/status', (req, res) => {
+  const stats = tradingEngine.bumpSnapshot();
+  res.json({
+    success: true,
+    bumping: Boolean(tradingEngine.isBumping),
+    simulated: walletManager.simulationMode,
+    ...stats
+  });
+});
+
 app.post('/api/trading/bumper/start', (req, res) => {
   try {
+    if (tradingEngine.isBumping) {
+      const stats = tradingEngine.bumpSnapshot();
+      return res.json({
+        success: true,
+        bumping: true,
+        alreadyRunning: true,
+        simulated: walletManager.simulationMode,
+        ...stats
+      });
+    }
     const body = req.body || {};
     const solAmount = requireSolTradeAmount(body.solAmount);
     const stats = tradingEngine.startVolumeBumper(solAmount, body);

@@ -158,6 +158,8 @@ class PumpSwapFeed {
       priceSol,
       marketCapSol: priceSol * supply,
       realSol: Number(quoteRaw) / 1e9,
+      baseRaw: Number(baseRaw),
+      quoteRaw: Number(quoteRaw),
       complete: true,
       progressPct: 100
     };
@@ -252,6 +254,8 @@ class PumpSwapFeed {
       priceSol,
       marketCapSol: priceSol * this.supply,
       realSol: Number(this.quoteRaw) / 1e9,
+      poolBaseRaw: Number(this.baseRaw),
+      poolQuoteRaw: Number(this.quoteRaw),
       progressPct: 100,
       complete: true,
       source: SOURCE,

@@ -169,10 +169,28 @@
     return own.slice(-ownCap).concat(pub.slice(-publicCap)).sort((a, b) => a.timeMs - b.timeMs || a.signature.localeCompare(b.signature));
   }
 
+  function publicTradePrice(trade) {
+    if (!trade || trade.simulated || String(trade.signature || '').startsWith('sim_')) return null;
+    if (Number(trade.priceSol) > 0) return Number(trade.priceSol);
+    const sol = Number(trade.solAmount);
+    const tokens = Number(trade.tokenAmount);
+    if (sol > 0 && tokens > 0) return sol / tokens;
+    const mcap = Number(trade.marketCapSol);
+    if (Number.isFinite(mcap) && mcap > 0) return mcap / 1000000000;
+    return null;
+  }
+
+  function reportedFillPrice(payload) {
+    const price = Number(payload && payload.priceSol);
+    return price > 0 ? price : null;
+  }
+
   return {
     createBook,
     buildMarkers,
     markerTimeMs,
+    publicTradePrice,
+    reportedFillPrice,
     MAX_SAMPLES,
     MAX_TRADES,
     MIN_PUBLIC_SOL,
