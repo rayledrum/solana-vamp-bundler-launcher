@@ -2933,6 +2933,11 @@ function paintBumper(payload, running) {
   if (cycles) cycles.textContent = String(payload.cycles || 0);
   if (volume) volume.textContent = Number(payload.volumeSol || 0).toFixed(4);
   if (net) net.textContent = Number(payload.netSolCost || 0).toFixed(4);
+  const session = document.getElementById('bumperSession');
+  if (session && payload.sessionSpentSol != null) {
+    const cap = Number(payload.sessionCapSol) > 0 ? ` / ${Number(payload.sessionCapSol).toFixed(2)}` : '';
+    session.textContent = `${Number(payload.sessionSpentSol).toFixed(4)}${cap}`;
+  }
   if (last) {
     const tx = payload.lastTx ? ` · ${payload.lastTx.slice(0, 8)}…` : '';
     last.textContent = `${payload.lastError || payload.lastAction || (running ? 'Running' : 'Idle')}${payload.lastError ? '' : tx}`;

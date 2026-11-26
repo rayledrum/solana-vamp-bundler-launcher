@@ -837,11 +837,24 @@ class TradingEngine {
   }
 
   reserveSession(sol) {
-    if (this.sessionSpentSol + sol > config.MAX_SOL_PER_SESSION) {
+    if (this.sessionBuyWouldExceed(sol)) {
       throw new ValidationError(
         `Session spend would be ${(this.sessionSpentSol + sol).toFixed(4)} SOL, above the cap of ${config.MAX_SOL_PER_SESSION} SOL`
       );
     }
+  }
+
+  sessionBuyWouldExceed(sol) {
+    const next = (Number(this.sessionSpentSol) || 0) + Math.max(0, Number(sol) || 0);
+    return next > config.MAX_SOL_PER_SESSION + 1e-9;
+  }
+
+  noteSessionBuy(sol) {
+    this.sessionSpentSol = Math.max(0, (Number(this.sessionSpentSol) || 0) + Math.max(0, Number(sol) || 0));
+  }
+
+  noteSessionSell(sol) {
+    this.sessionSpentSol = Math.max(0, (Number(this.sessionSpentSol) || 0) - Math.max(0, Number(sol) || 0));
   }
 
   async executeBuy({ solAmount, walletAddresses = [] }) {
@@ -885,7 +898,7 @@ class TradingEngine {
         walletManager.setSimSol(addr, current - amountPerWallet);
         this.persistSimMint(mint);
         walletManager.save();
-        this.sessionSpentSol += amountPerWallet;
+        this.noteSessionBuy(amountPerWallet);
         totalBoughtTokens += tokensOut;
         totalSpentSol += amountPerWallet;
         this.noteFill(mint, addr, { side: 'buy', tokensBought: tokensOut, solSpent: amountPerWallet });
@@ -937,7 +950,7 @@ class TradingEngine {
         if (position.costKnown === false) position.solInvested = null;
         else position.solInvested = (Number(position.solInvested) || 0) + solSpent;
         this.positions.set(addr, position);
-        this.sessionSpentSol += solSpent;
+        this.noteSessionBuy(solSpent);
         totalBoughtTokens += tokensOut;
         totalSpentSol += solSpent;
         walletManager.invalidateLiveBalances();
@@ -1044,6 +1057,7 @@ class TradingEngine {
         walletManager.save();
         totalSoldTokens += tokensToSell;
         totalReceivedSol += solGained;
+        this.noteSessionSell(solGained);
         this.noteFill(mint, addr, { side: 'sell', tokensSold: tokensToSell, solReceived: solGained });
         this.broadcast('PUBLIC_TRADE', {
           txType: 'sell',
@@ -1100,6 +1114,7 @@ class TradingEngine {
         this.positions.set(addr, position);
         totalSoldTokens += sold;
         totalReceivedSol += solReceived;
+        this.noteSessionSell(solReceived);
         walletManager.invalidateLiveBalances();
         walletManager.noteTokenBalance(addr, mint, postTokens);
         this.noteFill(mint, addr, { side: 'sell', tokensSold: sold, solReceived });
@@ -1247,6 +1262,8 @@ class TradingEngine {
       cycles: this.bumpCycles || 0,
       volumeSol: Number((this.bumpVolumeSol || 0).toFixed(4)),
       netSolCost: Number((this.bumpNetSol || 0).toFixed(4)),
+      sessionSpentSol: Number((this.sessionSpentSol || 0).toFixed(4)),
+      sessionCapSol: config.MAX_SOL_PER_SESSION,
       lastAction: this.bumpLastAction || '',
       lastError: this.bumpLastError || '',
       lastTx: this.bumpLastTx || '',
@@ -1352,12 +1369,18 @@ class TradingEngine {
         mint
       });
       const actions = outcome.actions || [];
+      if (outcome.stopReason) {
+        this.isBumping = false;
+        this.clearBumpTimer();
+        this.bumpLastError = outcome.stopReason;
+        this.bumpStopRequested = true;
+      }
       const failed = actions.filter(action => !action.result || !action.result.success);
-      if (failed.length) this.bumpErrors = (this.bumpErrors || 0) + 1;
+      if (!outcome.stopReason && failed.length) this.bumpErrors = (this.bumpErrors || 0) + 1;
       else if (actions.length) this.bumpErrors = 0;
       const notes = actions.map(action => this.noteBumpAction(action));
-      this.bumpLastAction = notes.length ? notes.join(' · ') : 'No sub-wallet above the SOL reserve';
-      if (!failed.length) this.bumpLastError = '';
+      this.bumpLastAction = notes.length ? notes.join(' · ') : (outcome.stopReason || 'No sub-wallet above the SOL reserve');
+      if (!failed.length && !outcome.stopReason) this.bumpLastError = '';
       const reason = this.bumpStopReason();
       if (reason) {
         this.isBumping = false;
