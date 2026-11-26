@@ -1016,6 +1016,7 @@ class TradingEngine {
       resultsCount: successCount
     });
 
+    if (!fromBumper) this.reconcileBumpLots(targets, sellPct);
     const result = this.tradeError({
       success: failures === 0 && successCount > 0,
       simulation: isSim,
@@ -1164,8 +1165,23 @@ class TradingEngine {
     return actions;
   }
 
+  reconcileBumpLots(addresses, pct) {
+    const open = this.bumpStrategy && this.bumpStrategy.open;
+    if (!open || !open.length) return;
+    const fraction = Math.min(1, Math.max(0, Number(pct) / 100));
+    const selected = new Set(addresses || []);
+    open.forEach(lot => {
+      if (!selected.has(lot.address)) return;
+      lot.tokensBought = Math.max(0, (Number(lot.tokensBought) || 0) * (1 - fraction));
+    });
+    for (let i = open.length - 1; i >= 0; i -= 1) {
+      if (!(open[i].tokensBought > 1e-6)) open.splice(i, 1);
+    }
+  }
+
   async runBumpCycle() {
     if (this.bumpBusy || !this.isBumping) return null;
+    const epoch = this.bumpEpoch || 0;
     this.bumpBusy = true;
     const mint = this.activeToken;
     const amount = this.bumpSol;
@@ -1215,7 +1231,13 @@ class TradingEngine {
         ...this.bumpSnapshot()
       };
       this.broadcast('BUMP_TICK', payload);
-      if (this.isBumping) this.armBump(this.nextBumpPhase());
+      if ((this.bumpEpoch || 0) !== epoch || !this.isBumping) {
+        if (this.bumpStrategy && this.bumpStrategy.open && this.bumpStrategy.open.length) {
+          await this.flattenBump(this.bumpMint);
+        }
+        return payload;
+      }
+      this.armBump(this.nextBumpPhase());
       return payload;
     } catch (err) {
       this.bumpErrors = (this.bumpErrors || 0) + 1;
@@ -1236,12 +1258,12 @@ class TradingEngine {
         ...this.bumpSnapshot()
       };
       this.broadcast('BUMP_TICK', payload);
-      if (this.isBumping) this.armBump('buy');
+      if (this.isBumping && (this.bumpEpoch || 0) === epoch) this.armBump('buy');
       console.warn('[VolumeBumper]', this.bumpLastError);
       return payload;
     } finally {
       this.bumpBusy = false;
-      if (this.bumpStopRequested) {
+      if (this.bumpStopRequested && (this.bumpEpoch || 0) === epoch) {
         this.bumpStopRequested = false;
         await this.flattenBump();
         this.broadcast('BUMPER_STOPPED', this.bumpSnapshot());
@@ -1257,20 +1279,17 @@ class TradingEngine {
   }
 
   haltBumper(reason, options = {}) {
-    if (!this.bumperActiveOn(this.bumpMint || this.activeToken) && !this.isBumping) return Promise.resolve(this.bumpSnapshot());
+    if (!this.bumperActiveOn(this.bumpMint || this.activeToken) && !this.isBumping && !this.bumpTimer) {
+      return Promise.resolve(this.bumpSnapshot());
+    }
     const sellMint = this.bumpMint || this.activeToken;
+    this.bumpEpoch = (this.bumpEpoch || 0) + 1;
     this.isBumping = false;
+    this.bumpStopRequested = false;
     this.clearBumpTimer();
     this.bumpLastError = reason;
     this.bumpLastAction = reason;
-    if (this.bumpBusy) {
-      this.bumpStopRequested = true;
-      return Promise.resolve(this.bumpSnapshot());
-    }
-    this.bumpBusy = true;
-    return this.flattenBump(sellMint).finally(() => {
-      this.bumpBusy = false;
-    }).then(() => {
+    return this.flattenBump(sellMint).then(() => {
       if (options.broadcast !== false) this.broadcast('BUMPER_STOPPED', this.bumpSnapshot());
       return this.bumpSnapshot();
     });
@@ -1345,20 +1364,10 @@ class TradingEngine {
   }
 
   async stopVolumeBumper() {
-    const wasRunning = this.isBumping || this.bumpTimer || (this.bumpStrategy && this.bumpStrategy.open && this.bumpStrategy.open.length);
-    this.isBumping = false;
-    this.clearBumpTimer();
-    if (!wasRunning) return this.bumpSnapshot();
-    if (this.bumpBusy) {
-      this.bumpStopRequested = true;
-      this.bumpLastAction = 'Stopping';
-      while (this.bumpBusy) await new Promise(resolve => setTimeout(resolve, 15));
+    if (!this.isBumping && !this.bumpTimer && !(this.bumpStrategy && this.bumpStrategy.open && this.bumpStrategy.open.length)) {
       return this.bumpSnapshot();
     }
-    this.bumpLastAction = 'Stopped';
-    await this.flattenBump();
-    this.broadcast('BUMPER_STOPPED', this.bumpSnapshot());
-    return this.bumpSnapshot();
+    return this.haltBumper('Stopped');
   }
 }
 
