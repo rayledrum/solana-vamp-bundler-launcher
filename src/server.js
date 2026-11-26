@@ -147,10 +147,13 @@ const curveFeed = new CurveFeed({
   }
 });
 
+tradingEngine.onChainSnapshot = (mint) => curveFeed.snapshot(mint);
+
 async function syncLiveFeed() {
   if (walletManager.simulationMode) {
     liveFeed.stop();
     curveFeed.stop();
+    if (tradingEngine.activeToken) tradingEngine.requestChainSnapshot(tradingEngine.activeToken);
     return;
   }
   if (tradingEngine.activeToken) {

@@ -35,19 +35,23 @@ function decodeBondingCurve(data) {
   const complete = buf[offset] === 1;
   const tokenUi = Number(virtualTokenReserves) / 1e6;
   const solUi = Number(virtualSolReserves) / 1e9;
-  if (!(tokenUi > 0)) return null;
-  const priceSol = solUi / tokenUi;
-  const supplyUi = Number(tokenTotalSupply) / 1e6;
-  return {
+  const reserves = {
     virtualTokenReserves: Number(virtualTokenReserves),
     virtualSolReserves: Number(virtualSolReserves),
     realTokenReserves: Number(realTokenReserves),
     realSolReserves: Number(realSolReserves),
     tokenTotalSupply: Number(tokenTotalSupply),
-    complete,
-    priceSol,
-    marketCapSol: priceSol * supplyUi
+    complete
   };
+  // A graduated curve is left in place with every reserve zeroed. That is still
+  // the signal to switch to the PumpSwap pool, not a failed decode.
+  if (complete) {
+    return { ...reserves, priceSol: null, marketCapSol: null };
+  }
+  if (!(tokenUi > 0)) return null;
+  const priceSol = solUi / tokenUi;
+  const supplyUi = Number(tokenTotalSupply) / 1e6;
+  return { ...reserves, priceSol, marketCapSol: priceSol * supplyUi };
 }
 
 function decodeTradeEvent(encoded) {
@@ -218,6 +222,42 @@ class CurveFeed {
         if (info && this.mint) this.onAccount(info);
       }).catch(() => {});
     }
+  }
+
+  // One account read, no websocket. Simulation uses this so a pasted mint shows
+  // the real curve or pool instead of an empty modeled curve.
+  async snapshot(mint) {
+    if (!mint || !this.connection || typeof this.connection.getAccountInfo !== 'function') return null;
+    let pda;
+    try {
+      pda = bondingCurvePda(mint, this.programId);
+    } catch (err) {
+      return null;
+    }
+    let info = null;
+    try {
+      info = await this.connection.getAccountInfo(pda, 'confirmed');
+    } catch (err) {
+      return null;
+    }
+    const decoded = decodeBondingCurve(info && info.data);
+    if (!decoded) return null;
+    const tick = { ...this.curveTick(decoded, 'Helius bonding curve'), mint };
+    if (decoded.complete && this.pumpSwap && typeof this.pumpSwap.readPrice === 'function') {
+      try {
+        const pool = await this.pumpSwap.readPrice(mint);
+        if (pool && Number(pool.priceSol) > 0) {
+          tick.priceSol = pool.priceSol;
+          tick.marketCapSol = pool.marketCapSol;
+          tick.realSol = Number(pool.realSol) || tick.realSol;
+          tick.progressPct = 100;
+          tick.complete = true;
+          tick.source = 'Helius PumpSwap pool';
+        }
+      } catch (err) { /* the completed curve tick still tells the desk it graduated */ }
+    }
+    this.onPrice(tick);
+    return tick;
   }
 
   dropSubs() {

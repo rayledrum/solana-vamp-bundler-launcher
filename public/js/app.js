@@ -99,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindShellActions();
   if (window.lucide) lucide.createIcons();
   initChart();
+  bindTrackedCaInputs();
   connectWebSocket();
   loadStatus();
   loadMasterWallet();
@@ -1738,6 +1739,8 @@ async function loadLiveStats() {
 
       if (s.dexInfo) {
         document.getElementById('deskMcapDisplay').innerText = `$${(s.dexInfo.marketCap || 0).toLocaleString()}`;
+      } else if (Number(s.curveMarketCapSol) > 0) {
+        document.getElementById('deskMcapDisplay').innerText = `${Number(s.curveMarketCapSol).toFixed(2)} SOL`;
       } else {
         document.getElementById('deskMcapDisplay').innerText = `$${Math.round((s.curveProgressPct * 690)).toLocaleString()}`;
       }
@@ -1890,6 +1893,36 @@ function extractSolanaAddress(input) {
   return match ? match[0] : String(input).trim();
 }
 
+function bindTrackedCaInputs() {
+  const trackFrom = (input) => {
+    if (!input) return;
+    const ca = extractSolanaAddress(input.value);
+    if (!ca) return;
+    input.value = ca;
+    if (input.id === 'chartManualCaInput') loadChartCaFromInput();
+    else setTrackedTokenFromNav();
+  };
+  const onKey = (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    trackFrom(event.target);
+  };
+  const onPaste = (event) => {
+    const text = event.clipboardData && event.clipboardData.getData('text');
+    const ca = extractSolanaAddress(text);
+    if (!ca) return;
+    event.preventDefault();
+    event.target.value = ca;
+    trackFrom(event.target);
+  };
+  ['chartManualCaInput', 'navTrackCaInput'].forEach(id => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.addEventListener('keydown', onKey);
+    input.addEventListener('paste', onPaste);
+  });
+}
+
 function loadChartCaFromInput() {
   const input = document.getElementById('chartManualCaInput');
   if (!input) return;
@@ -1913,7 +1946,10 @@ async function setTrackedTokenFromNav() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mint })
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false || !data.activeToken) {
+      throw new Error(data.error || 'Failed to track CA');
+    }
     state.activeToken = data.activeToken;
     updateActiveTokenUi(data.activeToken);
     loadLiveStats();

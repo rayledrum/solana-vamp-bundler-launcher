@@ -112,3 +112,81 @@ test('switching the tracked mint unsubscribes the previous bonding curve', () =>
   assert.equal(feed.accountSub, null);
   assert.equal(feed.logsSub, null);
 });
+
+function completedCurve() {
+  const buf = Buffer.alloc(166);
+  BONDING_CURVE_DISCRIMINATOR.copy(buf, 0);
+  buf[48] = 1;
+  return buf;
+}
+
+test('a completed zero-reserve curve is a graduation, not a failed decode', () => {
+  const decoded = decodeBondingCurve(completedCurve());
+  assert.equal(decoded.complete, true);
+  assert.equal(decoded.virtualTokenReserves, 0);
+  assert.equal(decoded.realSolReserves, 0);
+  assert.equal(decoded.priceSol, null);
+  assert.equal(decoded.marketCapSol, null);
+  const open = Buffer.from(completedCurve());
+  open[48] = 0;
+  assert.equal(decodeBondingCurve(open), null);
+});
+
+test('tracking a completed curve starts PumpSwap from the first account read', async () => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  const started = [];
+  const connection = fakeConnection();
+  connection.getAccountInfo = async () => ({ data: completedCurve() });
+  const feed = new CurveFeed({
+    connection,
+    programId: new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'),
+    isLive: () => true,
+    pumpSwap: {
+      running: false,
+      mint: null,
+      async start(next) {
+        started.push(next);
+        this.running = true;
+        this.mint = next;
+        return true;
+      },
+      stop() { this.running = false; }
+    }
+  });
+  feed.start();
+  feed.setMint(mint);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(started, [mint]);
+  feed.stop();
+});
+
+test('a simulation snapshot reads the pool without opening a websocket', async () => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  const prices = [];
+  let starts = 0;
+  const feed = new CurveFeed({
+    connection: {
+      async getAccountInfo() { return { data: completedCurve() }; }
+    },
+    programId: new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'),
+    isLive: () => false,
+    onPrice: (tick) => prices.push(tick),
+    pumpSwap: {
+      async start() { starts += 1; return true; },
+      async readPrice() {
+        return { priceSol: 0.00002, marketCapSol: 20000, realSol: 42, complete: true };
+      },
+      stop() {}
+    }
+  });
+  feed.start();
+  assert.equal(feed.accountSub, null);
+  const tick = await feed.snapshot(mint);
+  assert.equal(starts, 0);
+  assert.equal(tick.mint, mint);
+  assert.equal(tick.complete, true);
+  assert.equal(tick.priceSol, 0.00002);
+  assert.equal(tick.marketCapSol, 20000);
+  assert.equal(tick.realSol, 42);
+  assert.equal(prices[0].source, 'Helius PumpSwap pool');
+});

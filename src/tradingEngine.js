@@ -40,6 +40,9 @@ class TradingEngine {
     this.curve = null;
     this.simRealSol = 0;
     this.onMintChange = null;
+    this.onChainSnapshot = null;
+    this.snapshotMint = null;
+    this.snapshotPromise = null;
     this.seededMint = null;
     this.seedPromise = null;
     this.seedPromiseMint = null;
@@ -129,7 +132,9 @@ class TradingEngine {
       realSol: Number(tick.realSol) || 0,
       complete: Boolean(tick.complete),
       destination: tick.destination || MIGRATION_DESTINATION,
-      source: tick.source || ''
+      source: tick.source || '',
+      priceSol: Number(tick.priceSol) > 0 ? Number(tick.priceSol) : null,
+      marketCapSol: Number(tick.marketCapSol) > 0 ? Number(tick.marketCapSol) : null
     };
     this.broadcast('CURVE_PROGRESS', this.curve);
   }
@@ -478,6 +483,8 @@ class TradingEngine {
     this.priceMint = null;
     this.curve = null;
     this.simRealSol = 0;
+    this.snapshotMint = null;
+    this.snapshotPromise = null;
     initialInvestments.forEach(item => {
       this.positions.set(item.address, {
         tokens: item.tokens,
@@ -552,7 +559,21 @@ class TradingEngine {
       };
     }
 
-    if (!walletManager.simulationMode) {
+    if (walletManager.simulationMode) {
+      try {
+        await this.requestChainSnapshot(mint);
+      } catch (err) {
+        console.warn('[Curve] Snapshot failed:', err.message);
+      }
+      if (this.activeToken !== mint) {
+        return {
+          activeToken: mint,
+          stale: true,
+          currentMint: this.activeToken,
+          wallets: []
+        };
+      }
+    } else {
       try {
         await this.seedOnChainHoldings(mint);
       } catch (err) {
@@ -647,7 +668,7 @@ class TradingEngine {
     const pnlSol = unknownCost ? null : currentSolValue - totalInvested;
     const pnlPct = pnlSol == null || totalInvested <= 0 ? null : (pnlSol / totalInvested) * 100;
     const modeled = curveState(this.simRealSol);
-    const liveCurve = !walletManager.simulationMode && this.curve && this.curve.mint === mint ? this.curve : null;
+    const liveCurve = this.curve && this.curve.mint === mint ? this.curve : null;
     const curveProgressPct = liveCurve ? liveCurve.progressPct : modeled.progressPct;
     const curveRealSol = liveCurve ? liveCurve.realSol : modeled.realSol;
     const curveComplete = liveCurve ? liveCurve.complete : modeled.complete;
@@ -665,9 +686,24 @@ class TradingEngine {
       curveRealSol,
       curveComplete,
       curveDestination,
+      curvePriceSol: liveCurve && liveCurve.priceSol > 0 ? liveCurve.priceSol : null,
+      curveMarketCapSol: liveCurve && liveCurve.marketCapSol > 0 ? liveCurve.marketCapSol : null,
       dexInfo,
       wallets: walletRows
     };
+  }
+
+  requestChainSnapshot(mint) {
+    if (!mint || !walletManager.simulationMode || typeof this.onChainSnapshot !== 'function') return null;
+    if (this.snapshotMint === mint && this.snapshotPromise) return this.snapshotPromise;
+    this.snapshotMint = mint;
+    this.snapshotPromise = Promise.resolve()
+      .then(() => this.onChainSnapshot(mint))
+      .catch(err => {
+        console.warn('[Curve] Snapshot failed:', err.message);
+        return null;
+      });
+    return this.snapshotPromise;
   }
 
   knownTargets(walletAddresses) {
