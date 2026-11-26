@@ -1,6 +1,12 @@
 const axios = require('axios');
 const config = require('./config');
 
+function finiteOrNull(value) {
+  if (value == null || value === '') return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : null;
+}
+
 class VampScanner {
   // Live Pump.fun bonding-curve coins plus graduated PumpSwap pairs.
   // Official pump.fun frontend APIs are Cloudflare-blocked from this host,
@@ -44,11 +50,11 @@ class VampScanner {
             website: '',
             links: [],
             metrics: {
-              priceUsd: attrs.base_token_price_usd,
-              priceNative: attrs.base_token_price_native_currency,
-              mcap: Number(attrs.market_cap_usd || attrs.fdv_usd || 0),
-              volume24h: Number(attrs.volume_usd?.h24 || 0),
-              priceChange24h: Number(change.h24 || 0),
+              priceUsd: attrs.base_token_price_usd ?? null,
+              priceNative: attrs.base_token_price_native_currency ?? null,
+              mcap: finiteOrNull(attrs.market_cap_usd != null ? attrs.market_cap_usd : attrs.fdv_usd),
+              volume24h: finiteOrNull(attrs.volume_usd && attrs.volume_usd.h24),
+              priceChange24h: finiteOrNull(change.h24),
               dexId: feed.dexId
             }
           });
@@ -137,7 +143,7 @@ class VampScanner {
           telegram,
           website,
           links: t.links || [],
-          metrics: metrics || { priceUsd: '0.0001', mcap: 45000, volume24h: 12000, priceChange24h: 35.5, dexId: 'pumpfun' }
+            metrics: metrics || null
         });
       }
 
@@ -152,40 +158,7 @@ class VampScanner {
       console.warn('[VampScanner] Failed to fetch Pump.fun movers:', err.message);
     }
 
-    const merged = this.mergeTrendingTokens(pumpTokens, dexTokens, Math.max(limit, 24));
-    if (merged.length > 0) return merged;
-
-    console.warn('[VampScanner] All live feeds failed, using fallback list');
-      // Return curated trending Solana memecoin list as fallback
-      return [
-        {
-          tokenAddress: '6p6xgHyF7AeQHyVaKnTyCaNXECw9wEkPr538JLfcpump',
-          name: 'Pepe Original Solana',
-          symbol: 'PEPE',
-          description: 'The real frog on Solana with pure community power and zero tax.',
-          icon: 'https://cdn.dexscreener.com/cms/images/6p6xgHyF7AeQHyVaKnTyCaNXECw9wEkPr538JLfcpump?size=lg',
-          links: [{ label: 'Twitter', url: 'https://x.com' }],
-          metrics: { priceUsd: '0.0034', mcap: 3400000, volume24h: 890000, priceChange24h: 74.2, dexId: 'pumpfun' }
-        },
-        {
-          tokenAddress: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-          name: 'Bonk 2.0 Revival',
-          symbol: 'BONK2',
-          description: 'Revamping the classic dog meme with modern bonding curves and hyper deflation.',
-          icon: 'https://cdn.dexscreener.com/cms/images/DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263?size=lg',
-          links: [{ label: 'Telegram', url: 'https://t.me' }],
-          metrics: { priceUsd: '0.000045', mcap: 67000, volume24h: 145000, priceChange24h: 120.4, dexId: 'pumpfun' }
-        },
-        {
-          tokenAddress: 'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZpump',
-          name: 'Giga Chad AI',
-          symbol: 'GIGA',
-          description: 'Autonomous AI agent spreading alpha and unyielding gains.',
-          icon: 'https://cdn.dexscreener.com/cms/images/ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZpump?size=lg',
-          links: [{ label: 'Website', url: 'https://gigachad.sol' }],
-          metrics: { priceUsd: '0.012', mcap: 1200000, volume24h: 420000, priceChange24h: -5.4, dexId: 'pumpfun' }
-        }
-      ];
+    return this.mergeTrendingTokens(pumpTokens, dexTokens, limit);
   }
 
   // Inspect any token by CA or Pump.fun URL for direct Vamp Cloning

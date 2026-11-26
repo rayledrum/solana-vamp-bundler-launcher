@@ -250,6 +250,8 @@ class CurveFeed {
           tick.priceSol = pool.priceSol;
           tick.marketCapSol = pool.marketCapSol;
           tick.realSol = Number(pool.realSol) || tick.realSol;
+          tick.poolBaseRaw = Number(pool.baseRaw) || 0;
+          tick.poolQuoteRaw = Number(pool.quoteRaw) || 0;
           tick.progressPct = 100;
           tick.complete = true;
           tick.source = 'Helius PumpSwap pool';
@@ -291,6 +293,8 @@ class CurveFeed {
       priceSol: decoded.priceSol,
       marketCapSol: decoded.marketCapSol,
       realSol: Number(decoded.realSolReserves) / 1e9,
+      virtualSolReserves: Number(decoded.virtualSolReserves) || 0,
+      virtualTokenReserves: Number(decoded.virtualTokenReserves) || 0,
       progressPct: bondingProgress(decoded.realTokenReserves, initial, complete),
       complete,
       destination: MIGRATION_DESTINATION,

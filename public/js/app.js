@@ -26,7 +26,8 @@ const state = {
   // Width of the stored samples. 1000 means real 1s bars are already loaded.
   chartSampleMs: null,
   currentCandle: null,
-  lastPrice: 0.000034,
+  lastPrice: null,
+  allocation: { dev: 0, sub: 0, curve: 100 },
   curveProgressPct: 0,
   hoverCandle: null,
 
@@ -230,7 +231,7 @@ function handleWsMessage(msg) {
     case 'BUY_EXECUTED':
       logTerminal(`🟢 [Manual Buy] Bought tokens for ${msg.payload.totalSpentSol} SOL across ${msg.payload.resultsCount} wallets`);
       showToast(`Bought tokens (+${msg.payload.totalSpentSol} SOL)`, 'success');
-      applyDeskTradeTick(msg.payload.mint, msg.payload.totalSpentSol, (base) => base * (1 + (msg.payload.totalSpentSol * 0.05)));
+      applyReportedFill(msg.payload, msg.payload.totalSpentSol);
       loadLiveStats();
       loadMasterWallet();
       loadSubWallets();
@@ -239,7 +240,7 @@ function handleWsMessage(msg) {
     case 'SELL_EXECUTED':
       logTerminal(`🔴 [Manual Sell] Sold ${msg.payload.pct}% | Recv: +${msg.payload.totalReceivedSol} SOL`);
       showToast(`Sold ${msg.payload.pct}% across bundle (+${msg.payload.totalReceivedSol} SOL)`, 'warning');
-      applyDeskTradeTick(msg.payload.mint, msg.payload.totalReceivedSol, (base) => base * (1 - (msg.payload.pct * 0.002)));
+      applyReportedFill(msg.payload, msg.payload.totalReceivedSol);
       loadLiveStats();
       loadMasterWallet();
       loadSubWallets();
@@ -247,7 +248,7 @@ function handleWsMessage(msg) {
 
     case 'CASCADE_STEP':
       logTerminal(`🌊 [Cascade] Step ${msg.payload.step}/${msg.payload.total} executed for ${msg.payload.address.slice(0, 6)}...`);
-      applyDeskTradeTick(msg.payload.mint, 0.2, (base) => base * 0.985);
+      applyReportedFill(msg.payload, 0);
       break;
 
     case 'CASCADE_COMPLETED':
@@ -499,25 +500,15 @@ function applySeriesView(series) {
   if (!series) return;
   state.chartSamples = series.samples;
   state.chartSampleMs = series.sampleMs;
-  if (Number.isFinite(series.lastPrice)) state.lastPrice = series.lastPrice;
+  if (Number.isFinite(series.lastPrice) && series.lastPrice > 0) state.lastPrice = series.lastPrice;
+  else if (!series.samples || series.samples.length === 0) state.lastPrice = null;
 }
 
-function priceBaseFor(mint) {
-  if (mint && mint === state.chartToken && state.lastPrice > 0) return state.lastPrice;
-  const series = mint ? chartBook.peek(mint) : null;
-  if (series && series.lastPrice > 0) return series.lastPrice;
-  return 0;
-}
-
-// Desk buy/sell/cascade/bump ticks. Missing mint, or a mint that is not on
-// screen, must not move the visible series. A known other mint keeps the
-// sample on its own slot.
-function applyDeskTradeTick(mint, volume, priceFromBase) {
-  if (!mint || typeof priceFromBase !== 'function') return;
-  const base = priceBaseFor(mint);
-  if (!(base > 0)) return;
-  const epoch = mint === state.chartToken ? state.chartEpoch : null;
-  pushChartTick(priceFromBase(base), volume || 0, epoch, mint);
+function applyReportedFill(payload, volume) {
+  const price = ChartBook.reportedFillPrice(payload);
+  if (!(price > 0) || !payload || !payload.mint) return;
+  const epoch = payload.mint === state.chartToken ? state.chartEpoch : null;
+  pushChartTick(price, volume || 0, epoch, payload.mint);
 }
 
 function initChart() {
@@ -525,14 +516,14 @@ function initChart() {
   renderCandlestickChart();
   renderGauge(state.curveProgressPct);
   renderSparkline();
-  renderDonutChart(3.2, 7.1, 89.7);
+  renderDonutChart(state.allocation.dev, state.allocation.sub, state.allocation.curve);
 
   // Resize listener
   window.addEventListener('resize', () => {
     renderCandlestickChart();
     renderGauge(state.curveProgressPct);
     renderSparkline();
-    renderDonutChart(3.2, 7.1, 89.7);
+    renderDonutChart(state.allocation.dev, state.allocation.sub, state.allocation.curve);
   });
 
   // Crosshair mouse tracking
@@ -662,8 +653,16 @@ async function loadCandlesForToken(mint, options = {}) {
     if (seq !== chartLoadSeq || state.chartToken !== mint) return;
     if (!res.ok) throw new Error(data.error || 'Candle request failed');
     const candles = Array.isArray(data.candles) ? data.candles : [];
-    if (candles.length === 0) throw new Error('No candles');
-    chartBook.replaceSeries(mint, {
+    if (candles.length === 0) {
+      chartBook.replaceSeries(mint, {
+        samples: [],
+        sampleMs: TIMEFRAME_MS[requestedTf] || 5000,
+        lastPrice: null,
+        source: 'empty',
+        symbol: data.symbol || null
+      });
+      if (data.symbol) setChartSymbol(data.symbol);
+    } else chartBook.replaceSeries(mint, {
       samples: candles.map(copyChartSample),
       sampleMs: TIMEFRAME_MS[data.servedRes] || TIMEFRAME_MS[requestedTf] || 60000,
       lastPrice: candles[candles.length - 1].close,
@@ -683,14 +682,13 @@ async function loadCandlesForToken(mint, options = {}) {
       renderSparkline();
       return;
     }
-    const price = 30 / 1073000000;
-    const now = Date.now();
     chartBook.replaceSeries(mint, {
-      samples: [{ time: now, open: price, high: price, low: price, close: price, volume: 0 }],
+      samples: [],
       sampleMs: TIMEFRAME_MS[requestedTf] || 5000,
-      lastPrice: price,
-      source: 'seed'
+      lastPrice: null,
+      source: 'empty'
     });
+    state.lastPrice = null;
   }
   if (seq !== chartLoadSeq || state.chartToken !== mint) return;
   bindActiveSeries(chartBook.peek(mint));
@@ -766,25 +764,10 @@ function rebuildDisplayCandles() {
 }
 
 function generateInitialCandles() {
-  const tfMs = TIMEFRAME_MS[state.chartTimeframe] || 5000;
-  const count = 40;
-  const now = Date.now();
-  let basePrice = 0.000030;
-  const samples = [];
-  for (let i = count; i >= 0; i--) {
-    const time = now - (i * tfMs);
-    const delta = (Math.random() - 0.48) * 0.000002;
-    const open = basePrice;
-    const close = Math.max(0.00001, open + delta);
-    const high = Math.max(open, close) + (Math.random() * 0.0000015);
-    const low = Math.min(open, close) - (Math.random() * 0.0000015);
-    const volume = Math.random() * 0.8 + 0.1;
-    samples.push({ time, open, high, low, close, volume });
-    basePrice = close;
-  }
-  state.chartSamples = samples;
-  state.lastPrice = basePrice;
-  rebuildDisplayCandles();
+  state.chartSamples = [];
+  state.candles = [];
+  state.currentCandle = null;
+  state.lastPrice = null;
   updateChartHeaders();
 }
 
@@ -818,7 +801,7 @@ function pushChartTick(price, volume = 0.1, expectedEpoch = null, mint = null) {
 function updateChartHeaders() {
   const pDisplay = document.getElementById('chartPriceDisplay');
   const cDisplay = document.getElementById('chartChangeDisplay');
-  if (pDisplay) pDisplay.innerText = formatChartMarketCap(state.lastPrice, true);
+  if (pDisplay) pDisplay.innerText = Number(state.lastPrice) > 0 ? formatChartMarketCap(state.lastPrice, true) : '—';
 
   if (state.candles.length > 1) {
     const first = state.candles[0].open;
@@ -1150,7 +1133,22 @@ function renderSparkline() {
   ctx.stroke();
 }
 
-function renderDonutChart(devPct = 3.2, subPct = 7.1, curvePct = 89.7) {
+function paintHoldingAllocation(wallets) {
+  const supply = 1_000_000_000;
+  let dev = 0;
+  let subs = 0;
+  (wallets || []).forEach(row => {
+    const tokens = Number(row.tokens) || 0;
+    if (String(row.role || '').indexOf('Master') === 0) dev += tokens;
+    else subs += tokens;
+  });
+  const devPct = (dev / supply) * 100;
+  const subPct = (subs / supply) * 100;
+  state.allocation = { dev: devPct, sub: subPct, curve: Math.max(0, 100 - devPct - subPct) };
+  renderDonutChart(state.allocation.dev, state.allocation.sub, state.allocation.curve);
+}
+
+function renderDonutChart(devPct = 0, subPct = 0, curvePct = 100) {
   const canvas = document.getElementById('donutCanvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -1742,8 +1740,9 @@ async function loadLiveStats() {
       } else if (Number(s.curveMarketCapSol) > 0) {
         document.getElementById('deskMcapDisplay').innerText = `${Number(s.curveMarketCapSol).toFixed(2)} SOL`;
       } else {
-        document.getElementById('deskMcapDisplay').innerText = `$${Math.round((s.curveProgressPct * 690)).toLocaleString()}`;
+        document.getElementById('deskMcapDisplay').innerText = '—';
       }
+      paintHoldingAllocation(s.wallets);
     }
 
     if (s.wallets && s.wallets.length > 0) {
@@ -2578,8 +2577,9 @@ function renderTopMovers(tokens) {
   panel.innerHTML = '';
   sorted.forEach(t => {
     const m = t.metrics || {};
-    const change = Number.isFinite(parseFloat(m.priceChange24h)) ? parseFloat(m.priceChange24h) : 0;
-    const isUp = change >= 0;
+    const parsedChange = m.priceChange24h == null || m.priceChange24h === '' ? null : parseFloat(m.priceChange24h);
+    const change = Number.isFinite(parsedChange) ? parsedChange : null;
+    const isUp = change != null && change >= 0;
     const color = isUp ? '#00c48c' : '#f04c5e';
     const bgSoft = isUp ? 'rgba(0,196,140,0.1)' : 'rgba(240,76,94,0.1)';
     const symbol = t.symbol || 'TOKEN';
@@ -2639,7 +2639,7 @@ function renderTopMovers(tokens) {
     changeRow.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:4px;';
     const changeEl = document.createElement('span');
     changeEl.style.cssText = 'font-size:8.5px;font-weight:800;font-family:monospace;padding:1px 4px;border-radius:4px;background:' + bgSoft + ';color:' + color + ';';
-    changeEl.textContent = (isUp ? '▲ +' : '▼ ') + Number(change).toFixed(1) + '%';
+    changeEl.textContent = change == null ? '—' : ((isUp ? '▲ +' : '▼ ') + Number(change).toFixed(1) + '%');
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.textContent = 'Copy';
@@ -3103,25 +3103,12 @@ function renderTradeTape(trades) {
 
 function applyPublicTradePrice(trade, mint) {
   if (!mint) return;
+  const tradePrice = ChartBook.publicTradePrice(trade);
+  if (!(tradePrice > 0)) return;
   noteChartScale(mint, trade);
-  if (trade.priceOnly && Number(trade.priceSol) > 0) {
-    const epoch = mint === state.chartToken ? state.chartEpoch : null;
-    pushChartTick(Number(trade.priceSol), 0, epoch, mint);
-    state.lastChartTickAt = Date.now();
-    return;
-  }
-  if (!(Number(trade.solAmount) > 0)) return;
-  const isBuy = trade.txType === 'buy';
   const epoch = mint === state.chartToken ? state.chartEpoch : null;
-  if (trade.simulated || String(trade.signature || '').startsWith('sim_')) {
-    const base = priceBaseFor(mint);
-    if (!(base > 0)) return;
-    const delta = isBuy ? (trade.solAmount * 0.002) : -(trade.solAmount * 0.002);
-    pushChartTick(Math.max(1e-12, base * (1 + delta)), trade.solAmount, epoch, mint);
-  } else {
-    const tradePrice = priceFromTrade(trade);
-    if (tradePrice) pushChartTick(tradePrice, trade.solAmount, epoch, mint);
-  }
+  pushChartTick(tradePrice, trade.priceOnly ? 0 : (Number(trade.solAmount) || 0), epoch, mint);
+  if (trade.priceOnly) state.lastChartTickAt = Date.now();
 }
 
 function tradeIsOwn(trade) {

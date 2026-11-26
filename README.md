@@ -32,8 +32,11 @@ A high-performance, non-custodial Solana memecoin launchpad, vampire cloner, and
 - **Percentage Dumps:** Sell 25%, 50%, 75%, or 100% across all or individual wallets.
 - **Panic Dump All:** Instant emergency exit across 100% of holdings.
 
-### 5. Volume bumper (simulation only)
-- Prints a labeled practice tick on a timer. It does not submit buys or sells, in simulation or on mainnet.
+### 5. Volume bumper
+- Round trip or Random (the default). Random holds several open lots and waits a random time between the min and max delay before each buy or partial sell.
+- Live mode sends capped Pump.fun trades, and PumpSwap trades (`pump-amm`) after the coin graduates. Simulation does not send transactions. It prices fills from the tracked coin's bonding-curve reserves, or the PumpSwap pool reserves once the curve is complete.
+- The bumper keeps running on a graduated coin that has a pool. It stops when that pool is missing, the session budget or cycle cap is hit, or the live chart feed stalls.
+- Stop, a 100% sell, cascade, panic, or a change of active mint sells the open lots in that same request.
 
 ---
 

@@ -18,7 +18,7 @@ const {
 const { fetchSingleVersionedTx, sendAndConfirmVersioned } = require('./portalTx');
 const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTradeFeeSol } = require('./pnl');
 const { pumpPortalFeedEvent } = require('./curveFeed');
-const { curveState, MIGRATION_DESTINATION } = require('./bondingCurve');
+const { curveState, MIGRATION_DESTINATION, ammOut } = require('./bondingCurve');
 const { createVolumeStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
 
 class TradingEngine {
@@ -43,6 +43,8 @@ class TradingEngine {
     this.onChainSnapshot = null;
     this.snapshotMint = null;
     this.snapshotPromise = null;
+    this.snapshotAt = 0;
+    this.snapshotTtlMs = 5000;
     this.seededMint = null;
     this.seedPromise = null;
     this.seedPromiseMint = null;
@@ -134,15 +136,20 @@ class TradingEngine {
       destination: tick.destination || MIGRATION_DESTINATION,
       source: tick.source || '',
       priceSol: Number(tick.priceSol) > 0 ? Number(tick.priceSol) : null,
-      marketCapSol: Number(tick.marketCapSol) > 0 ? Number(tick.marketCapSol) : null
+      marketCapSol: Number(tick.marketCapSol) > 0 ? Number(tick.marketCapSol) : null,
+      virtualSolReserves: Number(tick.virtualSolReserves) || 0,
+      virtualTokenReserves: Number(tick.virtualTokenReserves) || 0,
+      poolBaseRaw: Number(tick.poolBaseRaw) || 0,
+      poolQuoteRaw: Number(tick.poolQuoteRaw) || 0
     };
     this.broadcast('CURVE_PROGRESS', this.curve);
   }
 
   tradePool() {
+    const curve = this.curve && this.curve.mint === this.activeToken ? this.curve : null;
+    if (curve && curve.complete) return walletManager.simulationMode ? 'pump' : 'pump-amm';
+    if (curve && curve.complete === false) return 'pump';
     if (walletManager.simulationMode) return 'pump';
-    if (this.curve && this.curve.mint === this.activeToken && this.curve.complete) return 'pump-amm';
-    if (this.curve && this.curve.mint === this.activeToken && this.curve.complete === false) return 'pump';
     return 'auto';
   }
 
@@ -382,26 +389,6 @@ class TradingEngine {
     this.pumpRetry = 0;
     if (!mint) return;
     this.openPumpSocket(mint);
-    if (walletManager.simulationMode) {
-      this.simTicker = setInterval(() => {
-        if (!walletManager.simulationMode || !this.activeToken || this.activeToken !== mint) return;
-        const isBuy = Math.random() > 0.45;
-        const solAmount = Number((Math.random() * 0.45 + 0.05).toFixed(3));
-        const tokenAmount = Math.floor(pumpfun.calculateBuyOutput(solAmount, 15) * (0.9 + Math.random() * 0.2));
-        const randomAddress = Math.random().toString(36).substring(2, 6).toUpperCase() + '..' + Math.random().toString(36).substring(2, 6).toUpperCase();
-        this.broadcast('PUBLIC_TRADE', {
-          txType: isBuy ? 'buy' : 'sell',
-          solAmount,
-          tokenAmount,
-          traderPublicKey: randomAddress,
-          signature: 'sim_' + Date.now().toString(36),
-          marketCapSol: Number((15 + Math.random() * 5).toFixed(2)),
-          mint,
-          simulated: true,
-          timestamp: Date.now()
-        });
-      }, 3800);
-    }
   }
 
   openPumpSocket(mint) {
@@ -483,8 +470,10 @@ class TradingEngine {
     this.priceMint = null;
     this.curve = null;
     this.simRealSol = 0;
+    this.sessionSpentSol = 0;
     this.snapshotMint = null;
     this.snapshotPromise = null;
+    this.snapshotAt = 0;
     initialInvestments.forEach(item => {
       this.positions.set(item.address, {
         tokens: item.tokens,
@@ -498,7 +487,9 @@ class TradingEngine {
         });
       }
     });
-    this.broadcast('TOKEN_TRACKED', { mint, positionsCount: initialInvestments.length });
+    if (!initialInvestments.length && walletManager.simulationMode) this.restoreSimPositions(mint);
+    else if (walletManager.simulationMode) this.persistSimMint(mint);
+    this.broadcast('TOKEN_TRACKED', { mint, positionsCount: this.positions.size });
     this.connectPumpPortal(mint);
     if (this.onMintChange) this.onMintChange(mint);
   }
@@ -605,7 +596,12 @@ class TradingEngine {
 
     const devPos = this.positions.get(master.address) || { tokens: 0, solInvested: 0, costKnown: true };
     const livePrice = !walletManager.simulationMode && this.priceMint === mint && this.priceSol > 0 ? this.priceSol : null;
-    const valueOf = (tokens) => livePrice != null ? tokens * livePrice : (walletManager.simulationMode ? pumpfun.calculateSellOutput(tokens, 15) : 0);
+    const valueOf = (tokens) => {
+      if (livePrice != null) return tokens * livePrice;
+      if (!walletManager.simulationMode) return 0;
+      const quoted = this.simSolOut(tokens);
+      return quoted != null ? quoted : pumpfun.calculateSellOutput(tokens, this.simRealSol);
+    };
     const present = (address, position) => {
       const tokens = Math.max(0, Number(position.tokens) || 0);
       const currentValue = valueOf(tokens);
@@ -693,10 +689,12 @@ class TradingEngine {
     };
   }
 
-  requestChainSnapshot(mint) {
+  requestChainSnapshot(mint, now = Date.now()) {
     if (!mint || !walletManager.simulationMode || typeof this.onChainSnapshot !== 'function') return null;
-    if (this.snapshotMint === mint && this.snapshotPromise) return this.snapshotPromise;
+    const fresh = this.snapshotMint === mint && this.snapshotPromise && (now - (this.snapshotAt || 0)) < (this.snapshotTtlMs || 5000);
+    if (fresh) return this.snapshotPromise;
     this.snapshotMint = mint;
+    this.snapshotAt = now;
     this.snapshotPromise = Promise.resolve()
       .then(() => this.onChainSnapshot(mint))
       .catch(err => {
@@ -704,6 +702,88 @@ class TradingEngine {
         return null;
       });
     return this.snapshotPromise;
+  }
+
+  simReservePair() {
+    const curve = this.curve && this.curve.mint === this.activeToken ? this.curve : null;
+    if (!curve) return null;
+    if (curve.complete && curve.poolBaseRaw > 0 && curve.poolQuoteRaw > 0) {
+      return { tokenRaw: curve.poolBaseRaw, solRaw: curve.poolQuoteRaw, pool: true };
+    }
+    if (!curve.complete && curve.virtualTokenReserves > 0 && curve.virtualSolReserves > 0) {
+      return { tokenRaw: curve.virtualTokenReserves, solRaw: curve.virtualSolReserves, pool: false };
+    }
+    return null;
+  }
+
+  simTokensOut(solAmount) {
+    const reserves = this.simReservePair();
+    if (!reserves) return null;
+    const lamports = BigInt(Math.max(0, Math.round(Number(solAmount) * 1e9)));
+    return Number(ammOut(lamports, reserves.solRaw, reserves.tokenRaw)) / 1e6;
+  }
+
+  simSolOut(tokenUi) {
+    const reserves = this.simReservePair();
+    if (!reserves) return null;
+    const raw = BigInt(Math.max(0, Math.floor(Number(tokenUi) * 1e6)));
+    return Number(ammOut(raw, reserves.tokenRaw, reserves.solRaw)) / 1e9;
+  }
+
+  applySimReserves(side, solUi, tokenUi) {
+    const curve = this.curve && this.curve.mint === this.activeToken ? this.curve : null;
+    const reserves = this.simReservePair();
+    if (!curve || !reserves) return;
+    const solRaw = Math.round(Number(solUi) * 1e9);
+    const tokenRaw = Math.floor(Number(tokenUi) * 1e6);
+    if (reserves.pool) {
+      curve.poolQuoteRaw = Math.max(0, curve.poolQuoteRaw + (side === 'buy' ? solRaw : -solRaw));
+      curve.poolBaseRaw = Math.max(0, curve.poolBaseRaw + (side === 'buy' ? -tokenRaw : tokenRaw));
+    } else {
+      curve.virtualSolReserves = Math.max(0, curve.virtualSolReserves + (side === 'buy' ? solRaw : -solRaw));
+      curve.virtualTokenReserves = Math.max(0, curve.virtualTokenReserves + (side === 'buy' ? -tokenRaw : tokenRaw));
+    }
+    const next = this.simReservePair();
+    if (next && next.tokenRaw > 0) curve.priceSol = (next.solRaw / 1e9) / (next.tokenRaw / 1e6);
+  }
+
+  persistSimMint(mint) {
+    if (!walletManager.simulationMode || !mint || typeof walletManager.noteSimPositions !== 'function') return;
+    const positions = {};
+    for (const [address, position] of this.positions.entries()) {
+      positions[address] = {
+        tokens: Number(position.tokens) || 0,
+        solInvested: Number(position.solInvested) || 0,
+        costKnown: position.costKnown !== false
+      };
+    }
+    const books = {};
+    const prefix = `${mint}:`;
+    for (const [key, book] of this.costBooks.entries()) {
+      if (key.startsWith(prefix)) books[key.slice(prefix.length)] = book;
+    }
+    walletManager.noteSimPositions(mint, { positions, books });
+  }
+
+  restoreSimPositions(mint) {
+    const saved = walletManager.simPositions && walletManager.simPositions[mint];
+    if (!saved) return;
+    for (const [address, position] of Object.entries(saved.positions || {})) {
+      this.positions.set(address, {
+        tokens: Number(position.tokens) || 0,
+        solInvested: Number(position.solInvested) || 0,
+        costKnown: position.costKnown !== false
+      });
+    }
+    for (const [address, book] of Object.entries(saved.books || {})) {
+      this.costBooks.set(this.bookKey(mint, address), book);
+    }
+  }
+
+  fundedSimWallets() {
+    return walletManager.walletList()
+      .map(wallet => wallet.publicKey.toBase58())
+      .filter(address => walletManager.simBalanceOf(address) > 0);
   }
 
   knownTargets(walletAddresses) {
@@ -769,7 +849,7 @@ class TradingEngine {
     if (!mint) throw new ValidationError('No active token is currently selected');
     const amountPerWallet = requireSolTradeAmount(solAmount);
     const isSim = walletManager.simulationMode;
-    const targets = this.knownTargets(walletAddresses);
+    const targets = walletAddresses.length ? this.knownTargets(walletAddresses) : (isSim ? this.fundedSimWallets() : this.knownTargets([]));
 
     const results = [];
     let totalBoughtTokens = 0;
@@ -793,14 +873,17 @@ class TradingEngine {
       }
 
       if (isSim) {
-        const tokensOut = Math.floor(pumpfun.calculateBuyOutput(amountPerWallet, 15));
+        const quoted = this.simTokensOut(amountPerWallet);
+        const tokensOut = Math.floor(quoted != null ? quoted : pumpfun.calculateBuyOutput(amountPerWallet, this.simRealSol));
         const position = this.positions.get(addr) || { tokens: 0, solInvested: 0 };
         position.tokens += tokensOut;
         position.solInvested += amountPerWallet;
         this.positions.set(addr, position);
         this.simRealSol += amountPerWallet;
-        const current = walletManager.simulatedBalances.get(addr) || 0;
-        walletManager.simulatedBalances.set(addr, Math.max(0, current - amountPerWallet));
+        this.applySimReserves('buy', amountPerWallet, tokensOut);
+        const current = walletManager.simBalanceOf(addr) || 0;
+        walletManager.setSimSol(addr, current - amountPerWallet);
+        this.persistSimMint(mint);
         walletManager.save();
         this.sessionSpentSol += amountPerWallet;
         totalBoughtTokens += tokensOut;
@@ -897,6 +980,7 @@ class TradingEngine {
       amountPerWallet,
       totalBoughtTokens,
       totalSpentSol: Number(totalSpentSol.toFixed(4)),
+      priceSol: totalBoughtTokens > 0 ? totalSpentSol / totalBoughtTokens : null,
       resultsCount: successCount
     });
 
@@ -936,22 +1020,27 @@ class TradingEngine {
       if (isSim) {
         const position = this.positions.get(addr);
         if (!position || position.tokens <= 0) {
+          if (sellPct === 100) continue;
           failures += 1;
           results.push({ address: addr, tokensSold: 0, status: 'Error: no tokens to sell' });
           continue;
         }
         const tokensToSell = Math.floor(position.tokens * fraction);
         if (tokensToSell <= 0) {
+          if (sellPct === 100) continue;
           failures += 1;
           results.push({ address: addr, tokensSold: 0, status: 'Error: sell size rounded to 0' });
           continue;
         }
-        const solGained = pumpfun.calculateSellOutput(tokensToSell, 15);
+        const quoted = this.simSolOut(tokensToSell);
+        const solGained = quoted != null ? quoted : pumpfun.calculateSellOutput(tokensToSell, this.simRealSol);
         position.tokens -= tokensToSell;
         this.positions.set(addr, position);
-        const currentBal = walletManager.simulatedBalances.get(addr) || 0;
-        walletManager.simulatedBalances.set(addr, currentBal + solGained);
+        const currentBal = walletManager.simBalanceOf(addr) || 0;
+        walletManager.setSimSol(addr, currentBal + solGained);
         this.simRealSol = Math.max(0, this.simRealSol - solGained);
+        this.applySimReserves('sell', solGained, tokensToSell);
+        this.persistSimMint(mint);
         walletManager.save();
         totalSoldTokens += tokensToSell;
         totalReceivedSol += solGained;
@@ -981,6 +1070,7 @@ class TradingEngine {
       try {
         const uiBalance = await this.onChainTokenUi(signer, mint);
         if (!(uiBalance > 0)) {
+          if (sellPct === 100) continue;
           failures += 1;
           results.push({ address: addr, tokensSold: 0, status: noTokensMessage(addr, mint) });
           continue;
@@ -1049,10 +1139,26 @@ class TradingEngine {
       pct: sellPct,
       totalSoldTokens,
       totalReceivedSol: Number(totalReceivedSol.toFixed(4)),
+      priceSol: totalSoldTokens > 0 ? totalReceivedSol / totalSoldTokens : null,
       resultsCount: successCount
     });
 
     if (!fromBumper) this.reconcileBumpLots(targets, sellPct);
+    if (!fromBumper && sellPct === 100 && this.bumperActiveOn(mint)) {
+      await this.haltBumper('Stopped: user sold out');
+    }
+    if (sellPct === 100 && totalSoldTokens <= 0 && failures === 0) {
+      return {
+        success: true,
+        noop: true,
+        message: 'No tokens to sell.',
+        simulation: isSim,
+        pct: sellPct,
+        totalSoldTokens: 0,
+        totalReceivedSol: 0,
+        results
+      };
+    }
     const result = this.tradeError({
       success: failures === 0 && successCount > 0,
       simulation: isSim,
@@ -1061,9 +1167,6 @@ class TradingEngine {
       totalReceivedSol: Number(totalReceivedSol.toFixed(4)),
       results
     });
-    if (!fromBumper && sellPct === 100 && this.bumperActiveOn(mint)) {
-      await this.haltBumper('Stopped: user sold out');
-    }
     return result;
   }
 
@@ -1172,7 +1275,11 @@ class TradingEngine {
   }
 
   bumpStopReason() {
-    if (this.curve && this.curve.mint === this.activeToken && this.curve.complete) return 'Coin graduated. Bumper stopped.';
+    const curve = this.curve && this.curve.mint === this.activeToken ? this.curve : null;
+    if (curve && curve.complete) {
+      const hasPool = curve.priceSol > 0 || (curve.poolBaseRaw > 0 && curve.poolQuoteRaw > 0);
+      if (!hasPool) return 'Graduated coin has no PumpSwap pool. Bumper stopped.';
+    }
     if (!walletManager.simulationMode) {
       const since = this.chartFeedAt || this.bumpStartedAt || 0;
       const stallMs = (this.bumpLimits && this.bumpLimits.stallSeconds || 30) * 1000;
@@ -1363,9 +1470,9 @@ class TradingEngine {
   }
 
   startVolumeBumper(solAmount, options = {}) {
+    if (this.isBumping) return this.bumpSnapshot();
     const amount = requireSolTradeAmount(solAmount);
     const limits = readBumpLimits(options, amount);
-    if (this.isBumping) return this.bumpSnapshot();
     if (!this.activeToken) throw new ValidationError('No active token is currently selected');
     if (!walletManager.subWallets.length) throw new ValidationError('No sub-wallets are loaded');
     this.isBumping = true;

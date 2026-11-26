@@ -216,7 +216,6 @@ class PumpFunService {
   async getChartCandles(tokenMint, timeframe = '1m') {
     const mint = String(tokenMint || '').trim();
     const tf = String(timeframe || '1m');
-    const curvePrice = 30 / 1073000000;
     const result = {
       mint,
       symbol: null,
@@ -274,10 +273,8 @@ class PumpFunService {
       console.warn('[PumpFun] GeckoTerminal candle fetch failed:', err.message);
     }
 
-    const seed = result.priceNative || curvePrice;
-    const now = Date.now();
-    result.priceNative = seed;
-    result.candles = [{ time: now, open: seed, high: seed, low: seed, close: seed, volume: 0 }];
+    result.candles = [];
+    result.source = 'empty';
     await this.attachMintIdentity(mint, result);
     return result;
   }

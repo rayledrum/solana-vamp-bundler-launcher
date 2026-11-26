@@ -26,6 +26,7 @@ class WalletManager {
     this.subWallets = [];
     this.simulationMode = options.simulationMode !== undefined ? options.simulationMode : config.SIMULATION_MODE;
     this.simulatedBalances = new Map();
+    this.simPositions = {};
     this.liveBalanceCache = null;
     this.liveBalanceTtlMs = options.liveBalanceTtlMs || 5000;
     if (!options.skipInit) this.init();
@@ -72,6 +73,7 @@ class WalletManager {
       throw new Error(`Refusing to start: ${this.dataFile} contains invalid wallet keys (${err.message}). It was not overwritten.`);
     }
     this.simulatedBalances = new Map();
+    this.simPositions = data.simPositions && typeof data.simPositions === 'object' ? data.simPositions : {};
     if (data.simulatedBalances && typeof data.simulatedBalances === 'object') {
       for (const [addr, bal] of Object.entries(data.simulatedBalances)) {
         const amount = Number(bal);
@@ -108,17 +110,36 @@ class WalletManager {
     }
     const simBalObj = {};
     for (const [addr, bal] of this.simulatedBalances.entries()) {
-      simBalObj[addr] = Number(bal);
+      const rounded = this.roundSol(bal);
+      this.simulatedBalances.set(addr, rounded);
+      simBalObj[addr] = rounded;
     }
     const data = {
       master: bs58.encode(this.masterWallet.secretKey),
       subWallets: this.subWallets.map(wallet => bs58.encode(wallet.secretKey)),
-      simulatedBalances: simBalObj
+      simulatedBalances: simBalObj,
+      simPositions: this.simPositions || {}
     };
     const tmp = `${this.dataFile}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
     fs.renameSync(tmp, this.dataFile);
     fs.chmodSync(this.dataFile, 0o600);
+  }
+
+  roundSol(sol) {
+    const amount = Number(sol);
+    if (!Number.isFinite(amount)) return 0;
+    return Math.round(amount * LAMPORTS_PER_SOL) / LAMPORTS_PER_SOL;
+  }
+
+  setSimSol(address, sol) {
+    this.simulatedBalances.set(address, this.roundSol(Math.max(0, Number(sol) || 0)));
+  }
+
+  noteSimPositions(mint, entry) {
+    if (!mint) return;
+    if (!this.simPositions || typeof this.simPositions !== 'object') this.simPositions = {};
+    this.simPositions[mint] = entry || { positions: {}, books: {} };
   }
 
   invalidateLiveBalances() {
