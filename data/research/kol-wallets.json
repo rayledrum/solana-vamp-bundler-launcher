@@ -1,0 +1,515 @@
+[
+  {
+    "name": "Beaver",
+    "handle": "beaverd",
+    "wallet": "GM7Hrz2bDq33ezMtL6KGidSWZXMWgZ6qBuugkb5H8NvN",
+    "sourceUrl": "https://kolexplorer.com/kol/beaver",
+    "sources": [
+      "https://kolexplorer.com/kol/beaver",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high"
+  },
+  {
+    "name": "Cented",
+    "handle": "Cented7",
+    "wallet": "CyaE1VxvBrahnPWkqm5VsdCvyS2QmNht2UFrKJHga54o",
+    "sourceUrl": "https://kolexplorer.com/kol/cented",
+    "sources": [
+      "https://kolexplorer.com/kol/cented",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high",
+    "handleAliases": [
+      "Cented7",
+      "flipski77"
+    ],
+    "notes": "Kolexplorer attributes this wallet to @flipski77; Volition and other trackers list the same address for @Cented7."
+  },
+  {
+    "name": "Cooker",
+    "handle": "CookerFlips",
+    "wallet": "8deJ9xeUvXSJwicYptA9mHsU2rN2pDx37KWzkDkEXhU6",
+    "sourceUrl": "https://kolexplorer.com/kol/cooker",
+    "sources": [
+      "https://kolexplorer.com/kol/cooker",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high"
+  },
+  {
+    "name": "Cupsey",
+    "handle": "Cupseyy",
+    "wallet": "2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f",
+    "sourceUrl": "https://kolexplorer.com/kol/cupsey",
+    "sources": [
+      "https://kolexplorer.com/kol/cupsey",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high",
+    "notes": "Kolexplorer profile wallet. A second widely tracked Cupsey wallet is listed separately."
+  },
+  {
+    "name": "Cupsey",
+    "handle": "Cupseyy",
+    "wallet": "suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+    "sourceUrl": "https://www.solanatracker.io/wallet/suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+    "sources": [
+      "https://www.solanatracker.io/wallet/suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+      "https://solscan.io/account/suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+      "https://uwuu.ai/trader/suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK"
+    ],
+    "confidence": "high",
+    "notes": "Second public wallet attributed to Cupsey (@Cupseyy). Distinct from the Kolexplorer profile wallet 2fg5QD\u2026rx6f."
+  },
+  {
+    "name": "Daumen",
+    "handle": "daumeneth",
+    "wallet": "8MaVa9kdt3NW4Q5HyNAm1X5LbR8PQRVDc1W8NMVK88D5",
+    "sourceUrl": "https://kolexplorer.com/kol/daumen",
+    "sources": [
+      "https://kolexplorer.com/kol/daumen",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high",
+    "handleAliases": [
+      "daumenxyz",
+      "daumeneth"
+    ],
+    "notes": "Kolexplorer lists @daumeneth; Volition lists the same address prefix 8MaVa9\u2026VK88D5 for @daumenxyz."
+  },
+  {
+    "name": "Decu",
+    "handle": "notdecu",
+    "wallet": "4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9",
+    "sourceUrl": "https://kolexplorer.com/kol/decu",
+    "sources": [
+      "https://kolexplorer.com/kol/decu",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high"
+  },
+  {
+    "name": "Frank degods",
+    "handle": "frankdegods",
+    "wallet": "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ",
+    "sourceUrl": "https://kolexplorer.com/kol/frank-degods",
+    "sources": [
+      "https://kolexplorer.com/kol/frank-degods",
+      "https://kolexplorer.com/",
+      "https://fomoapi.io/blog/resolve-fomo-handle-to-wallet",
+      "https://www.pocketwatch.fun/trader/frankdegods"
+    ],
+    "confidence": "high",
+    "notes": "Public FOMO-app wallet also cited by FOMO API docs and Pocket Watch."
+  },
+  {
+    "name": "Gake",
+    "handle": "Ga__ke",
+    "wallet": "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm",
+    "sourceUrl": "https://kolexplorer.com/kol/gake",
+    "sources": [
+      "https://kolexplorer.com/kol/gake",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high"
+  },
+  {
+    "name": "Iced",
+    "handle": "IcedKnife",
+    "wallet": "DrJ6SnDXkEsPeGdmSs93v5rwWumv5QMvAGSZjAyWSd5o",
+    "sourceUrl": "https://subglow.io/trader/DrJ6SnDXkEsPeGdmSs93v5rwWumv5QMvAGSZjAyWSd5o",
+    "sources": [
+      "https://subglow.io/trader/DrJ6SnDXkEsPeGdmSs93v5rwWumv5QMvAGSZjAyWSd5o",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high",
+    "notes": "Subglow cites Kolscan as listing this wallet as Iced (@IcedKnife). Volition prefix DrJ6Sn\u2026yWSd5o matches."
+  },
+  {
+    "name": "Joji",
+    "handle": "metaversejoji",
+    "wallet": "525LueqAyZJueCoiisfWy6nyh4MTvmF4X9jSqi6efXJT",
+    "sourceUrl": "https://kolexplorer.com/kol/joji",
+    "sources": [
+      "https://kolexplorer.com/kol/joji",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high"
+  },
+  {
+    "name": "Lynk",
+    "handle": "lynk0x",
+    "wallet": "CkPFGv2Wv1vwdWjtXioEgb8jhZQfs3eVZez3QCetu7xD",
+    "sourceUrl": "https://subglow.io/trader/CkPFGv2Wv1vwdWjtXioEgb8jhZQfs3eVZez3QCetu7xD",
+    "sources": [
+      "https://subglow.io/trader/CkPFGv2Wv1vwdWjtXioEgb8jhZQfs3eVZez3QCetu7xD",
+      "https://arkm.com/explorer/address/CkPFGv2Wv1vwdWjtXioEgb8jhZQfs3eVZez3QCetu7xD",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high",
+    "notes": "Subglow cites Kolscan; Arkham labels the same address as @lynk0x on Pump.fun. Volition prefix CkPFGv\u2026etu7xD matches."
+  },
+  {
+    "name": "Megga",
+    "handle": "Megga",
+    "wallet": "H31vEBxSJk1nQdUN11qZgZyhScyShhscKhvhZZU3dQoU",
+    "sourceUrl": "https://subglow.io/trader/H31vEBxSJk1nQdUN11qZgZyhScyShhscKhvhZZU3dQoU",
+    "sources": [
+      "https://subglow.io/trader/H31vEBxSJk1nQdUN11qZgZyhScyShhscKhvhZZU3dQoU",
+      "https://www.solanatracker.io/wallet/H31vEBxSJk1nQdUN11qZgZyhScyShhscKhvhZZU3dQoU",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high",
+    "notes": "Subglow and Solana Tracker both attribute this wallet to @Megga; Volition prefix H31vEB\u2026U3dQoU matches."
+  },
+  {
+    "name": "Nyhrox",
+    "handle": "nyhrox",
+    "wallet": "6S8GezkxYUfZy9JPtYnanbcZTMB87Wjt1qx3c6ELajKC",
+    "sourceUrl": "https://kolexplorer.com/kol/nyhrox",
+    "sources": [
+      "https://kolexplorer.com/kol/nyhrox",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high"
+  },
+  {
+    "name": "orangie",
+    "handle": "orangie",
+    "wallet": "DuQabFqdC9eeBULVa7TTdZYxe8vK8ct5DZr4Xcf7docy",
+    "sourceUrl": "https://subglow.io/trader/DuQabFqdC9eeBULVa7TTdZYxe8vK8ct5DZr4Xcf7docy",
+    "sources": [
+      "https://subglow.io/trader/DuQabFqdC9eeBULVa7TTdZYxe8vK8ct5DZr4Xcf7docy",
+      "https://kolscan.io/account/DuQabFqdC9eeBULVa7TTdZYxe8vK8ct5DZr4Xcf7docy",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high",
+    "notes": "Subglow attributes this Kolscan-listed wallet to @orangie; Volition publishes the same prefix DuQabF\u2026f7docy."
+  },
+  {
+    "name": "Shah",
+    "handle": "shahh",
+    "wallet": "7xwDKXNG9dxMsBSCmiAThp7PyDaUXbm23irLr7iPeh7w",
+    "sourceUrl": "https://kolexplorer.com/kol/shah",
+    "sources": [
+      "https://kolexplorer.com/kol/shah",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high"
+  },
+  {
+    "name": "Yenni",
+    "handle": "Yennii56",
+    "wallet": "5B52w1ZW9tuwUduueP5J7HXz5AcGfruGoX6YoAudvyxG",
+    "sourceUrl": "https://kolexplorer.com/kol/yenni",
+    "sources": [
+      "https://kolexplorer.com/kol/yenni",
+      "https://kolexplorer.com/",
+      "https://volition.fun/how-it-works"
+    ],
+    "confidence": "high"
+  },
+  {
+    "name": "Ansem",
+    "handle": "blknoiz06",
+    "wallet": "AVAZvHLR2PcWpDf8BXY4rVxNHYRBytycHkcB5z5QNXYm",
+    "sourceUrl": "https://kolexplorer.com/kol/ansem",
+    "sources": [
+      "https://kolexplorer.com/kol/ansem",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium",
+    "notes": "Kolexplorer public wallet for @blknoiz06. A separate pump.fun-tagged wallet is listed next."
+  },
+  {
+    "name": "Ansem (pump.fun wallet)",
+    "handle": "blknoiz06",
+    "wallet": "GV6UUmNxz2RpKxmNAPadYKb7uQpszwqQAu3qLJxVdC52",
+    "sourceUrl": "https://kolexplorer.com/kol/ansem-pumpfun",
+    "sources": [
+      "https://kolexplorer.com/kol/ansem-pumpfun",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium",
+    "notes": "Second @blknoiz06 wallet tagged by Kolexplorer as the pump.fun trading wallet."
+  },
+  {
+    "name": "Art",
+    "handle": "artcryptoz",
+    "wallet": "CgaA9a1JwAXJyfHuvZ7VW8YfTVRkdiT5mjBBSKcg7Rz5",
+    "sourceUrl": "https://kolexplorer.com/kol/art",
+    "sources": [
+      "https://kolexplorer.com/kol/art",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Bandit",
+    "handle": "bandeeeez",
+    "wallet": "5B79fMkcFeRTiwm7ehsZsFiKsC7m7n1Bgv9yLxPp9q2X",
+    "sourceUrl": "https://kolexplorer.com/kol/bandit",
+    "sources": [
+      "https://kolexplorer.com/kol/bandit",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium",
+    "handleAliases": [
+      "bandeez",
+      "bandeeeez"
+    ]
+  },
+  {
+    "name": "Cap",
+    "handle": "cap100x",
+    "wallet": "CAPn1yH4oSywsxGU456jfgTrSSUidf9jgeAnHceNUJdw",
+    "sourceUrl": "https://kolexplorer.com/kol/cap",
+    "sources": [
+      "https://kolexplorer.com/kol/cap",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Casino",
+    "handle": "casino616",
+    "wallet": "8rvAsDKeAcEjEkiZMug9k8v1y8mW6gQQiMobd89Uy7qR",
+    "sourceUrl": "https://kolexplorer.com/kol/casino",
+    "sources": [
+      "https://kolexplorer.com/kol/casino",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Clukz",
+    "handle": "clukzSOL",
+    "wallet": "G6fUXjMKPJzCY1rveAE6Qm7wy5U3vZgKDJmN1VPAdiZC",
+    "sourceUrl": "https://kolexplorer.com/kol/clukz",
+    "sources": [
+      "https://kolexplorer.com/kol/clukz",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Dior",
+    "handle": "Dior100x",
+    "wallet": "87rRdssFiTJKY4MGARa4G5vQ31hmR7MxSmhzeaJ5AAxJ",
+    "sourceUrl": "https://kolexplorer.com/kol/dior",
+    "sources": [
+      "https://kolexplorer.com/kol/dior",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Dv",
+    "handle": "vibed333",
+    "wallet": "BCagckXeMChUKrHEd6fKFA1uiWDtcmCXMsqaheLiUPJd",
+    "sourceUrl": "https://kolexplorer.com/kol/dv",
+    "sources": [
+      "https://kolexplorer.com/kol/dv",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "FASHR",
+    "handle": "FASHRCrypto",
+    "wallet": "719sfKUjiMThumTt2u39VMGn612BZyCcwbM5Pe8SqFYz",
+    "sourceUrl": "https://kolexplorer.com/kol/fashr",
+    "sources": [
+      "https://kolexplorer.com/kol/fashr",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Iceman",
+    "handle": "77aez",
+    "wallet": "DVMkhiQe1D8yenuEgsW44NjRn9LfVQjGEpZcez5x7Mff",
+    "sourceUrl": "https://kolexplorer.com/kol/iceman",
+    "sources": [
+      "https://kolexplorer.com/kol/iceman",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Jijo",
+    "handle": "jijo_exe",
+    "wallet": "4BdKaxN8G6ka4GYtQQWk4G4dZRUTX2vQH9GcXdBREFUk",
+    "sourceUrl": "https://kolexplorer.com/kol/jijo",
+    "sources": [
+      "https://kolexplorer.com/kol/jijo",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Johnson",
+    "handle": "johnsoncooks101",
+    "wallet": "J9TYAsWWidbrcZybmLSfrLzryANf4CgJBLdvwdGuC8MB",
+    "sourceUrl": "https://kolexplorer.com/kol/johnson",
+    "sources": [
+      "https://kolexplorer.com/kol/johnson",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Kadenox",
+    "handle": "kadenox",
+    "wallet": "B32QbbdDAyhvUQzjcaM5j6ZVKwjCxAwGH5Xgvb9SJqnC",
+    "sourceUrl": "https://kolexplorer.com/kol/kadenox",
+    "sources": [
+      "https://kolexplorer.com/kol/kadenox",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Kay The Doc",
+    "handle": "KayTheDoc",
+    "wallet": "DYAn4XpAkN5mhiXkRB7dGq4Jadnx6XYgu8L5b3WGhbrt",
+    "sourceUrl": "https://kolexplorer.com/kol/kay-the-doc",
+    "sources": [
+      "https://kolexplorer.com/kol/kay-the-doc",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Latuche",
+    "handle": "Latuche95",
+    "wallet": "GJA1HEbxGnqBhBifH9uQauzXSB53to5rhDrzmKxhSU65",
+    "sourceUrl": "https://kolexplorer.com/kol/latuche",
+    "sources": [
+      "https://kolexplorer.com/kol/latuche",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Limfork",
+    "handle": "limfork",
+    "wallet": "BQVz7fQ1WsQmSTMY3umdPEPPTm1sdcBcX9sP7o6kPRmB",
+    "sourceUrl": "https://kolexplorer.com/kol/limfork",
+    "sources": [
+      "https://kolexplorer.com/kol/limfork",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Meechie",
+    "handle": "973Meech",
+    "wallet": "9iaawVBEsFG35PSwd4PahwT8fYNQe9XYuRdWm872dUqY",
+    "sourceUrl": "https://kolexplorer.com/kol/meechie",
+    "sources": [
+      "https://kolexplorer.com/kol/meechie",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Milito",
+    "handle": "fnmilito",
+    "wallet": "EeXvxkcGqMDZeTaVeawzxm9mbzZwqDUMmfG3bF7uzumH",
+    "sourceUrl": "https://kolexplorer.com/kol/milito",
+    "sources": [
+      "https://kolexplorer.com/kol/milito",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Narc",
+    "handle": "narracanz",
+    "wallet": "CxgPWvH2GoEDENELne2XKAR2z2Fr4shG2uaeyqZceGve",
+    "sourceUrl": "https://kolexplorer.com/kol/narc",
+    "sources": [
+      "https://kolexplorer.com/kol/narc",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Numero",
+    "handle": "Numerooo0",
+    "wallet": "A3W8psibkTUvjxs4LRscbnjux6TFDXdvD4m4GsGpQ2KJ",
+    "sourceUrl": "https://kolexplorer.com/kol/numero",
+    "sources": [
+      "https://kolexplorer.com/kol/numero",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Radiance",
+    "handle": "radiancebrr",
+    "wallet": "FAicXNV5FVqtfbpn4Zccs71XcfGeyxBSGbqLDyDJZjke",
+    "sourceUrl": "https://kolexplorer.com/kol/radiance",
+    "sources": [
+      "https://kolexplorer.com/kol/radiance",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Ram",
+    "handle": "ramonos",
+    "wallet": "57rXqaQsvgyBKwebP2StfqQeCBjBS4jsrZFJN5aU2V9b",
+    "sourceUrl": "https://kolexplorer.com/kol/ram",
+    "sources": [
+      "https://kolexplorer.com/kol/ram",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Theo",
+    "handle": "theonomix",
+    "wallet": "Bi4rd5FH5bYEN8scZ7wevxNZyNmKHdaBcvewdPFxYdLt",
+    "sourceUrl": "https://kolexplorer.com/kol/theo",
+    "sources": [
+      "https://kolexplorer.com/kol/theo",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "Trunoest",
+    "handle": "trunoest",
+    "wallet": "ardinRsN1mNYVeoJWTBsWeYeXvuR9UUDGMsCDKpb6AT",
+    "sourceUrl": "https://kolexplorer.com/kol/trunoest",
+    "sources": [
+      "https://kolexplorer.com/kol/trunoest",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  },
+  {
+    "name": "West",
+    "handle": "ratwizardx",
+    "wallet": "JDd3hy3gQn2V982mi1zqhNqUw1GfV2UL6g76STojCJPN",
+    "sourceUrl": "https://kolexplorer.com/kol/west",
+    "sources": [
+      "https://kolexplorer.com/kol/west",
+      "https://kolexplorer.com/"
+    ],
+    "confidence": "medium"
+  }
+]

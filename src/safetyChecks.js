@@ -9,6 +9,7 @@ const { bondingProgress, DEFAULT_GLOBAL } = require('./bondingCurve');
 const config = require('./config');
 const { createStore } = require('./research/store');
 const { pumpUrl, fetchPumpJson, isPumpFrontendUrl, hostOf } = require('./pumpApi');
+const { linkSerialDevs } = require('./research/serialDev');
 const { ValidationError } = require('./validation');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -28,7 +29,8 @@ const DEFAULT_AUTO = {
   rugHistory: true,
   devHoldPct: 10,
   rugcheckDanger: true,
-  distributionCampaign: true
+  distributionCampaign: true,
+  serialDev: true
 };
 
 function check(id, label, status, reason) {
@@ -184,6 +186,108 @@ function classifyDistribution(row) {
   return check('distribution', 'Token distribution', status, parts.join('. '));
 }
 
+function classifyWash(row) {
+  if (!row || (row.washVolumePct == null && row.microBuyTxShare == null)) {
+    return check('wash', 'Wash trading', 'unknown', 'Buy and sell tape was not read');
+  }
+  const wash = row.washVolumePct == null ? null : Number(row.washVolumePct);
+  const micro = row.microBuyTxShare == null ? null : Number(row.microBuyTxShare);
+  const status = (wash != null && wash >= 30) || (micro != null && micro >= 50) ? 'red' : (wash != null && wash >= 10) || (micro != null && micro >= 25) ? 'yellow' : 'green';
+  const parts = [];
+  if (wash != null) parts.push(`wash volume ${wash.toFixed(1)}%`);
+  if (micro != null) parts.push(`micro-buy txs ${micro.toFixed(1)}%`);
+  const why = Array.isArray(row.reasons) && row.reasons.length ? row.reasons.join('; ') : '';
+  return check('wash', 'Wash trading', status, [parts.join('; '), why].filter(Boolean).join('. '));
+}
+
+function classifyHolderPadding(row) {
+  if (!row || (row.noBuyHolderPct == null && row.dustHolderCount == null && row.paddedHolderPct == null)) {
+    return check('holderPadding', 'Holder padding', 'unknown', 'Holder transfers were not read');
+  }
+  const padded = row.paddedHolderPct == null ? null : Number(row.paddedHolderPct);
+  const noBuy = row.noBuyHolderPct == null ? null : Number(row.noBuyHolderPct);
+  const dust = row.dustHolderCount == null ? null : Number(row.dustHolderCount);
+  const status = (padded != null && padded >= 30) || (noBuy != null && noBuy >= 40) ? 'red' : (padded != null && padded >= 10) || (dust != null && dust >= 20) ? 'yellow' : 'green';
+  const parts = [];
+  if (dust != null) parts.push(`${dust} dust holders`);
+  if (noBuy != null) parts.push(`${noBuy.toFixed(1)}% of holders have no buy`);
+  if (padded != null) parts.push(`padded holders ${padded.toFixed(1)}%`);
+  return check('holderPadding', 'Holder padding', status, parts.join('; '));
+}
+
+function classifyLadder(row) {
+  if (!row || row.flagged == null) return check('ladderDump', 'Ladder dump', 'unknown', 'Dev and cluster sells were not read');
+  if (!row.flagged) return check('ladderDump', 'Ladder dump', 'green', 'No even sell cadence across dev-linked wallets');
+  const sol = row.soldSol == null ? 'unknown SOL' : `${Number(row.soldSol).toFixed(3)} SOL`;
+  const supply = row.soldSupplyPct == null ? 'unknown supply' : `${Number(row.soldSupplyPct).toFixed(1)}% of supply`;
+  const cadence = row.cadence || 'even slices';
+  const heavy = row.soldSupplyPct != null && row.soldSupplyPct >= 10;
+  return check('ladderDump', 'Ladder dump', heavy ? 'red' : 'yellow', `Sold ${sol} (${supply}) on cadence ${cadence}`);
+}
+
+function classifyMigration(row) {
+  if (!row || (row.flagged == null && row.dumpedSupplyPct == null)) {
+    return check('migrationDump', 'Migration dump', 'unknown', 'Post-migration pool trades were not read');
+  }
+  if (row.flagged === false && row.dumpedSupplyPct === 0) {
+    return check('migrationDump', 'Migration dump', 'green', 'No early or coordinated dump in the post-migration window');
+  }
+  const pct = row.dumpedSupplyPct == null ? 'unknown supply' : `${Number(row.dumpedSupplyPct).toFixed(1)}%`;
+  const timing = row.firstDumpMs == null ? 'timing unknown' : `${Math.round(row.firstDumpMs / 60000)} min after graduation`;
+  const heavy = row.dumpedSupplyPct != null && row.dumpedSupplyPct >= 10;
+  return check('migrationDump', 'Migration dump', heavy || row.flagged ? 'red' : 'yellow', `Dumped ${pct} ${timing}`);
+}
+
+function classifySerial(row, blacklisted) {
+  if (!row || row.linkedPriorCoins == null) return check('serialDev', 'Serial dev', 'unknown', 'Dev links across coins were not read');
+  const listed = (row.linkedDevs || []).filter(address => blacklisted && blacklisted.has(address));
+  const rugged = row.linkedPriorCoins.filter(coin => coin && coin.rugged === true);
+  if (listed.length || rugged.length) {
+    const parts = [];
+    if (listed.length) parts.push(`Linked to blacklisted dev ${listed[0]}`);
+    if (rugged.length) parts.push(`${rugged.length} linked prior coin${rugged.length === 1 ? '' : 's'} rugged`);
+    const outcomes = row.linkedPriorCoins.slice(0, 3).map(coin => `${coin.mint} ${coin.peakMcapUsd == null ? 'peak unknown' : `peak $${coin.peakMcapUsd}`}`);
+    return check('serialDev', 'Serial dev', 'red', `${parts.join('. ')}. ${outcomes.join('; ')}`);
+  }
+  if (row.linkedPriorCoins.length) {
+    return check('serialDev', 'Serial dev', 'yellow', `Linked to ${row.linkedPriorCoins.length} prior coin${row.linkedPriorCoins.length === 1 ? '' : 's'} from a fresh dev wallet`);
+  }
+  return check('serialDev', 'Serial dev', 'green', 'No fresh dev wallet shares this treasury or metadata');
+}
+
+function classifyKolShadow(row) {
+  if (!row || row.shadowCount == null) return check('kolShadow', 'KOL shadow sells', 'unknown', 'KOL buys and shadow wallets were not read');
+  const count = Number(row.shadowCount);
+  const share = row.supplyPct == null ? 'unknown supply' : `${Number(row.supplyPct).toFixed(1)}%`;
+  const why = Array.isArray(row.reasons) && row.reasons.length ? row.reasons.join('; ') : 'none';
+  const status = row.repeat || (row.supplyPct != null && row.supplyPct >= 10) || count >= 3 ? 'red' : count > 0 ? 'yellow' : 'green';
+  return check('kolShadow', 'KOL shadow sells', status, `${count} shadow wallets; ${share}. ${why}`);
+}
+
+function classifyMcRun(row) {
+  if (!row || row.flagged == null) return check('mcRun', 'Same-timestamp market cap', 'unknown', 'Same-slot buys and market cap were not both read');
+  if (!row.flagged) return check('mcRun', 'Same-timestamp market cap', 'green', 'No same-timestamp buy run');
+  return check('mcRun', 'Same-timestamp market cap', 'red', `${row.buyCount} buys from $${Number(row.mcapLow)} to $${Number(row.mcapHigh)}`);
+}
+
+function classifyScaleOut(row) {
+  if (!row || row.flagged == null) return check('scaleOut', 'Scale-out into a rising chart', 'unknown', 'Sell trail and market cap were not both read');
+  if (!row.flagged) return check('scaleOut', 'Scale-out into a rising chart', 'green', 'No dense sell trail while market cap was rising');
+  const sol = row.soldSol == null ? 'unknown SOL' : `${Number(row.soldSol).toFixed(3)} SOL`;
+  const supply = row.soldSupplyPct == null ? 'unknown supply' : `${Number(row.soldSupplyPct).toFixed(1)}% of supply`;
+  const change = row.mcapChange == null ? 'MC change unknown' : `MC ${row.mcapChange >= 0 ? '+' : ''}${row.mcapChange}`;
+  return check('scaleOut', 'Scale-out into a rising chart', 'yellow', `${row.sellCount} sells, ${sol}, ${supply}, ${change}`);
+}
+
+function classifyInstantBond(row) {
+  if (!row || row.flagged == null) return check('instantBond', 'Near-instant bonding', 'unknown', 'Create and graduation times were not both read');
+  if (!row.flagged) {
+    const seen = row.durationMs == null ? 'Coin has not graduated' : `Graduated in ${Math.round(row.durationMs / 1000)}s`;
+    return check('instantBond', 'Near-instant bonding', 'green', seen);
+  }
+  return check('instantBond', 'Near-instant bonding', 'red', `Graduated in ${Math.round(row.durationMs / 1000)}s`);
+}
+
 function classifyFundingClusters(row) {
   if (!row || row.largestClusterSupplyPct == null) {
     return check('fundingClusters', 'Funding clusters', 'unknown', 'Early-buyer funding was not read');
@@ -323,6 +427,23 @@ function createSafetyChecks(options = {}) {
   const devLookup = options.devLookup || readDevAssociated;
   const fundingLookup = options.fundingLookup || readFundingClusters;
   const coordinationLookup = options.coordinationLookup || (mint => readBehavior('coordination.jsonl', mint));
+  const readNamed = (name, mint) => readBehavior(name, mint);
+  const washLookup = options.washLookup || (mint => readNamed('wash.jsonl', mint));
+  const holderLookup = options.holderLookup || (mint => readNamed('holder-padding.jsonl', mint));
+  const ladderLookup = options.ladderLookup || (mint => readNamed('ladder-dumps.jsonl', mint));
+  const migrationLookup = options.migrationLookup || (mint => readNamed('migration-dumps.jsonl', mint));
+  const kolShadowLookup = options.kolShadowLookup || (mint => readNamed('kol-shadows.jsonl', mint));
+  const mcRunLookup = options.mcRunLookup || (mint => readNamed('mc-runs.jsonl', mint));
+  const scaleOutLookup = options.scaleOutLookup || (mint => readNamed('scale-outs.jsonl', mint));
+  const bondingLookup = options.bondingLookup || (mint => readNamed('bonding.jsonl', mint));
+  const serialLookup = options.serialLookup || (mint => {
+    try {
+      const rows = linkSerialDevs(createStore().readJsonl('serial-devs.jsonl'));
+      return rows ? rows.filter(item => item && item.mint === mint).pop() || null : null;
+    } catch (err) {
+      return null;
+    }
+  });
   const distributionLookup = options.distributionLookup || (mint => {
     const { markCampaigns } = require('./research/distribution');
     try {
@@ -408,7 +529,9 @@ function createSafetyChecks(options = {}) {
       enabled: auto && auto.enabled !== undefined ? Boolean(auto.enabled) : data.auto.enabled,
       rugHistory: auto && auto.rugHistory !== undefined ? Boolean(auto.rugHistory) : data.auto.rugHistory,
       devHoldPct: auto && auto.devHoldPct != null ? Number(auto.devHoldPct) : data.auto.devHoldPct,
-      rugcheckDanger: auto && auto.rugcheckDanger !== undefined ? Boolean(auto.rugcheckDanger) : data.auto.rugcheckDanger
+      rugcheckDanger: auto && auto.rugcheckDanger !== undefined ? Boolean(auto.rugcheckDanger) : data.auto.rugcheckDanger,
+      distributionCampaign: auto && auto.distributionCampaign !== undefined ? Boolean(auto.distributionCampaign) : data.auto.distributionCampaign,
+      serialDev: auto && auto.serialDev !== undefined ? Boolean(auto.serialDev) : data.auto.serialDev
     };
     saveBlacklist(data);
     return data.auto;
@@ -581,6 +704,15 @@ function createSafetyChecks(options = {}) {
       classifyFundingClusters(fundingLookup(key)),
       classifyCoordinated(coordinationLookup(key)),
       classifyDistribution(distributionLookup(key)),
+      classifyWash(washLookup(key)),
+      classifyHolderPadding(holderLookup(key)),
+      classifyLadder(ladderLookup(key)),
+      classifyMigration(migrationLookup(key)),
+      classifyKolShadow(kolShadowLookup(key)),
+      classifyMcRun(mcRunLookup(key)),
+      classifyScaleOut(scaleOutLookup(key)),
+      classifyInstantBond(bondingLookup(key)),
+      classifySerial(serialLookup(key), new Set((loadBlacklist().devs || []).map(item => item.address))),
       classifyCurve(curve),
       classifyMarket(dex),
       classifyAge(createdMs, Date.now()),
@@ -630,6 +762,7 @@ function createSafetyChecks(options = {}) {
     if (auto.distributionCampaign !== false && byId.distribution && /multi-coin distribution campaign/.test(byId.distribution.reason || '')) {
       reasons.push(byId.distribution.reason);
     }
+    if (auto.serialDev !== false && byId.serialDev && byId.serialDev.status === 'red') reasons.push(byId.serialDev.reason);
     const hold = byId.devHolding;
     const holdPct = hold && /([\d.]+)%/.exec(hold.reason);
     if (auto.devHoldPct != null && holdPct && Number(holdPct[1]) > Number(auto.devHoldPct) && hold.status === 'red') {
@@ -651,11 +784,16 @@ function createSafetyChecks(options = {}) {
   function buyBlockReason(mint) {
     if (!mint || isOwnLaunch(mint)) return null;
     const data = loadBlacklist();
+    const serial = serialLookup(mint);
     const flagged = data.flaggedMints[mint];
-    const creator = flagged && flagged.creator;
+    const creator = (flagged && flagged.creator) || (serial && serial.dev) || null;
     const row = creator && data.devs.find(item => item.address === creator);
-    if (!row) return null;
-    return `Buys blocked: dev ${creator} is blacklisted (${row.reason}). Existing positions are not sold automatically.`;
+    if (row) return `Buys blocked: dev ${creator} is blacklisted (${row.reason}). Existing positions are not sold automatically.`;
+    const linked = serial && Array.isArray(serial.linkedDevs)
+      ? serial.linkedDevs.map(address => data.devs.find(item => item.address === address)).find(Boolean)
+      : null;
+    if (!linked) return null;
+    return `Buys blocked: dev ${creator || 'unknown'} is linked to blacklisted dev ${linked.address} (${linked.reason}). Existing positions are not sold automatically.`;
   }
 
   return {

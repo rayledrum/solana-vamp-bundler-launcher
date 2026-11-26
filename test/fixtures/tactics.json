@@ -1,0 +1,83 @@
+{
+  "wash": {
+    "mint": "WashMint",
+    "fundings": [
+      { "wallet": "A", "funder": "Hopper", "ancestor": "Treasury" },
+      { "wallet": "B", "funder": "Hopper", "ancestor": "Treasury" }
+    ],
+    "trades": [
+      { "side": "buy", "wallet": "A", "sol": 1, "time": 1000 },
+      { "side": "sell", "wallet": "B", "sol": 1, "time": 4000 },
+      { "side": "buy", "wallet": "C", "sol": 0.001, "time": 5000 },
+      { "side": "buy", "wallet": "C", "sol": 0.001, "time": 6000 },
+      { "side": "buy", "wallet": "C", "sol": 0.001, "time": 7000 },
+      { "side": "buy", "wallet": "C", "sol": 0.001, "time": 8000 },
+      { "side": "buy", "wallet": "C", "sol": 0.001, "time": 9000 },
+      { "side": "buy", "wallet": "C", "sol": 0.001, "time": 10000 },
+      { "side": "buy", "wallet": "C", "sol": 0.001, "time": 11000 },
+      { "side": "buy", "wallet": "C", "sol": 0.001, "time": 12000 }
+    ]
+  },
+  "holders": {
+    "mint": "PadMint",
+    "supply": 1000000,
+    "buys": ["Real"],
+    "transfers": [
+      { "side": "transfer", "from": "Dev", "to": "Dust1", "tokens": 10 },
+      { "side": "transfer", "from": "Dev", "to": "Dust2", "tokens": 10 },
+      { "side": "buy", "wallet": "Real", "tokens": 5000 }
+    ],
+    "holders": [
+      { "wallet": "Real", "tokens": 5000 },
+      { "wallet": "Dust1", "tokens": 10 },
+      { "wallet": "Dust2", "tokens": 10 }
+    ]
+  },
+  "ladder": {
+    "mint": "LadderMint",
+    "dev": "Dev",
+    "linked": ["L1", "L2"],
+    "supply": 1000000,
+    "trades": [
+      { "side": "sell", "wallet": "Dev", "sol": 1, "tokens": 10000, "time": 0 },
+      { "side": "sell", "wallet": "L1", "sol": 1, "tokens": 10000, "time": 60000 },
+      { "side": "sell", "wallet": "L2", "sol": 1, "tokens": 10000, "time": 120000 }
+    ]
+  },
+  "migration": {
+    "mint": "MigratedMint",
+    "graduated": true,
+    "graduatedAt": 1000000,
+    "windowMinutes": 10,
+    "supply": 1000000,
+    "earlyWallets": ["Sniper"],
+    "trades": [
+      { "side": "sell", "wallet": "Sniper", "tokens": 50000, "sol": 2, "time": 1300000 },
+      { "side": "buy", "wallet": "Organic", "tokens": 1000, "sol": 0.1, "time": 1400000 }
+    ]
+  },
+  "serial": [
+    {
+      "mint": "CoinOld",
+      "dev": "DevOld",
+      "treasury": "Treasury",
+      "twitter": "https://x.com/samehandle",
+      "website": "https://same.example/start",
+      "description": "the exact launch blurb used again later",
+      "peakMcapUsd": 18000,
+      "rugged": true,
+      "graduated": false
+    },
+    {
+      "mint": "CoinNew",
+      "dev": "DevFresh",
+      "treasury": "Treasury",
+      "twitter": "@samehandle",
+      "website": "https://www.same.example/other",
+      "description": "The exact launch blurb used again later!",
+      "image": "https://cdn.example/art.png",
+      "peakMcapUsd": null,
+      "rugged": null
+    }
+  ]
+}

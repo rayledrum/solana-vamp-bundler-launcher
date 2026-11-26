@@ -5,7 +5,12 @@ const { analyzeDevExit } = require('./devExit');
 const { clusterFunding, traceFunding } = require('./funding');
 const { readCurveTape, researchRpc, fundingDefaultOn } = require('./tradeTape');
 const { scoreCoordination } = require('./coordination');
-const { analyzeDistribution } = require('./distribution');
+const { analyzeDistribution, loadKolList } = require('./distribution');
+const { analyzeKolShadow, analyzeMcRun, analyzeScaleOut, analyzeInstantBond } = require('./tapeFlags');
+const { analyzeWash } = require('./wash');
+const { analyzeHolderPadding } = require('./holderPadding');
+const { analyzeLadderDump } = require('./ladderDump');
+const { analyzeMigrationDump } = require('./migrationDump');
 const fs = require('fs');
 const { safetyChecks } = require('../safetyChecks');
 const { fetchPumpJson, pumpUrl } = require('../pumpApi');
@@ -101,7 +106,13 @@ async function runCollect(options = {}) {
           analysis,
           trades: pack && pack.trades,
           fundings: pack && pack.fundings,
-          snapshots: pack && pack.snapshots
+          snapshots: pack && pack.snapshots,
+          coin,
+          graduated: pack && pack.graduated,
+          graduatedAt: pack && pack.graduatedAt,
+          poolTrades: pack && pack.poolTrades,
+          holders: pack && pack.holders,
+          treasury: pack && pack.treasury
         });
       } catch (err) {
         const host = err && err.host ? ` ${err.host}` : '';
@@ -155,15 +166,95 @@ function appendBehavior(store, input) {
       };
     })
     : null;
-  store.append('coordination.jsonl', scoreCoordination({
+  const priorShadows = store.readJsonl('kol-shadows.jsonl').flatMap(row => (row && row.wallets || []).map(item => ({
+    mint: row.mint,
+    wallet: item.wallet,
+    kol: item.kol
+  })));
+  const shadow = analyzeKolShadow({
+    mint: input.mint,
+    trades: input.trades,
+    fundings: input.fundings,
+    dev: input.dev,
+    supply: input.supply,
+    kolWallets: loadKolList(),
+    windowMs: input.kolWindowMs,
+    history: priorShadows
+  });
+  const coordination = scoreCoordination({
     mint: input.mint,
     dev: input.dev,
     createTime: input.createTime,
     buyers,
     fundings: input.fundings,
-    registry: input.registry
+    registry: input.registry,
+    shadowWallets: shadow.wallets
+  });
+  store.append('coordination.jsonl', coordination);
+  store.append('kol-shadows.jsonl', shadow);
+  store.append('mc-runs.jsonl', analyzeMcRun({ mint: input.mint, trades: input.trades }));
+  store.append('scale-outs.jsonl', analyzeScaleOut({
+    mint: input.mint,
+    trades: input.trades,
+    supply: input.supply,
+    clusters: Array.isArray(coordination.clusters) ? coordination.clusters.map(row => row.wallets) : null
+  }));
+  store.append('bonding.jsonl', analyzeInstantBond({
+    mint: input.mint,
+    createTime: input.createTime,
+    graduated: input.graduated == null ? null : input.graduated,
+    graduatedAt: input.graduatedAt,
+    thresholdMs: input.bondThresholdMs
   }));
   const linked = (input.fundings || []).filter(row => row && (row.funder === input.dev || row.bundleCluster)).map(row => row.wallet);
+  const clusterWallets = Array.isArray(coordination.clusters)
+    ? [...new Set(coordination.clusters.flatMap(row => row.wallets || []))]
+    : null;
+  const coin = input.coin || {};
+  const socials = coin.socials || {};
+  store.append('wash.jsonl', analyzeWash({ mint: input.mint, trades: input.trades, fundings: input.fundings }));
+  store.append('holder-padding.jsonl', analyzeHolderPadding({
+    mint: input.mint,
+    transfers: input.trades,
+    holders: input.holders,
+    buys: input.analysis && input.analysis.buys,
+    supply: input.supply
+  }));
+  store.append('ladder-dumps.jsonl', analyzeLadderDump({
+    mint: input.mint,
+    dev: input.dev,
+    linked,
+    clusterWallets,
+    trades: input.trades,
+    supply: input.supply
+  }));
+  const earlyWallets = input.analysis && Array.isArray(input.analysis.buys) ? input.analysis.buys.map(row => row.wallet) : null;
+  store.append('migration-dumps.jsonl', analyzeMigrationDump({
+    mint: input.mint,
+    graduated: input.graduated == null ? null : input.graduated,
+    graduatedAt: input.graduatedAt,
+    trades: input.poolTrades,
+    earlyWallets,
+    coordinatedWallets: clusterWallets,
+    supply: input.supply
+  }));
+  const peaks = Array.isArray(input.snapshots)
+    ? input.snapshots.map(row => Number(row && row.mcapUsd)).filter(value => Number.isFinite(value))
+    : [];
+  store.append('serial-devs.jsonl', {
+    mint: input.mint,
+    dev: input.dev || coin.creator || coin.dev || null,
+    treasury: input.treasury || coin.treasury || null,
+    image: coin.image_uri || coin.image || null,
+    imageHash: coin.imageHash || input.imageHash || null,
+    website: socials.website || coin.website || null,
+    twitter: socials.twitter || coin.twitter || null,
+    telegram: socials.telegram || coin.telegram || null,
+    description: coin.description || null,
+    peakMcapUsd: peaks.length ? Math.max(...peaks) : null,
+    graduated: input.graduated === true ? true : (input.graduated === false ? false : null),
+    rugged: input.rugged === true ? true : (input.rugged === false ? false : null)
+  });
   store.append('distributions.jsonl', analyzeDistribution({
     mint: input.mint,
     dev: input.dev,
@@ -276,7 +367,13 @@ async function fillTapes({ store, coins, readTape, traceFunding: trace, pace, fu
       trades,
       fundings,
       snapshots: pack.snapshots,
-      registry
+      registry,
+      coin: launch,
+      graduated: pack.graduated,
+      graduatedAt: pack.graduatedAt,
+      poolTrades: pack.poolTrades,
+      holders: pack.holders,
+      treasury: pack.treasury || launch.treasury
     });
     slot.tape = true;
     tapes += 1;
