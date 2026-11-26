@@ -255,6 +255,39 @@ function classifySerial(row, blacklisted) {
   return check('serialDev', 'Serial dev', 'green', 'No fresh dev wallet shares this treasury or metadata');
 }
 
+function classifyKolShadow(row) {
+  if (!row || row.shadowCount == null) return check('kolShadow', 'KOL shadow sells', 'unknown', 'KOL buys and shadow wallets were not read');
+  const count = Number(row.shadowCount);
+  const share = row.supplyPct == null ? 'unknown supply' : `${Number(row.supplyPct).toFixed(1)}%`;
+  const why = Array.isArray(row.reasons) && row.reasons.length ? row.reasons.join('; ') : 'none';
+  const status = row.repeat || (row.supplyPct != null && row.supplyPct >= 10) || count >= 3 ? 'red' : count > 0 ? 'yellow' : 'green';
+  return check('kolShadow', 'KOL shadow sells', status, `${count} shadow wallets; ${share}. ${why}`);
+}
+
+function classifyMcRun(row) {
+  if (!row || row.flagged == null) return check('mcRun', 'Same-timestamp market cap', 'unknown', 'Same-slot buys and market cap were not both read');
+  if (!row.flagged) return check('mcRun', 'Same-timestamp market cap', 'green', 'No same-timestamp buy run');
+  return check('mcRun', 'Same-timestamp market cap', 'red', `${row.buyCount} buys from $${Number(row.mcapLow)} to $${Number(row.mcapHigh)}`);
+}
+
+function classifyScaleOut(row) {
+  if (!row || row.flagged == null) return check('scaleOut', 'Scale-out into a rising chart', 'unknown', 'Sell trail and market cap were not both read');
+  if (!row.flagged) return check('scaleOut', 'Scale-out into a rising chart', 'green', 'No dense sell trail while market cap was rising');
+  const sol = row.soldSol == null ? 'unknown SOL' : `${Number(row.soldSol).toFixed(3)} SOL`;
+  const supply = row.soldSupplyPct == null ? 'unknown supply' : `${Number(row.soldSupplyPct).toFixed(1)}% of supply`;
+  const change = row.mcapChange == null ? 'MC change unknown' : `MC ${row.mcapChange >= 0 ? '+' : ''}${row.mcapChange}`;
+  return check('scaleOut', 'Scale-out into a rising chart', 'yellow', `${row.sellCount} sells, ${sol}, ${supply}, ${change}`);
+}
+
+function classifyInstantBond(row) {
+  if (!row || row.flagged == null) return check('instantBond', 'Near-instant bonding', 'unknown', 'Create and graduation times were not both read');
+  if (!row.flagged) {
+    const seen = row.durationMs == null ? 'Coin has not graduated' : `Graduated in ${Math.round(row.durationMs / 1000)}s`;
+    return check('instantBond', 'Near-instant bonding', 'green', seen);
+  }
+  return check('instantBond', 'Near-instant bonding', 'red', `Graduated in ${Math.round(row.durationMs / 1000)}s`);
+}
+
 function classifyFundingClusters(row) {
   if (!row || row.largestClusterSupplyPct == null) {
     return check('fundingClusters', 'Funding clusters', 'unknown', 'Early-buyer funding was not read');
@@ -399,6 +432,10 @@ function createSafetyChecks(options = {}) {
   const holderLookup = options.holderLookup || (mint => readNamed('holder-padding.jsonl', mint));
   const ladderLookup = options.ladderLookup || (mint => readNamed('ladder-dumps.jsonl', mint));
   const migrationLookup = options.migrationLookup || (mint => readNamed('migration-dumps.jsonl', mint));
+  const kolShadowLookup = options.kolShadowLookup || (mint => readNamed('kol-shadows.jsonl', mint));
+  const mcRunLookup = options.mcRunLookup || (mint => readNamed('mc-runs.jsonl', mint));
+  const scaleOutLookup = options.scaleOutLookup || (mint => readNamed('scale-outs.jsonl', mint));
+  const bondingLookup = options.bondingLookup || (mint => readNamed('bonding.jsonl', mint));
   const serialLookup = options.serialLookup || (mint => {
     try {
       const rows = linkSerialDevs(createStore().readJsonl('serial-devs.jsonl'));
@@ -671,6 +708,10 @@ function createSafetyChecks(options = {}) {
       classifyHolderPadding(holderLookup(key)),
       classifyLadder(ladderLookup(key)),
       classifyMigration(migrationLookup(key)),
+      classifyKolShadow(kolShadowLookup(key)),
+      classifyMcRun(mcRunLookup(key)),
+      classifyScaleOut(scaleOutLookup(key)),
+      classifyInstantBond(bondingLookup(key)),
       classifySerial(serialLookup(key), new Set((loadBlacklist().devs || []).map(item => item.address))),
       classifyCurve(curve),
       classifyMarket(dex),

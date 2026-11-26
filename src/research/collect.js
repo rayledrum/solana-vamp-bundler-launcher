@@ -5,7 +5,8 @@ const { analyzeDevExit } = require('./devExit');
 const { clusterFunding, traceFunding } = require('./funding');
 const { readCurveTape, researchRpc, fundingDefaultOn } = require('./tradeTape');
 const { scoreCoordination } = require('./coordination');
-const { analyzeDistribution } = require('./distribution');
+const { analyzeDistribution, loadKolList } = require('./distribution');
+const { analyzeKolShadow, analyzeMcRun, analyzeScaleOut, analyzeInstantBond } = require('./tapeFlags');
 const { analyzeWash } = require('./wash');
 const { analyzeHolderPadding } = require('./holderPadding');
 const { analyzeLadderDump } = require('./ladderDump');
@@ -165,15 +166,46 @@ function appendBehavior(store, input) {
       };
     })
     : null;
+  const priorShadows = store.readJsonl('kol-shadows.jsonl').flatMap(row => (row && row.wallets || []).map(item => ({
+    mint: row.mint,
+    wallet: item.wallet,
+    kol: item.kol
+  })));
+  const shadow = analyzeKolShadow({
+    mint: input.mint,
+    trades: input.trades,
+    fundings: input.fundings,
+    dev: input.dev,
+    supply: input.supply,
+    kolWallets: loadKolList(),
+    windowMs: input.kolWindowMs,
+    history: priorShadows
+  });
   const coordination = scoreCoordination({
     mint: input.mint,
     dev: input.dev,
     createTime: input.createTime,
     buyers,
     fundings: input.fundings,
-    registry: input.registry
+    registry: input.registry,
+    shadowWallets: shadow.wallets
   });
   store.append('coordination.jsonl', coordination);
+  store.append('kol-shadows.jsonl', shadow);
+  store.append('mc-runs.jsonl', analyzeMcRun({ mint: input.mint, trades: input.trades }));
+  store.append('scale-outs.jsonl', analyzeScaleOut({
+    mint: input.mint,
+    trades: input.trades,
+    supply: input.supply,
+    clusters: Array.isArray(coordination.clusters) ? coordination.clusters.map(row => row.wallets) : null
+  }));
+  store.append('bonding.jsonl', analyzeInstantBond({
+    mint: input.mint,
+    createTime: input.createTime,
+    graduated: input.graduated == null ? null : input.graduated,
+    graduatedAt: input.graduatedAt,
+    thresholdMs: input.bondThresholdMs
+  }));
   const linked = (input.fundings || []).filter(row => row && (row.funder === input.dev || row.bundleCluster)).map(row => row.wallet);
   const clusterWallets = Array.isArray(coordination.clusters)
     ? [...new Set(coordination.clusters.flatMap(row => row.wallets || []))]

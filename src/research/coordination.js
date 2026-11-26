@@ -143,15 +143,25 @@ function scoreCoordination(input = {}) {
   groupReasons.forEach(group => group.wallets.forEach(wallet => add(wallet, group.reason)));
   fingerprintGroups.forEach(list => list.forEach(wallet => add(wallet, 'shared fee and transaction shape')));
   ancestorGroups.forEach(list => list.forEach(wallet => add(wallet, 'shared funding ancestor')));
-  const coordinated = input.buyers.filter(buyer => walletReasons.has(buyer.wallet));
-  const supplyKnown = coordinated.length > 0 && coordinated.every(buyer => finite(buyer.supplyPct) != null);
+  const shadowRows = Array.isArray(input.shadowWallets) ? input.shadowWallets.filter(row => row && row.wallet) : [];
+  shadowRows.forEach(row => {
+    add(row.wallet, 'KOL shadow sell');
+    if (row.repeat) add(row.wallet, 'repeated after the same KOL');
+  });
   const clusters = [];
   ancestorGroups.forEach(list => clusters.push({ kind: 'ancestor', wallets: list }));
   fingerprintGroups.forEach(list => clusters.push({ kind: 'fingerprint', wallets: list }));
   groupReasons.forEach(group => clusters.push({ kind: 'cadence', wallets: group.wallets, reason: group.reason }));
+  if (shadowRows.length) clusters.push({ kind: 'kol-shadow', wallets: shadowRows.map(row => row.wallet) });
+  const scored = input.buyers.concat(shadowRows.filter(row => !input.buyers.some(buyer => buyer.wallet === row.wallet)).map(row => ({
+    wallet: row.wallet,
+    supplyPct: row.supplyPct
+  })));
+  const coordinated = scored.filter(row => walletReasons.has(row.wallet));
+  const supplyKnown = coordinated.length > 0 && coordinated.every(row => finite(row.supplyPct) != null);
   return {
     mint: input.mint || null,
-    wallets: input.buyers.map(buyer => ({
+    wallets: scored.map(buyer => ({
       wallet: buyer.wallet,
       supplyPct: finite(buyer.supplyPct),
       likelyCoordinated: walletReasons.has(buyer.wallet),

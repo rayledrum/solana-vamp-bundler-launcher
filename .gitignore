@@ -1,6 +1,9 @@
 node_modules/
 .env
-data/
+data/*
+!data/research/
+data/research/*
+!data/research/kol-wallets.json
 uploads/
 .DS_Store
 

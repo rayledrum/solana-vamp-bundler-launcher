@@ -35,6 +35,17 @@ function passesFilters(coin, filters = {}) {
     const pct = coin.migration && coin.migration.dumpedSupplyPct;
     if (pct == null || pct > filters.maxMigrationDumpPct) return false;
   }
+  if (filters.maxKolShadowPct != null) {
+    const pct = coin.kolShadow && coin.kolShadow.supplyPct;
+    if (pct == null || pct > filters.maxKolShadowPct) return false;
+  }
+  if (filters.minBondingSec != null) {
+    const row = coin.bonding;
+    if (!row || row.graduated == null) return false;
+    if (row.graduated !== false) {
+      if (row.durationMs == null || row.durationMs < filters.minBondingSec * 1000) return false;
+    }
+  }
   return true;
 }
 
