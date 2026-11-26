@@ -13,6 +13,7 @@ const axios = require('axios');
 const config = require('./config');
 const { curveState, tokensOutForSol, solOutForTokens } = require('./bondingCurve');
 const { readMintMetadata } = require('./tokenMetadata');
+const { fetchPumpJson } = require('./pumpApi');
 
 const TOTAL_SUPPLY = 1000000000;
 
@@ -139,17 +140,7 @@ class PumpFunService {
   async getPumpChartCandles(mint, timeframe) {
     const res = this.pumpChartRes(timeframe);
     const chainId = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
-    const url = `https://frontend-api-v3.pump.fun/candles/${chainId}/${encodeURIComponent(mint)}`;
-    const response = await axios.get(url, {
-      timeout: 8000,
-      headers: {
-        Accept: 'application/json',
-        Origin: 'https://pump.fun',
-        Referer: 'https://pump.fun/'
-      },
-      params: { res, count: 300, measure: 'price_quote' }
-    });
-    const body = response.data || {};
+    const body = await fetchPumpJson(`/candles/${chainId}/${encodeURIComponent(mint)}?res=${encodeURIComponent(res)}&count=300&measure=price_quote`) || {};
     const solUsd = this._solUsd;
     const candles = this.normalizeCandles((body.candles || []).map(row => {
       const volumeUsd = Number(row.volumeUsd) || 0;

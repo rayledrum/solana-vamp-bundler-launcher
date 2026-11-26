@@ -8,6 +8,7 @@ const { scoreCoordination } = require('./coordination');
 const { analyzeDistribution } = require('./distribution');
 const fs = require('fs');
 const { safetyChecks } = require('../safetyChecks');
+const { fetchPumpJson, pumpUrl } = require('../pumpApi');
 
 async function enrichCoin(coin) {
   if (!coin || !coin.mint) return { devHistory: null, safetyScore: null };
@@ -25,7 +26,7 @@ async function enrichCoin(coin) {
 
 async function runCollect(options = {}) {
   const store = options.store || createStore(options.dir);
-  const fetchJson = options.fetchJson;
+  const fetchJson = options.fetchJson || fetchPumpJson;
   const pace = createPacer(options.minIntervalMs == null ? 400 : options.minIntervalMs);
   const list = options.listCoins || (async () => {
     await pace();
@@ -33,7 +34,7 @@ async function runCollect(options = {}) {
   });
   const observe = options.observe || (async (mint) => {
     await pace();
-    const coin = await fetchJson(`https://frontend-api.pump.fun/coins/${encodeURIComponent(mint)}`);
+    const coin = await fetchJson(pumpUrl(`/coins/${encodeURIComponent(mint)}`));
     if (!coin || typeof coin !== 'object') return {};
     return {
       mcapUsd: coin.usd_market_cap,
@@ -63,37 +64,49 @@ async function runCollect(options = {}) {
     const analyses = [];
     for (const coin of coins || []) {
       if (!coin || !coin.mint) continue;
-      const pack = await options.earlyTrades(coin);
-      const analysis = analyzeEarlyBuys({ mint: coin.mint, ...(pack || {}), trades: pack && pack.trades });
-      analyses.push(analysis);
-      store.append('snipers.jsonl', analysis);
-      store.append('dev-exits.jsonl', analyzeDevExit({
-        mint: coin.mint,
-        dev: pack && pack.dev,
-        createTime: pack && pack.createTime,
-        supply: pack && pack.supply,
-        initialDevTokens: pack && pack.initialDevTokens,
-        observedUntil: pack && pack.observedUntil,
-        trades: pack && pack.trades,
-        snapshots: pack && pack.snapshots
-      }));
-      store.append('funding-clusters.jsonl', clusterFunding({
-        mint: coin.mint,
-        dev: pack && pack.dev,
-        buyers: analysis.buys,
-        fundings: pack && pack.fundings,
-        trades: pack && pack.trades
-      }));
-      appendBehavior(store, {
-        mint: coin.mint,
-        dev: pack && pack.dev,
-        createTime: pack && pack.createTime,
-        supply: pack && pack.supply,
-        analysis,
-        trades: pack && pack.trades,
-        fundings: pack && pack.fundings,
-        snapshots: pack && pack.snapshots
-      });
+      let pack;
+      try {
+        pack = await options.earlyTrades(coin);
+      } catch (err) {
+        const host = err && err.host ? ` ${err.host}` : '';
+        console.error(`[collect] ${coin.mint} failed${host}: ${err && err.message ? err.message : err}`);
+        continue;
+      }
+      try {
+        const analysis = analyzeEarlyBuys({ mint: coin.mint, ...(pack || {}), trades: pack && pack.trades });
+        analyses.push(analysis);
+        store.append('snipers.jsonl', analysis);
+        store.append('dev-exits.jsonl', analyzeDevExit({
+          mint: coin.mint,
+          dev: pack && pack.dev,
+          createTime: pack && pack.createTime,
+          supply: pack && pack.supply,
+          initialDevTokens: pack && pack.initialDevTokens,
+          observedUntil: pack && pack.observedUntil,
+          trades: pack && pack.trades,
+          snapshots: pack && pack.snapshots
+        }));
+        store.append('funding-clusters.jsonl', clusterFunding({
+          mint: coin.mint,
+          dev: pack && pack.dev,
+          buyers: analysis.buys,
+          fundings: pack && pack.fundings,
+          trades: pack && pack.trades
+        }));
+        appendBehavior(store, {
+          mint: coin.mint,
+          dev: pack && pack.dev,
+          createTime: pack && pack.createTime,
+          supply: pack && pack.supply,
+          analysis,
+          trades: pack && pack.trades,
+          fundings: pack && pack.fundings,
+          snapshots: pack && pack.snapshots
+        });
+      } catch (err) {
+        const host = err && err.host ? ` ${err.host}` : '';
+        console.error(`[collect] ${coin.mint} failed${host}: ${err && err.message ? err.message : err}`);
+      }
     }
     updateRegistry(registry, analyses);
     store.writeJson('sniper-registry.json', registry);
@@ -193,9 +206,12 @@ async function fillTapes({ store, coins, readTape, traceFunding: trace, pace, fu
     try {
       pack = readTape ? await readTape(mint, launch) : null;
     } catch (err) {
+      const host = err && err.host ? ` ${err.host}` : '';
+      console.error(`[collect] tape ${mint} failed${host}: ${err && err.message ? err.message : err}`);
       pack = null;
     }
     if (!pack || !Array.isArray(pack.trades)) continue;
+    try {
     const dev = launch.dev || launch.creator || pack.dev || null;
     let analysis = analyzeEarlyBuys({
       mint,
@@ -212,6 +228,8 @@ async function fillTapes({ store, coins, readTape, traceFunding: trace, pace, fu
         fundings = await trace(analysis.buys, pack.createTime);
         if (Array.isArray(fundings)) fundingCount += 1;
       } catch (err) {
+        const host = err && err.host ? ` ${err.host}` : '';
+        console.error(`[collect] funding ${mint} failed${host}: ${err && err.message ? err.message : err}`);
         fundings = null;
       }
     }
@@ -262,6 +280,10 @@ async function fillTapes({ store, coins, readTape, traceFunding: trace, pace, fu
     });
     slot.tape = true;
     tapes += 1;
+    } catch (err) {
+      const host = err && err.host ? ` ${err.host}` : '';
+      console.error(`[collect] tape ${mint} failed${host}: ${err && err.message ? err.message : err}`);
+    }
   }
   if (analyses.length) {
     updateRegistry(registry, analyses);
@@ -271,13 +293,31 @@ async function fillTapes({ store, coins, readTape, traceFunding: trace, pace, fu
   return { tapes, funding: fundingCount };
 }
 
+const WATCH_BACKOFF_CAP_MS = 5 * 60 * 1000;
+
+async function runCollectLoop({ once = true, interval = 45000, collect, sleep, log = console, backoffStart = 15000, backoffCap = WATCH_BACKOFF_CAP_MS, stop } = {}) {
+  const wait = sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  let delay = backoffStart;
+  for (;;) {
+    if (stop && stop()) return null;
+    try {
+      const result = await collect();
+      delay = backoffStart;
+      if (once || (stop && stop())) return result;
+      await wait(interval);
+    } catch (err) {
+      const host = err && err.host ? ` ${err.host}` : '';
+      const message = err && err.message ? err.message : String(err);
+      log.error(`[collect] poll failed${host}: ${message}`);
+      if (once) throw err;
+      log.error(`[collect] retrying in ${delay}ms`);
+      await wait(delay);
+      delay = Math.min(delay * 2, backoffCap);
+    }
+  }
+}
+
 async function main() {
-  const fetch = global.fetch;
-  const fetchJson = async (url) => {
-    const response = await fetch(url, { headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.json();
-  };
   const watch = process.argv.includes('--watch');
   const once = !watch;
   const interval = Number(process.env.COLLECT_INTERVAL_MS || 45000);
@@ -295,16 +335,19 @@ async function main() {
     ? (buyers, before) => traceFunding({ connection: rpc.connection, buyers, before, pace })
     : null;
   console.log(`[collect] ${watch ? 'watching' : 'once'} via ${rpc.helius ? 'Helius' : 'public RPC'} every ${interval}ms; funding ${funding ? 'on' : 'off'}`);
-  for (;;) {
-    const result = await runCollect({ fetchJson, readTape, traceFunding: trace, funding, pace });
-    const fresh = loadTxCache(createStore());
-    cache.forEach((trades, signature) => {
-      if (!fresh.has(signature)) createStore().append('tx-cache.jsonl', { signature, trades });
-    });
-    console.log(`[collect] +${result.added} launches, +${result.snapshots} snapshots, ${result.tapes} tapes, ${result.funding} funding traces, ${result.tracked} mints tracked`);
-    if (once) break;
-    await new Promise(resolve => setTimeout(resolve, interval));
-  }
+  await runCollectLoop({
+    once,
+    interval,
+    collect: async () => {
+      const result = await runCollect({ fetchJson: fetchPumpJson, readTape, traceFunding: trace, funding, pace });
+      const fresh = loadTxCache(createStore());
+      cache.forEach((trades, signature) => {
+        if (!fresh.has(signature)) createStore().append('tx-cache.jsonl', { signature, trades });
+      });
+      console.log(`[collect] +${result.added} launches, +${result.snapshots} snapshots, ${result.tapes} tapes, ${result.funding} funding traces, ${result.tracked} mints tracked`);
+      return result;
+    }
+  });
 }
 
 if (require.main === module) {
@@ -314,4 +357,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { runCollect, enrichCoin };
+module.exports = { runCollect, enrichCoin, runCollectLoop, WATCH_BACKOFF_CAP_MS };

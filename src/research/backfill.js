@@ -1,10 +1,13 @@
 const { createStore } = require('./store');
 const { backfill, pollNewCoins, createPacer } = require('./collector');
+const { fetchPumpJson, pumpUrl } = require('../pumpApi');
 
-const CANDLE_URL = 'https://frontend-api-v3.pump.fun/candles/solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp/';
+function candleUrl(mint) {
+  return pumpUrl(`/candles/solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp/${encodeURIComponent(mint)}?res=1m&count=120&measure=price_quote`);
+}
 
 async function defaultCandles(fetchJson, mint) {
-  const body = await fetchJson(`${CANDLE_URL}${encodeURIComponent(mint)}?res=1m&count=120&measure=price_quote`);
+  const body = await fetchJson(candleUrl(mint));
   const rows = body && Array.isArray(body.candles) ? body.candles : null;
   if (!rows || !rows.length) return null;
   return rows.map(row => ({
@@ -31,11 +34,7 @@ async function runBackfill(options = {}) {
 }
 
 async function main() {
-  const fetchJson = async (url) => {
-    const response = await fetch(url, { headers: { accept: 'application/json', origin: 'https://pump.fun' } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.json();
-  };
+  const fetchJson = fetchPumpJson;
   const limit = Number(process.env.BACKFILL_LIMIT || 20);
   const saved = await runBackfill({ fetchJson, limit });
   console.log(JSON.stringify({ coins: saved.length, withCandles: saved.filter(row => row.candles).length }));

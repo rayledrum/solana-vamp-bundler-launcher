@@ -8,13 +8,19 @@ const { canonicalPoolPda, decodePool } = require('./pumpSwap');
 const { bondingProgress, DEFAULT_GLOBAL } = require('./bondingCurve');
 const config = require('./config');
 const { createStore } = require('./research/store');
+const { pumpUrl, fetchPumpJson, isPumpFrontendUrl, hostOf } = require('./pumpApi');
 const { ValidationError } = require('./validation');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DEFAULT_BLACKLIST = path.join(DATA_DIR, 'dev-blacklist.json');
 const DEFAULT_LAUNCHED = path.join(DATA_DIR, 'launched-mints.json');
-const PUMP_COIN = 'https://frontend-api.pump.fun/coins/';
-const PUMP_USER = 'https://frontend-api.pump.fun/coins/user-created-coins/';
+function pumpCoinUrl(mint) {
+  return pumpUrl(`/coins/${encodeURIComponent(mint)}`);
+}
+
+function pumpUserUrl(creator, offset) {
+  return pumpUrl(`/coins/user-created-coins/${encodeURIComponent(creator)}?offset=${offset}&limit=50&includeNsfw=false`);
+}
 const RUGCHECK = 'https://api.rugcheck.xyz/v1/tokens/';
 
 const DEFAULT_AUTO = {
@@ -526,7 +532,7 @@ function createSafetyChecks(options = {}) {
     let coin = null;
     let dex = null;
     try { rug = await external(`${RUGCHECK}${key}/report/summary`); } catch (err) { rug = null; }
-    try { coin = await external(`${PUMP_COIN}${key}`); } catch (err) { coin = null; }
+    try { coin = await external(pumpCoinUrl(key)); } catch (err) { coin = null; }
     try {
       const body = await external(`https://api.dexscreener.com/latest/dex/tokens/${key}`);
       dex = body && Array.isArray(body.pairs) ? body.pairs[0] : null;
@@ -538,7 +544,7 @@ function createSafetyChecks(options = {}) {
       coins = [];
       try {
         for (let offset = 0; offset < 250; offset += 50) {
-          const page = await external(`${PUMP_USER}${creator}?offset=${offset}&limit=50&includeNsfw=false`);
+          const page = await external(pumpUserUrl(creator, offset));
           const rows = Array.isArray(page) ? page : (page && page.coins) || [];
           coins.push(...rows);
           if (rows.length < 50) break;
@@ -668,8 +674,9 @@ function createSafetyChecks(options = {}) {
 }
 
 async function defaultFetchJson(url) {
+  if (isPumpFrontendUrl(url)) return fetchPumpJson(url);
   const response = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`HTTP ${response.status} from ${hostOf(url)}`);
   return response.json();
 }
 
