@@ -21,6 +21,7 @@ const { pumpPortalFeedEvent } = require('./curveFeed');
 const { curveState, MIGRATION_DESTINATION, ammOut } = require('./bondingCurve');
 const { safetyChecks } = require('./safetyChecks');
 const { DEFAULT_LADDER, freshState, planExit, noteFill } = require('./research/exitLadder');
+const { buildExitAlert, planBleedExit, applyEntryGate, assessMint, entryDecision } = require('./research/bleedExit');
 const { createVolumeStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
 
 class TradingEngine {
@@ -54,6 +55,11 @@ class TradingEngine {
     this.safetyBlock = (mint) => safetyChecks.buyBlockReason(mint);
     this.exitLadder = { ...DEFAULT_LADDER, enabled: false };
     this.exitState = {};
+    this.bleedState = {};
+    this.entryGate = (mint) => {
+      try { return entryDecision(assessMint(mint)); }
+      catch (err) { return { action: 'allow', reasons: [] }; }
+    };
     this.seenTradeSigs = new Set();
     this.pumpPortalNotice = '';
   }
@@ -865,12 +871,19 @@ class TradingEngine {
   async executeBuy({ solAmount, walletAddresses = [] }) {
     const mint = this.activeToken;
     if (!mint) throw new ValidationError('No active token is currently selected');
-    const amountPerWallet = requireSolTradeAmount(solAmount);
+    let amountPerWallet = requireSolTradeAmount(solAmount);
     if (typeof this.safetyBlock === 'function') {
       const blocked = await this.safetyBlock(mint);
       if (blocked) throw new ValidationError(blocked);
     }
     const isSim = walletManager.simulationMode;
+    if (isSim && typeof this.entryGate === 'function') {
+      const gated = applyEntryGate(true, await this.entryGate(mint), amountPerWallet);
+      if (gated.action === 'skip') {
+        throw new ValidationError(`Buy skipped: ${(gated.reasons || []).join('; ') || 'entry filter'}`);
+      }
+      amountPerWallet = gated.amount;
+    }
     const targets = walletAddresses.length ? this.knownTargets(walletAddresses) : (isSim ? this.fundedSimWallets() : this.knownTargets([]));
 
     const results = [];
@@ -1054,6 +1067,38 @@ class TradingEngine {
     });
     if (result && result.success) noteFill(state, plan, now);
     return { ...plan, result };
+  }
+
+  async reviewBleedExit(mint, context = {}, now = Date.now()) {
+    const alert = buildExitAlert({
+      ...context,
+      floorUsd: context.floorUsd == null ? config.BLEED_FLOOR_MCAP_USD : context.floorUsd
+    });
+    const master = walletManager.masterWallet && walletManager.masterWallet.publicKey.toBase58();
+    const position = master ? this.positions.get(master) : null;
+    const tokens = position ? Number(position.tokens) || 0 : 0;
+    const state = this.bleedState[mint] || { step: 0, originalTokens: null };
+    const plan = planBleedExit({
+      alert,
+      state,
+      mcapUsd: context.mcapUsd,
+      mcapSol: context.mcapSol,
+      solPriceUsd: context.solPriceUsd,
+      floorUsd: context.floorUsd == null ? config.BLEED_FLOOR_MCAP_USD : context.floorUsd,
+      positionTokens: tokens,
+      slices: context.slices
+    });
+    this.bleedState[mint] = plan.state;
+    if (!walletManager.simulationMode || plan.action !== 'sell') {
+      return { ...alert, ...plan, acted: false, at: now };
+    }
+    const result = await this.executeSell({
+      pct: plan.sellPct,
+      walletAddresses: master ? [master] : [],
+      fromLadder: true
+    });
+    if (result && result.success) plan.state.step = plan.nextStep;
+    return { ...alert, ...plan, acted: Boolean(result && result.success), result, at: now };
   }
 
   async executeSell({ pct, walletAddresses = [], mint: mintOverride, fromBumper = false, fromLadder = false } = {}) {

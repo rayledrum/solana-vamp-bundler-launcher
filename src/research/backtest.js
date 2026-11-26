@@ -39,6 +39,10 @@ function passesFilters(coin, filters = {}) {
     const pct = coin.kolShadow && coin.kolShadow.supplyPct;
     if (pct == null || pct > filters.maxKolShadowPct) return false;
   }
+  if (filters.maxLinkedTraderPct != null) {
+    const pct = coin.topTraders && coin.topTraders.linkedProfitPct;
+    if (pct == null || pct > filters.maxLinkedTraderPct) return false;
+  }
   if (filters.minBondingSec != null) {
     const row = coin.bonding;
     if (!row || row.graduated == null) return false;

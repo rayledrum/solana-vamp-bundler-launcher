@@ -90,7 +90,13 @@ const config = {
   DEXSCREENER_API: 'https://api.dexscreener.com/latest/dex',
   PUMPPORTAL_API: 'https://pumpportal.fun/api',
   PUMPPORTAL_WS: 'wss://pumpportal.fun/api/data',
-  PUMPPORTAL_API_KEY: String(process.env.PUMPPORTAL_API_KEY || '').trim()
+  PUMPPORTAL_API_KEY: String(process.env.PUMPPORTAL_API_KEY || '').trim(),
+
+  SECOND_PUMP_MCAP_USD: num('SECOND_PUMP_MCAP_USD', 100000),
+  BLEED_FLOOR_MCAP_USD: num('BLEED_FLOOR_MCAP_USD', 50000),
+  PUMP_MIN_RISE_PCT: num('PUMP_MIN_RISE_PCT', 50),
+  PUMP_MIN_DRAWDOWN_PCT: num('PUMP_MIN_DRAWDOWN_PCT', 25),
+  NEAR_MIGRATION_PCT: num('NEAR_MIGRATION_PCT', 90)
 };
 
 if (config.DEFAULT_JITO_TIP <= 0 || config.DEFAULT_JITO_TIP > config.MAX_JITO_TIP_SOL) {
@@ -104,6 +110,15 @@ if (config.PRIORITY_FEE_SOL < 0 || config.PRIORITY_FEE_SOL > config.MAX_PRIORITY
 }
 if (config.MAX_SOL_PER_TRADE <= 0 || config.MAX_SOL_PER_SESSION < config.MAX_SOL_PER_TRADE) {
   throw new Error('MAX_SOL_PER_SESSION must be greater than or equal to MAX_SOL_PER_TRADE, and both must be positive');
+}
+if (config.SECOND_PUMP_MCAP_USD <= 0 || config.BLEED_FLOOR_MCAP_USD <= 0) {
+  throw new Error('SECOND_PUMP_MCAP_USD and BLEED_FLOOR_MCAP_USD must be positive');
+}
+if (config.PUMP_MIN_RISE_PCT <= 0 || config.PUMP_MIN_DRAWDOWN_PCT <= 0 || config.PUMP_MIN_DRAWDOWN_PCT >= 100) {
+  throw new Error('PUMP_MIN_RISE_PCT must be positive and PUMP_MIN_DRAWDOWN_PCT must be between 0 and 100');
+}
+if (config.NEAR_MIGRATION_PCT <= 0 || config.NEAR_MIGRATION_PCT > 100) {
+  throw new Error('NEAR_MIGRATION_PCT must be between 0 and 100');
 }
 
 module.exports = config;
