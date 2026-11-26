@@ -96,6 +96,8 @@ function trackPumps(series, options = {}) {
   const armed = armAfterPump == null ? null : pumps.some(pump => pump.number >= armAfterPump);
   return {
     pumps,
+    rising,
+    activePump: rising ? pumps.length + 1 : null,
     peakMcapUsd: usdValues.length ? Math.max(...usdValues) : null,
     aboveSecondPumpThreshold,
     armAfterPump,

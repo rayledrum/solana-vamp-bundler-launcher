@@ -96,7 +96,13 @@ const config = {
   BLEED_FLOOR_MCAP_USD: num('BLEED_FLOOR_MCAP_USD', 50000),
   PUMP_MIN_RISE_PCT: num('PUMP_MIN_RISE_PCT', 50),
   PUMP_MIN_DRAWDOWN_PCT: num('PUMP_MIN_DRAWDOWN_PCT', 25),
-  NEAR_MIGRATION_PCT: num('NEAR_MIGRATION_PCT', 90)
+  NEAR_MIGRATION_PCT: num('NEAR_MIGRATION_PCT', 90),
+
+  FARM_RIDE_ENABLED: String(process.env.FARM_RIDE_ENABLED || '').trim() === '1',
+  FARM_RIDE_MAX_SOL: num('FARM_RIDE_MAX_SOL', 0.02),
+  FARM_RIDE_KOL_WINDOW_MS: num('FARM_RIDE_KOL_WINDOW_MS', 10 * 60 * 1000),
+  FARM_RIDE_STOP_PCT: num('FARM_RIDE_STOP_PCT', 25),
+  FARM_RIDE_MAX_HOLD_MS: num('FARM_RIDE_MAX_HOLD_MS', 30 * 60 * 1000)
 };
 
 if (config.DEFAULT_JITO_TIP <= 0 || config.DEFAULT_JITO_TIP > config.MAX_JITO_TIP_SOL) {
@@ -119,6 +125,12 @@ if (config.PUMP_MIN_RISE_PCT <= 0 || config.PUMP_MIN_DRAWDOWN_PCT <= 0 || config
 }
 if (config.NEAR_MIGRATION_PCT <= 0 || config.NEAR_MIGRATION_PCT > 100) {
   throw new Error('NEAR_MIGRATION_PCT must be between 0 and 100');
+}
+if (config.FARM_RIDE_MAX_SOL <= 0 || config.FARM_RIDE_MAX_SOL > config.MAX_SOL_PER_TRADE) {
+  throw new Error('FARM_RIDE_MAX_SOL must be positive and no greater than MAX_SOL_PER_TRADE');
+}
+if (config.FARM_RIDE_STOP_PCT <= 0 || config.FARM_RIDE_STOP_PCT >= 100 || config.FARM_RIDE_KOL_WINDOW_MS <= 0 || config.FARM_RIDE_MAX_HOLD_MS <= 0) {
+  throw new Error('Farm ride stop, KOL window, and max hold must be positive, and the stop must be under 100%');
 }
 
 module.exports = config;

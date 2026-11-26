@@ -22,6 +22,7 @@ const { curveState, MIGRATION_DESTINATION, ammOut } = require('./bondingCurve');
 const { safetyChecks } = require('./safetyChecks');
 const { DEFAULT_LADDER, freshState, planExit, noteFill } = require('./research/exitLadder');
 const { buildExitAlert, planBleedExit, applyEntryGate, assessMint, entryDecision } = require('./research/bleedExit');
+const { scoreFarmEntry, planFarmExit } = require('./research/farmRide');
 const { createVolumeStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
 
 class TradingEngine {
@@ -56,6 +57,7 @@ class TradingEngine {
     this.exitLadder = { ...DEFAULT_LADDER, enabled: false };
     this.exitState = {};
     this.bleedState = {};
+    this.farmRideEnabled = config.FARM_RIDE_ENABLED;
     this.entryGate = (mint) => {
       try { return entryDecision(assessMint(mint)); }
       catch (err) { return { action: 'allow', reasons: [] }; }
@@ -1099,6 +1101,65 @@ class TradingEngine {
     });
     if (result && result.success) plan.state.step = plan.nextStep;
     return { ...alert, ...plan, acted: Boolean(result && result.success), result, at: now };
+  }
+
+  reviewFarmRide(mint, context = {}, now = Date.now()) {
+    const enabled = context.enabled != null ? Boolean(context.enabled) : this.farmRideEnabled === true;
+    const remaining = Math.max(0, config.MAX_SOL_PER_SESSION - (Number(this.sessionSpentSol) || 0));
+    const decision = scoreFarmEntry({
+      ...context,
+      now,
+      sessionRemaining: remaining,
+      maxSol: context.maxSol == null ? config.FARM_RIDE_MAX_SOL : context.maxSol,
+      secondPumpMcapUsd: context.secondPumpMcapUsd == null ? config.SECOND_PUMP_MCAP_USD : context.secondPumpMcapUsd,
+      kolWindowMs: context.kolWindowMs == null ? config.FARM_RIDE_KOL_WINDOW_MS : context.kolWindowMs,
+      progressThreshold: context.progressThreshold == null ? config.NEAR_MIGRATION_PCT : context.progressThreshold
+    });
+    const master = walletManager.masterWallet && walletManager.masterWallet.publicKey.toBase58();
+    const position = master ? this.positions.get(master) : null;
+    const tokens = position ? Number(position.tokens) || 0 : 0;
+    const state = this.farmState && this.farmState[mint] || { step: 0, originalTokens: null, enteredAt: null, entryMcapUsd: null };
+    const exit = planFarmExit({
+      ...context,
+      now,
+      enteredAt: state.enteredAt,
+      entryMcapUsd: state.entryMcapUsd,
+      positionTokens: tokens,
+      state,
+      floorUsd: context.floorUsd == null ? config.BLEED_FLOOR_MCAP_USD : context.floorUsd,
+      stopLossPct: context.stopLossPct == null ? config.FARM_RIDE_STOP_PCT : context.stopLossPct,
+      maxHoldMs: context.maxHoldMs == null ? config.FARM_RIDE_MAX_HOLD_MS : context.maxHoldMs,
+      progressThreshold: context.progressThreshold == null ? config.NEAR_MIGRATION_PCT : context.progressThreshold
+    });
+    return { enabled, simulation: walletManager.simulationMode, decision, exit, acted: false, mint };
+  }
+
+  async actOnFarmRide(mint, context = {}, now = Date.now()) {
+    const plan = this.reviewFarmRide(mint, context, now);
+    if (!plan.simulation || !plan.enabled) return plan;
+    const master = walletManager.masterWallet && walletManager.masterWallet.publicKey.toBase58();
+    const position = master ? this.positions.get(master) : null;
+    const tokens = position ? Number(position.tokens) || 0 : 0;
+    if (tokens > 0 && plan.exit && plan.exit.action === 'sell') {
+      const result = await this.executeSell({
+        pct: plan.exit.sellPct,
+        walletAddresses: master ? [master] : [],
+        fromLadder: true
+      });
+      plan.acted = Boolean(result && result.success);
+      plan.result = result;
+      return plan;
+    }
+    if (!(tokens > 0) && plan.decision && plan.decision.eligible === true && plan.decision.sizeSol > 0) {
+      const result = await this.executeBuy({ solAmount: plan.decision.sizeSol, walletAddresses: master ? [master] : [] });
+      plan.acted = Boolean(result && result.success);
+      if (plan.acted) {
+        this.farmState = this.farmState || {};
+        this.farmState[mint] = { step: 0, originalTokens: null, enteredAt: now, entryMcapUsd: context.mcapUsd || null };
+      }
+      plan.result = result;
+    }
+    return plan;
   }
 
   async executeSell({ pct, walletAddresses = [], mint: mintOverride, fromBumper = false, fromLadder = false } = {}) {
