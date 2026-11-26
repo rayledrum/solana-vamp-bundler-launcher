@@ -75,6 +75,7 @@ function bindShellActions() {
     if (name === 'clickLogo') return document.getElementById('logoFile').click();
     if (name === 'delayInput') return handleDelayInputChange(el.value);
     if (name === 'toggleSelectAll') return toggleSelectAllRows(el.checked);
+    if (name === 'toggleSafetyAuto') return toggleSafetyAuto(el.checked);
     if (name === 'logoSelect') return handleLogoSelect(event);
     if (name === 'bundleMetrics') return calculateBundleMetrics();
     const fn = window[name];
@@ -1884,6 +1885,7 @@ function updateActiveTokenUi(mint) {
   if (mint !== state.chartToken) {
     loadCandlesForToken(mint);
   }
+  loadSafety(mint);
 }
 
 function extractSolanaAddress(input) {
@@ -1920,6 +1922,91 @@ function bindTrackedCaInputs() {
     input.addEventListener('keydown', onKey);
     input.addEventListener('paste', onPaste);
   });
+}
+
+let safetyCreator = null;
+
+function paintSafety(report) {
+  const score = document.getElementById('safetyScore');
+  const list = document.getElementById('safetyChecks');
+  const banner = document.getElementById('safetyBanner');
+  if (!score || !list) return;
+  safetyCreator = report && report.creator || null;
+  if (report && report.ownLaunch) {
+    score.textContent = 'Own launch';
+    score.style.color = '#86efac';
+    list.innerHTML = '';
+    if (banner) banner.style.display = 'none';
+    return;
+  }
+  const colors = { green: '#86efac', yellow: '#fcd34d', red: '#fda4af', unknown: '#94a3b8' };
+  score.textContent = report && report.score != null ? `${report.overall || 'unknown'} · ${report.score}` : (report && report.overall) || 'unknown';
+  score.style.color = colors[(report && report.overall) || 'unknown'] || colors.unknown;
+  list.innerHTML = '';
+  (report && report.checks || []).forEach(row => {
+    const item = document.createElement('div');
+    item.style.cssText = 'display:flex;gap:6px;align-items:flex-start;min-width:0;';
+    const dot = document.createElement('span');
+    dot.textContent = '●';
+    dot.style.color = colors[row.status] || colors.unknown;
+    const text = document.createElement('span');
+    const when = row.at ? new Date(row.at).toISOString().slice(11, 19) : '';
+    text.textContent = `${row.label}: ${row.reason || row.status}${when ? ' · ' + when : ''}`;
+    item.append(dot, text);
+    list.appendChild(item);
+  });
+  if (banner) {
+    if (report && report.blacklisted) {
+      banner.style.display = 'block';
+      banner.textContent = `Dev ${report.creator || ''} is blacklisted. Buys are blocked. Existing positions are not sold automatically.`;
+    } else {
+      banner.style.display = 'none';
+      banner.textContent = '';
+    }
+  }
+}
+
+async function loadSafety(mint) {
+  if (!mint) return;
+  try {
+    const res = await apiFetch(`/api/safety/${encodeURIComponent(mint)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Safety check failed');
+    paintSafety(data.report);
+    const box = document.getElementById('safetyAutoBlacklist');
+    if (box && data.report && data.report.auto) box.checked = data.report.auto.enabled !== false;
+  } catch (err) {
+    paintSafety({ overall: 'unknown', score: null, checks: [{ id: 'error', label: 'Safety', status: 'unknown', reason: err.message, at: Date.now() }] });
+  }
+}
+
+async function toggleSafetyAuto(checked) {
+  try {
+    await apiFetch('/api/safety/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto: { enabled: Boolean(checked) } })
+    });
+  } catch (err) {
+    showToast('Safety setting failed: ' + err.message, 'error');
+  }
+}
+
+async function blacklistCurrentDev() {
+  if (!safetyCreator) return showToast('No creator is known for this coin', 'warning');
+  try {
+    const res = await apiFetch('/api/safety/blacklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: safetyCreator, reason: 'Manual from safety panel' })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Blacklist failed');
+    showToast('Dev blacklisted. New buys are blocked.', 'warning');
+    if (state.activeToken) loadSafety(state.activeToken);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 function loadChartCaFromInput() {
@@ -2625,6 +2712,12 @@ function renderTopMovers(tokens) {
     const title = document.createElement('div');
     title.style.cssText = 'font-size:11px;font-weight:800;color:#00d4ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     title.textContent = String(symbol) + '  ' + String(name);
+    if (t.devBlacklisted) {
+      const flag = document.createElement('span');
+      flag.textContent = 'DEV BLACKLIST';
+      flag.style.cssText = 'font-size:8px;font-weight:800;color:#fda4af;background:rgba(240,76,94,0.15);border:1px solid rgba(240,76,94,0.4);border-radius:4px;padding:1px 4px;margin-left:4px;';
+      title.append(' ', flag);
+    }
     const cap = document.createElement('div');
     cap.style.cssText = 'font-size:9px;color:#78909c;font-family:monospace;';
     cap.textContent = mcap;

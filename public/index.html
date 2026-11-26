@@ -287,6 +287,19 @@
                 <span style="color:#546e7a;font-size:10px;">Streaming live trades from Solana &amp; Pump.fun...</span>
               </div>
             </div>
+            <div id="safetyPanel" style="border-top:1px solid #1a2338;background:#090d17;padding:8px 12px;">
+              <div id="safetyBanner" style="display:none;margin-bottom:8px;padding:6px 8px;border-radius:6px;background:rgba(240,76,94,0.12);border:1px solid rgba(240,76,94,0.45);color:#fda4af;font-size:11px;font-weight:700;"></div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#78909c;">Safety</span>
+                <span id="safetyScore" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:800;color:#cfd8dc;">—</span>
+                <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:#b0bec5;">
+                  <input id="safetyAutoBlacklist" type="checkbox" checked data-fn="toggleSafetyAuto" data-evt="change">
+                  Auto-blacklist
+                </label>
+                <button type="button" data-fn="blacklistCurrentDev" style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:rgba(240,76,94,0.1);border:1px solid rgba(240,76,94,0.35);color:#fda4af;cursor:pointer;">Blacklist dev</button>
+              </div>
+              <div id="safetyChecks" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:10.5px;color:#cbd5e1;"></div>
+            </div>
             <!-- Pump link row -->
             <div style="padding:7px 14px;border-top:1px solid #1a2338;display:flex;align-items:center;justify-content:space-between;background:#0d1120;">
               <div style="display:flex;align-items:center;gap:14px;font-size:10.5px;font-family:'JetBrains Mono',monospace;">

@@ -19,6 +19,7 @@ const { resolveMintTokenProgram, readMintSupply } = require('./tokenAccounts');
 const { readPumpGlobal } = require('./bondingCurve');
 const { PumpSwapFeed } = require('./pumpSwap');
 const { marketCapFromFeed } = require('../public/js/chartScale');
+const { safetyChecks } = require('./safetyChecks');
 const {
   parseStrictBoolean,
   requirePositive,
@@ -532,6 +533,7 @@ app.post('/api/launch/execute', withMutationLock(async (req, res) => {
   }
 
   tradingEngine.setActiveToken(launchResult.mint, initialHoldings);
+  safetyChecks.noteOwnLaunch(launchResult.mint);
   broadcast({ type: 'LAUNCH_SUCCESS', payload: launchResult });
   res.json({ success: true, ...launchResult });
 }));
@@ -540,7 +542,13 @@ app.get('/api/vamp/trending', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit || '12', 10);
     const tokens = await vampScanner.getTrendingSolanaTokens(Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 12);
-    res.json({ success: true, tokens });
+    res.json({
+      success: true,
+      tokens: tokens.map(token => ({
+        ...token,
+        devBlacklisted: safetyChecks.isMintFlagged(token.tokenAddress)
+      }))
+    });
   } catch (err) {
     sendError(res, err);
   }
@@ -561,6 +569,49 @@ app.post('/api/vamp/mutate', (req, res) => {
     const { tokenData, mode } = req.body || {};
     const mutated = vampScanner.generateVampMutation(tokenData, mode);
     res.json({ success: true, mutated });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.get('/api/safety/blacklist', (req, res) => {
+  res.json({ success: true, ...safetyChecks.listBlacklist() });
+});
+
+app.post('/api/safety/blacklist', (req, res) => {
+  try {
+    const address = requirePublicKey(req.body && req.body.address, 'Dev');
+    const data = safetyChecks.addBlacklist(address, req.body && req.body.reason, 'manual');
+    res.json({ success: true, ...data });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/safety/blacklist/remove', (req, res) => {
+  try {
+    const address = requirePublicKey(req.body && req.body.address, 'Dev');
+    const data = safetyChecks.removeBlacklist(address, req.body && req.body.confirm === true);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/safety/settings', (req, res) => {
+  try {
+    const auto = safetyChecks.updateSettings((req.body && req.body.auto) || {});
+    res.json({ success: true, auto });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.get('/api/safety/:mint', async (req, res) => {
+  try {
+    const mint = requireMint(req.params.mint);
+    const report = await safetyChecks.report(mint);
+    res.json({ success: true, report });
   } catch (err) {
     sendError(res, err);
   }
