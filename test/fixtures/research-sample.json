@@ -1,0 +1,62 @@
+{
+  "filters": { "minSafety": 60, "hoursUtc": [14, 15, 16], "maxSameBlockPct": 15 },
+  "ladder": {
+    "milestones": [
+      { "mcapUsd": 10000, "sellPct": 25 },
+      { "mcapUsd": 20000, "sellPct": 25 },
+      { "mcapUsd": 30000, "sellPct": 25 }
+    ],
+    "moonbagPct": 25,
+    "stallMinutes": 20,
+    "stallAboveEntryPct": 0
+  },
+  "feePct": 1,
+  "slippagePct": 1,
+  "coins": [
+    {
+      "mint": "GoodHour",
+      "safetyScore": 80,
+      "hourUtc": 15,
+      "themeMomentum": 4,
+      "themes": ["cat"],
+      "snipers": { "sameBlockSupplyPct": 4 },
+      "snapshots": [
+        { "atMin": 1, "mcapUsd": 4000 },
+        { "atMin": 15, "mcapUsd": 12000 },
+        { "atMin": 40, "mcapUsd": 32000 }
+      ]
+    },
+    {
+      "mint": "TooSniped",
+      "safetyScore": 90,
+      "hourUtc": 15,
+      "themeMomentum": 5,
+      "themes": ["cat"],
+      "snipers": { "sameBlockSupplyPct": 40 },
+      "snapshots": [
+        { "atMin": 1, "mcapUsd": 8000 },
+        { "atMin": 30, "mcapUsd": 2000 }
+      ]
+    },
+    {
+      "mint": "UnknownSnipers",
+      "safetyScore": 90,
+      "hourUtc": 15,
+      "snipers": { "sameBlockSupplyPct": null },
+      "snapshots": [
+        { "atMin": 1, "mcapUsd": 5000 },
+        { "atMin": 30, "mcapUsd": 25000 }
+      ]
+    },
+    {
+      "mint": "NightLaunch",
+      "safetyScore": 70,
+      "hourUtc": 3,
+      "snipers": { "sameBlockSupplyPct": 2 },
+      "snapshots": [
+        { "atMin": 1, "mcapUsd": 3000 },
+        { "atMin": 60, "mcapUsd": 1000 }
+      ]
+    }
+  ]
+}

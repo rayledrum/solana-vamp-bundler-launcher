@@ -38,6 +38,23 @@ A high-performance, non-custodial Solana memecoin launchpad, vampire cloner, and
 - The bumper keeps running on a graduated coin that has a pool. It stops when that pool is missing, the session budget or cycle cap is hit, or the live chart feed stalls.
 - Stop, a 100% sell, cascade, panic, or a change of active mint sells the open lots in that same request.
 
+### 6. Research (simulation only)
+Quality launches are meant to scale out into real demand, not dump a thin curve. The research tools do not send live trades.
+
+- `npm run collect` polls recent Pump.fun launches and appends `data/research/launches.jsonl`. It is resumable (`data/research/state.json`) and rate-limited. Snapshots at 1, 5, 15, 30, 60, and 240 minutes land in `snapshots.jsonl` when a later run sees that the mint is old enough. Missing fields stay `null`.
+- Pass early trades into the collector to write `snipers.jsonl` and `sniper-registry.json`: first 50 buys or the first 60 seconds, block offset from create, SOL size, supply share, shared funder, and whether that wallet sold. Per-coin features include same-block supply, SOL in the first 10s and 60s, how many of those snipers still hold at 5/15/60 minutes, sell pressure versus later organic buys, and wallets that snipe more than one launch. Those features replace the safety panel's unknown sniper row when the share is actually known.
+- The same trade tape writes `dev-exits.jsonl`: each dev sell with time, share of the dev bag, and market cap; time to the first dev sell; whether the dev fully exited; and dev-linked wallets (funded by the dev, the same funder, or a bundle cluster) with their combined hold. Organic buy rate and unique buyers are compared in equal windows before and after that first sell, and market cap after it is listed from snapshots. Missing tape or bag size stays `null`. The safety panel shows the linked hold when it is known. The backtester compares coins whose dev sold in the first 10 minutes with coins the dev had not fully exited, and it can replay selling the first X% of the visible dev bag at launch plus N minutes against a later ladder.
+- `npm run backfill` stores recent coins and Pump.fun candles when the candle API returns them (`backfill-candles.json`). A failed candle fetch is `null`, not a made-up series.
+- `GET /api/research/meta` ranks name and description themes for coins that graduated or climbed in the last 1h, 6h, and 24h. An external trend source can be plugged in later. Nothing calls X.
+- `npm run backtest` replays `test/fixtures/research-sample.json` (or a collected file path) and prints hit rate, average and median PnL after about 1% fees and 1% slippage, plus a distribution. Filters include safety score, launch hour, theme momentum, and same-block sniper share.
+- The exit ladder (10k / 20k / 30k USD scale-out, moonbag, stall stop, and a cap on how much of curve liquidity one sell may take) runs only in simulation, only on coins this desk launched, and is off until enabled. Live mode rejects the setting.
+
+```bash
+npm run collect
+npm run backfill
+npm run backtest
+```
+
 ---
 
 ## 🛠️ Free-Tier Infrastructure

@@ -7,6 +7,7 @@ const { decodeBondingCurve } = require('./curveFeed');
 const { canonicalPoolPda, decodePool } = require('./pumpSwap');
 const { bondingProgress, DEFAULT_GLOBAL } = require('./bondingCurve');
 const config = require('./config');
+const { createStore } = require('./research/store');
 const { ValidationError } = require('./validation');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -103,7 +104,11 @@ function classifySnipers(cluster) {
   }
   const pct = Number(cluster.pct);
   const status = pct >= 30 ? 'red' : pct >= 10 ? 'yellow' : 'green';
-  return check('snipers', 'Launch bundle', status, `${pct.toFixed(1)}% of supply bought in the first block by ${cluster.buyers || 0} wallets`);
+  const buyers = cluster.buyers == null ? null : Number(cluster.buyers);
+  const reason = buyers == null
+    ? `${pct.toFixed(1)}% of supply bought in the first block`
+    : `${pct.toFixed(1)}% of supply bought in the first block by ${buyers} wallets`;
+  return check('snipers', 'Launch bundle', status, reason);
 }
 
 function classifyCurve(decoded) {
@@ -149,6 +154,15 @@ function classifySocials(source) {
   const present = ['twitter', 'telegram', 'website'].filter(key => source[key]);
   if (!present.length) return check('socials', 'Socials', 'yellow', 'No Twitter, Telegram, or website');
   return check('socials', 'Socials', 'green', present.join(', '));
+}
+
+function classifyDevAssociated(pct) {
+  if (pct == null || !Number.isFinite(Number(pct))) {
+    return check('devAssociated', 'Dev-associated hold', 'unknown', 'Dev-linked wallets were not identified');
+  }
+  const value = Number(pct);
+  const status = value > 10 ? 'red' : value > 2 ? 'yellow' : 'green';
+  return check('devAssociated', 'Dev-associated hold', status, `Linked wallets hold ${value.toFixed(2)}% of supply`);
 }
 
 function classifyDevHolding(pct) {
@@ -213,6 +227,28 @@ function writeJson(file, data) {
   fs.renameSync(tmp, file);
 }
 
+function readDevAssociated(mint) {
+  try {
+    const rows = createStore().readJsonl('dev-exits.jsonl');
+    const row = rows.filter(item => item && item.mint === mint).pop();
+    if (!row || row.associatedHoldPct == null) return null;
+    return row.associatedHoldPct;
+  } catch (err) {
+    return null;
+  }
+}
+
+function readSniperCluster(mint) {
+  try {
+    const rows = createStore().readJsonl('snipers.jsonl');
+    const row = rows.filter(item => item && item.mint === mint).pop();
+    if (!row || row.sameBlockSupplyPct == null) return null;
+    return { pct: row.sameBlockSupplyPct, buyers: row.sameBlockCount };
+  } catch (err) {
+    return null;
+  }
+}
+
 function emptyBlacklist() {
   return { devs: [], flaggedMints: {}, auto: { ...DEFAULT_AUTO } };
 }
@@ -223,6 +259,8 @@ function createSafetyChecks(options = {}) {
   const ttlMs = options.ttlMs || 60_000;
   const minIntervalMs = options.minIntervalMs == null ? 250 : options.minIntervalMs;
   const fetchJson = options.fetchJson || defaultFetchJson;
+  const sniperLookup = options.sniperLookup || readSniperCluster;
+  const devLookup = options.devLookup || readDevAssociated;
   const connection = options.connection || null;
   const cache = new Map();
   let lastCall = 0;
@@ -253,6 +291,11 @@ function createSafetyChecks(options = {}) {
   function isOwnLaunch(mint) {
     const data = readJson(launchedFile, { mints: [] });
     return Array.isArray(data.mints) && data.mints.includes(mint);
+  }
+
+  function listOwnLaunches() {
+    const data = readJson(launchedFile, { mints: [] });
+    return Array.isArray(data.mints) ? data.mints : [];
   }
 
   function noteOwnLaunch(mint) {
@@ -463,12 +506,13 @@ function createSafetyChecks(options = {}) {
       rug ? classifyRugcheck(rug) : check('rugcheck', 'RugCheck', 'unknown', 'RugCheck request failed'),
       classifyAuthorities(authorities),
       classifyHolders(holders),
-      classifySnipers({ unknown: true, reason: 'First-block buyers were not read' }),
+      classifySnipers(sniperLookup(key) || { unknown: true, reason: 'First-block buyers were not read' }),
       classifyCurve(curve),
       classifyMarket(dex),
       classifyAge(createdMs, Date.now()),
       classifySocials(socialSource),
       classifyDevHolding(devPct),
+      classifyDevAssociated(devLookup(key)),
       classifyDevFlow({ unknown: true, reason: 'Creator buy and sell counts were not on the coin or RugCheck payload' }),
       classifyCreatedCoins(coins),
       classifyRugHistory(coins, rug),
@@ -541,6 +585,7 @@ function createSafetyChecks(options = {}) {
     report,
     buyBlockReason,
     isOwnLaunch,
+    listOwnLaunches,
     noteOwnLaunch,
     listBlacklist,
     addBlacklist,
@@ -571,6 +616,7 @@ module.exports = {
   classifyAge,
   classifySocials,
   classifyDevHolding,
+  classifyDevAssociated,
   classifyCreatedCoins,
   classifyRugHistory,
   safetyChecks

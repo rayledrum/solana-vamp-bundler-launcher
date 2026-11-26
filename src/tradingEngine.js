@@ -20,6 +20,7 @@ const { emptyBook, applyBuy, applySell, quotePosition, priceFromTrade, knownTrad
 const { pumpPortalFeedEvent } = require('./curveFeed');
 const { curveState, MIGRATION_DESTINATION, ammOut } = require('./bondingCurve');
 const { safetyChecks } = require('./safetyChecks');
+const { DEFAULT_LADDER, freshState, planExit, noteFill } = require('./research/exitLadder');
 const { createVolumeStrategy, readBumpLimits, delayMs } = require('./volumeStrategy');
 
 class TradingEngine {
@@ -51,6 +52,8 @@ class TradingEngine {
     this.seedPromiseMint = null;
     this.portalFetch = fetchSingleVersionedTx;
     this.safetyBlock = (mint) => safetyChecks.buyBlockReason(mint);
+    this.exitLadder = { ...DEFAULT_LADDER, enabled: false };
+    this.exitState = {};
     this.seenTradeSigs = new Set();
     this.pumpPortalNotice = '';
   }
@@ -1013,7 +1016,47 @@ class TradingEngine {
     });
   }
 
-  async executeSell({ pct, walletAddresses = [], mint: mintOverride, fromBumper = false } = {}) {
+  configureExitLadder(input = {}) {
+    if (!walletManager.simulationMode) {
+      throw new ValidationError('Exit ladder is simulation-only and stays off in live mode');
+    }
+    this.exitLadder = {
+      ...DEFAULT_LADDER,
+      ...input,
+      enabled: Boolean(input.enabled)
+    };
+    return this.exitLadder;
+  }
+
+  async reviewExitLadder(mint, quote = {}, now = Date.now()) {
+    if (!walletManager.simulationMode) return { action: 'hold', reason: 'live', sellTokens: 0 };
+    if (!this.exitLadder || !this.exitLadder.enabled) return { action: 'hold', reason: 'disabled', sellTokens: 0 };
+    if (!mint || !safetyChecks.isOwnLaunch(mint)) return { action: 'hold', reason: 'not-own-launch', sellTokens: 0 };
+    const master = walletManager.masterWallet.publicKey.toBase58();
+    const position = this.positions.get(master);
+    const tokens = position ? Number(position.tokens) || 0 : 0;
+    const state = this.exitState[mint] || freshState();
+    this.exitState[mint] = state;
+    const plan = planExit({
+      ladder: this.exitLadder,
+      state,
+      mcapUsd: quote.mcapUsd,
+      liquiditySol: quote.liquiditySol,
+      priceSol: quote.priceSol,
+      positionTokens: tokens,
+      now
+    });
+    if (plan.action !== 'sell') return plan;
+    const result = await this.executeSell({
+      pct: plan.sellPct,
+      walletAddresses: [master],
+      fromLadder: true
+    });
+    if (result && result.success) noteFill(state, plan, now);
+    return { ...plan, result };
+  }
+
+  async executeSell({ pct, walletAddresses = [], mint: mintOverride, fromBumper = false, fromLadder = false } = {}) {
     const mint = mintOverride || this.activeToken;
     const pinned = Boolean(mintOverride);
     if (!mint) throw new ValidationError('No active token is currently selected');
@@ -1165,7 +1208,7 @@ class TradingEngine {
     });
 
     if (!fromBumper) this.reconcileBumpLots(targets, sellPct);
-    if (!fromBumper && sellPct === 100 && this.bumperActiveOn(mint)) {
+    if (!fromBumper && !fromLadder && sellPct === 100 && this.bumperActiveOn(mint)) {
       await this.haltBumper('Stopped: user sold out');
     }
     if (sellPct === 100 && totalSoldTokens <= 0 && failures === 0) {
