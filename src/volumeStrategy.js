@@ -23,19 +23,25 @@ async function sellLot(engine, row, fraction = 1) {
   const bought = Number(row.tokensBought) || 0;
   const position = engine.positions.get(row.address);
   const held = position ? Number(position.tokens) || 0 : 0;
-  if (!(bought > 0) || held <= 0) {
-    row.tokensBought = 0;
+  if (row.inflight || !(bought > 0) || held <= 0) {
+    if (!row.inflight) row.tokensBought = 0;
     return { success: true, totalReceivedSol: 0, skipped: true, results: [] };
   }
   const portion = fraction >= 0.999 ? 1 : Math.min(1, Math.max(0.25, fraction));
   const sellTokens = bought * portion;
   const pct = sellTokens >= held * 0.99 ? 100 : Math.max(0.01, Math.min(100, (sellTokens / held) * 100));
-  const result = await engine.executeSell({
-    pct,
-    walletAddresses: [row.address],
-    fromBumper: true,
-    mint: row.mint || engine.bumpMint || engine.activeToken
-  });
+  row.inflight = true;
+  let result;
+  try {
+    result = await engine.executeSell({
+      pct,
+      walletAddresses: [row.address],
+      fromBumper: true,
+      mint: row.mint || engine.bumpMint || engine.activeToken
+    });
+  } finally {
+    row.inflight = false;
+  }
   if (result && result.success) {
     row.tokensBought = portion >= 0.999 || pct >= 99.5 ? 0 : Math.max(0, bought - sellTokens);
   }

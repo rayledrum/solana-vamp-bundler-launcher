@@ -203,6 +203,121 @@ test('a buy above the per-trade cap is refused before any trade', () => {
   assert.equal(tradingEngine.isBumping, false);
 });
 
+test('manual trades ignore the bump delay and a sell-all preempts open lots', async () => {
+  quiet();
+  const calls = mockTrades();
+  const clock = manualClock();
+  const steps = [];
+  const schedule = (fn, ms) => {
+    steps.push(fn);
+    return clock.schedule(fn, ms);
+  };
+  tradingEngine.executeBuy = async ({ walletAddresses }) => {
+    calls.buys.push({ address: walletAddresses[0] });
+    const position = tradingEngine.positions.get(walletAddresses[0]) || { tokens: 0, solInvested: 0, costKnown: true };
+    position.tokens += 1000;
+    tradingEngine.positions.set(walletAddresses[0], position);
+    return { success: true, totalSpentSol: 0.01, results: [{ address: walletAddresses[0], tokensBought: 1000 }] };
+  };
+  tradingEngine.startVolumeBumper(0.01, {
+    reserveSol: 0,
+    strategy: 'round-trip',
+    minDelaySeconds: 3,
+    maxDelaySeconds: 10,
+    maxCycles: 10,
+    sessionBudget: 0.5,
+    schedule,
+    rng: () => 0
+  });
+  await clock.fire();
+  const first = calls.buys[0].address;
+  const scheduled = steps.length;
+  tradingEngine.executeSell = realSell;
+  const started = Date.now();
+  await tradingEngine.executeSell({ pct: 40, walletAddresses: [first] });
+  assert.ok(Date.now() - started < 500);
+  assert.equal(tradingEngine.isBumping, true);
+  assert.equal(steps.length, scheduled);
+  const lot = tradingEngine.bumpStrategy.open.find(row => row.address === first);
+  assert.ok(lot);
+  assert.ok(lot.tokensBought < 1000);
+  const other = addresses().find(address => address !== first);
+  await tradingEngine.executeSell({ pct: 100, walletAddresses: [other] });
+  assert.equal(tradingEngine.isBumping, false);
+  assert.equal(tradingEngine.bumpLastError, 'Stopped: user sold out');
+  assert.equal(tradingEngine.bumpStrategy.open.length, 0);
+  assert.equal(steps.length, scheduled);
+  await steps[steps.length - 1]();
+  assert.equal(calls.buys.length, 1);
+});
+
+test('stopping while a cycle is in flight sells open lots without waiting on bumpBusy', async () => {
+  quiet();
+  mockTrades();
+  const clock = manualClock();
+  tradingEngine.startVolumeBumper(0.01, {
+    reserveSol: 0,
+    strategy: 'round-trip',
+    minDelaySeconds: 9,
+    maxDelaySeconds: 9,
+    maxCycles: 10,
+    sessionBudget: 0.5,
+    schedule: clock.schedule,
+    rng: () => 0
+  });
+  await clock.fire();
+  assert.equal(tradingEngine.bumpStrategy.open.length, 1);
+  tradingEngine.bumpBusy = true;
+  try {
+    const pending = tradingEngine.stopVolumeBumper();
+    let settled = false;
+    pending.then(() => { settled = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(settled, true);
+    await pending;
+    assert.equal(tradingEngine.isBumping, false);
+    assert.equal(tradingEngine.bumpStrategy.open.length, 0);
+    assert.equal(clock.delays.filter(ms => ms === 9000).length, 2);
+  } finally {
+    tradingEngine.bumpBusy = false;
+  }
+});
+
+test('a buy that finishes after a stop does not arm another delay', async () => {
+  quiet();
+  mockTrades();
+  const clock = manualClock();
+  let release;
+  tradingEngine.executeBuy = async ({ solAmount, walletAddresses }) => {
+    await new Promise(resolve => { release = resolve; });
+    const position = tradingEngine.positions.get(walletAddresses[0]) || { tokens: 0, solInvested: 0, costKnown: true };
+    position.tokens += 1000;
+    tradingEngine.positions.set(walletAddresses[0], position);
+    return { success: true, totalSpentSol: solAmount, results: [{ address: walletAddresses[0], tokensBought: 1000 }] };
+  };
+  tradingEngine.startVolumeBumper(0.01, {
+    reserveSol: 0,
+    strategy: 'round-trip',
+    minDelaySeconds: 8,
+    maxDelaySeconds: 8,
+    maxCycles: 10,
+    sessionBudget: 0.5,
+    schedule: clock.schedule,
+    rng: () => 0
+  });
+  const running = clock.fire();
+  await new Promise(resolve => setImmediate(resolve));
+  const delaysBeforeStop = clock.delays.length;
+  await tradingEngine.stopVolumeBumper();
+  release();
+  await running;
+  assert.equal(clock.delays.length, delaysBeforeStop);
+  assert.equal(tradingEngine.isBumping, false);
+  assert.equal(tradingEngine.bumpStrategy.open.length, 0);
+  const stillHeld = [...tradingEngine.positions.values()].some(position => position.tokens > 0);
+  assert.equal(stillHeld, false);
+});
+
 test('random weighting must buy with no lots and must sell at the open cap', () => {
   assert.equal(chooseBumpSide(0, 4, () => 0.99), 'buy');
   assert.equal(chooseBumpSide(4, 4, () => 0), 'sell');
