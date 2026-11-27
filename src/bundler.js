@@ -13,6 +13,7 @@ const { ValidationError, planBundleChunks, requireLaunchAmounts } = require('./v
 const {
   fetchBundleVersionedTxs,
   fetchSingleVersionedTx,
+  sendAndConfirmVersioned,
   sendBundle,
   pollBundleUntilSettled
 } = require('./portalTx');
@@ -33,16 +34,17 @@ class BundlerService {
     return new PublicKey(choice);
   }
 
-  async preflightCheck({ devSolBuy, subWalletBuys, jitoTipSol }) {
+  async preflightCheck({ devSolBuy, subWalletBuys, jitoTipSol, priorityFeeSol = 0 }) {
     const devInfo = await walletManager.getMasterInfo();
     const subWallets = await walletManager.getSubWalletsInfo();
 
     const issues = [];
-    const neededDevSol = devSolBuy + jitoTipSol + 0.04;
+    const neededDevSol = devSolBuy + jitoTipSol + priorityFeeSol + 0.04;
     if (devInfo.balance == null || !Number.isFinite(Number(devInfo.balance))) {
       issues.push(`Master balance unavailable${devInfo.liveError ? `: ${devInfo.liveError}` : ''}`);
     } else if (devInfo.balance < neededDevSol) {
-      issues.push(`Master Dev wallet has ${devInfo.balance.toFixed(3)} SOL, needs ${neededDevSol.toFixed(3)} SOL (Buy + Rent + Jito Tip)`);
+      const extra = jitoTipSol > 0 ? ' + Jito Tip' : (priorityFeeSol > 0 ? ' + priority fee' : '');
+      issues.push(`Master Dev wallet has ${devInfo.balance.toFixed(3)} SOL, needs ${neededDevSol.toFixed(3)} SOL (Buy + Rent${extra})`);
     }
 
     let totalSubSol = 0;
@@ -76,7 +78,7 @@ class BundlerService {
     };
   }
 
-  tradeBody({ publicKey, action, mint, amount, metadata }) {
+  tradeBody({ publicKey, action, mint, amount, metadata, priorityFee }) {
     const body = {
       publicKey,
       action,
@@ -84,7 +86,7 @@ class BundlerService {
       denominatedInSol: 'true',
       amount,
       slippage: config.SLIPPAGE_PCT,
-      priorityFee: config.PRIORITY_FEE_SOL,
+      priorityFee: priorityFee != null ? priorityFee : config.PRIORITY_FEE_SOL,
       pool: 'pump'
     };
     if (action === 'create') body.tokenMetadata = metadata;
@@ -231,6 +233,139 @@ class BundlerService {
     return descs;
   }
 
+  async launchStandard({
+    tokenName,
+    tokenSymbol,
+    tokenDescription,
+    tokenMetadataUri,
+    devSolBuy = 0.05,
+    subWalletBuys = [],
+    priorityFeeSol = config.PRIORITY_FEE_SOL,
+    subWalletDelaySec = 0
+  }) {
+    const amounts = requireLaunchAmounts({
+      devSolBuy,
+      subWalletBuys,
+      mode: 'standard',
+      priorityFeeSol
+    });
+    devSolBuy = amounts.devSolBuy;
+    subWalletBuys = amounts.subWalletBuys;
+    priorityFeeSol = amounts.priorityFeeSol;
+    const check = await this.preflightCheck({
+      devSolBuy,
+      subWalletBuys,
+      jitoTipSol: 0,
+      priorityFeeSol
+    });
+    if (!check.passed) {
+      const error = new ValidationError(`Preflight failed: ${check.issues.join('; ')}`);
+      error.issues = check.issues;
+      throw error;
+    }
+    const isSim = walletManager.simulationMode;
+    if (!isSim) assertLiveTrading();
+    const mintKeypair = Keypair.generate();
+    const mintAddress = mintKeypair.publicKey.toBase58();
+    const delaySec = Math.max(0, Math.min(10, parseFloat(subWalletDelaySec || '0') || 0));
+    console.log(`[Bundler] Standard launch (no bundle) for ${tokenSymbol} (${mintAddress}). Priority fee: ${priorityFeeSol} SOL. Sub-wallet buys are not atomic and can be sniped.`);
+    const devInfo = await walletManager.getMasterInfo();
+    let currentCurveSol = 0;
+    const devTokens = Math.floor(pumpfun.calculateBuyOutput(devSolBuy, currentCurveSol));
+    currentCurveSol += devSolBuy;
+    const subWalletAllocations = [];
+    subWalletBuys.forEach((buySol, idx) => {
+      if (!(buySol > 0)) return;
+      const tokens = Math.floor(pumpfun.calculateBuyOutput(buySol, currentCurveSol));
+      currentCurveSol += buySol;
+      subWalletAllocations.push({
+        walletIndex: idx + 1,
+        solSpent: buySol,
+        tokensBought: tokens,
+        landed: true,
+        atomic: false,
+        note: 'Not atomic. This buy is snipeable.'
+      });
+    });
+    if (isSim) {
+      const devAddr = devInfo.address;
+      walletManager.simulatedBalances.set(devAddr, Math.max(0, devInfo.balance - devSolBuy - priorityFeeSol - 0.02));
+      subWalletBuys.forEach((buySol, idx) => {
+        const wallet = walletManager.subWallets[idx];
+        if (!wallet || !(buySol > 0)) return;
+        const addr = wallet.publicKey.toBase58();
+        const prev = walletManager.simulatedBalances.get(addr) || 0;
+        walletManager.simulatedBalances.set(addr, Math.max(0, prev - buySol));
+      });
+      walletManager.save();
+      return {
+        success: true,
+        simulation: true,
+        mode: 'standard',
+        atomic: false,
+        jitoTipSol: 0,
+        priorityFeeSol,
+        signature: `sim_create_${mintAddress.slice(0, 8)}`,
+        mint: mintAddress,
+        devBuy: { sol: devSolBuy, tokens: devTokens },
+        subWallets: subWalletAllocations,
+        subWalletDelaySec: delaySec,
+        totalTokensSniped: devTokens + subWalletAllocations.reduce((sum, row) => sum + row.tokensBought, 0),
+        curveSol: Number(currentCurveSol.toFixed(4)),
+        bondingProgressPct: pumpfun.calculateProgress(currentCurveSol),
+        tokenDescription: tokenDescription || '',
+        note: 'Simulated standard launch. No Jito bundle and no transaction was sent. Sub-wallet buys are not atomic.'
+      };
+    }
+    const metadata = { name: tokenName, symbol: tokenSymbol, uri: tokenMetadataUri || '' };
+    const createBody = this.tradeBody({
+      publicKey: walletManager.masterWallet.publicKey.toBase58(),
+      action: 'create',
+      mint: mintAddress,
+      amount: devSolBuy,
+      metadata,
+      priorityFee: priorityFeeSol
+    });
+    const createTx = await fetchSingleVersionedTx(createBody);
+    createTx.sign([mintKeypair, walletManager.masterWallet]);
+    const signature = await sendAndConfirmVersioned(this.connection, createTx);
+    const subResults = [];
+    for (let i = 0; i < subWalletBuys.length; i++) {
+      const buyAmount = subWalletBuys[i];
+      if (!(buyAmount > 0)) continue;
+      const buyer = walletManager.subWallets[i];
+      if (!buyer) continue;
+      if (delaySec > 0 && subResults.length === 0) {
+        await new Promise(resolve => setTimeout(resolve, delaySec * 1000));
+      }
+      const buyTx = await fetchSingleVersionedTx(this.tradeBody({
+        publicKey: buyer.publicKey.toBase58(),
+        action: 'buy',
+        mint: mintAddress,
+        amount: buyAmount,
+        priorityFee: priorityFeeSol
+      }));
+      buyTx.sign([buyer]);
+      const buySig = await sendAndConfirmVersioned(this.connection, buyTx);
+      const planned = subWalletAllocations.find(row => row.walletIndex === i + 1);
+      subResults.push({ ...(planned || { walletIndex: i + 1, solSpent: buyAmount }), signature: buySig, atomic: false, note: 'Not atomic. This buy is snipeable.' });
+    }
+    return {
+      success: true,
+      simulation: false,
+      mode: 'standard',
+      atomic: false,
+      jitoTipSol: 0,
+      priorityFeeSol,
+      signature,
+      mint: mintAddress,
+      devBuy: { sol: devSolBuy, tokens: devTokens, estimated: true },
+      subWallets: subResults,
+      subWalletDelaySec: delaySec,
+      note: 'Standard launch. Create and dev buy were one transaction. Sub-wallet buys were separate and can be sniped.'
+    };
+  }
+
   async launchBundle({
     tokenName,
     tokenSymbol,
@@ -259,6 +394,7 @@ class BundlerService {
     const mintAddress = mintKeypair.publicKey.toBase58();
     const delaySec = Math.max(0, Math.min(10, parseFloat(subWalletDelaySec || '0') || 0));
 
+    console.log(`Jito tip: ${jitoTipSol} SOL`);
     console.log(`[Bundler] Preparing launch bundle for ${tokenSymbol} (${mintAddress}) | subWalletDelay: ${delaySec}s...`);
 
     if (isSim) {

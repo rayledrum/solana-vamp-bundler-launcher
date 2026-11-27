@@ -68,6 +68,28 @@ class VampScanner {
     return tokens;
   }
 
+  filterByMinMcap(tokens, { minMcap = 0, showUnknown = false } = {}) {
+    const floor = Number(minMcap);
+    const min = Number.isFinite(floor) && floor > 0 ? floor : 0;
+    if (!(min > 0)) return { tokens: tokens || [], hidden: 0, unknown: 0 };
+    const kept = [];
+    let hidden = 0;
+    let unknown = 0;
+    for (const token of tokens || []) {
+      const mcap = finiteOrNull(token && token.metrics && token.metrics.mcap);
+      if (mcap == null) {
+        unknown += 1;
+        if (showUnknown) kept.push({ ...token, mcapUnknown: true });
+        else hidden += 1;
+      } else if (mcap < min) {
+        hidden += 1;
+      } else {
+        kept.push(token);
+      }
+    }
+    return { tokens: kept, hidden, unknown };
+  }
+
   mergeTrendingTokens(pumpTokens, dexTokens, limit) {
     const seen = new Set();
     const merged = [];
@@ -86,7 +108,10 @@ class VampScanner {
   }
 
   // Fetch trending tokens from Pump.fun (via GeckoTerminal) and DexScreener
-  async getTrendingSolanaTokens(limit = 15) {
+  async getTrendingSolanaTokens(limit = 15, options = {}) {
+    const minMcap = Number(options && options.minMcap);
+    const floor = Number.isFinite(minMcap) && minMcap > 0 ? minMcap : 0;
+    const scan = floor > 0 ? Math.max(Number(limit) || 15, 50) : limit;
     let dexTokens = [];
     let pumpTokens = [];
     try {
@@ -97,7 +122,7 @@ class VampScanner {
 
       const solanaTokens = (res.data || [])
         .filter(item => item.chainId === 'solana')
-        .slice(0, limit);
+        .slice(0, scan);
 
       // Enhance with detailed pair metrics & socials
       const results = [];
@@ -153,12 +178,18 @@ class VampScanner {
     }
 
     try {
-      pumpTokens = await this.getPumpFunMovers(limit);
+      pumpTokens = await this.getPumpFunMovers(scan);
     } catch (err) {
       console.warn('[VampScanner] Failed to fetch Pump.fun movers:', err.message);
     }
 
-    return this.mergeTrendingTokens(pumpTokens, dexTokens, limit);
+    const merged = this.mergeTrendingTokens(pumpTokens, dexTokens, scan);
+    if (!(floor > 0)) return merged;
+    const filtered = this.filterByMinMcap(merged, { minMcap: floor, showUnknown: Boolean(options.showUnknown) });
+    const list = filtered.tokens.slice(0, limit);
+    list.hidden = filtered.hidden;
+    list.unknown = filtered.unknown;
+    return list;
   }
 
   // Inspect any token by CA or Pump.fun URL for direct Vamp Cloning

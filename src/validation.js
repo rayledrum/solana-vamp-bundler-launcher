@@ -95,17 +95,21 @@ function optionalNonNegative(value, name, max) {
   return parsed;
 }
 
-function requireLaunchAmounts({ devSolBuy, subWalletBuys, jitoTipSol }) {
+function requireLaunchAmounts({ devSolBuy, subWalletBuys, jitoTipSol, mode, priorityFeeSol }) {
   const dev = requireSolTradeAmount(devSolBuy);
   if (!Array.isArray(subWalletBuys)) throw new ValidationError('subWalletBuys must be an array');
   if (subWalletBuys.length > 24) throw new ValidationError('At most 24 sub-wallet buys are allowed');
   const subs = subWalletBuys.map((amount, index) => optionalNonNegative(amount, `Sub-wallet buy #${index + 1}`, config.MAX_SOL_PER_TRADE));
-  const tip = requireJitoTip(jitoTipSol, { optional: jitoTipSol === undefined });
+  const standard = mode === 'standard';
+  const tip = standard ? 0 : requireJitoTip(jitoTipSol, { optional: jitoTipSol === undefined });
+  const priority = standard
+    ? requirePriorityFee(priorityFeeSol === undefined ? config.PRIORITY_FEE_SOL : priorityFeeSol)
+    : config.PRIORITY_FEE_SOL;
   const traded = dev + subs.reduce((sum, amount) => sum + amount, 0);
   if (traded > config.MAX_SOL_PER_SESSION) {
     throw new ValidationError(`Launch spend ${traded} SOL exceeds the session cap of ${config.MAX_SOL_PER_SESSION} SOL`);
   }
-  return { devSolBuy: dev, subWalletBuys: subs, jitoTipSol: tip, tradedSol: traded };
+  return { devSolBuy: dev, subWalletBuys: subs, jitoTipSol: tip, priorityFeeSol: priority, tradedSol: traded, mode: standard ? 'standard' : 'bundle' };
 }
 
 function requireSlippage(value) {

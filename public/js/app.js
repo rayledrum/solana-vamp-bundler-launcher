@@ -10,6 +10,10 @@ const state = {
   masterWallet: null,
   subWallets: [],
   selectedJitoTip: 0.005,
+  maxJitoTipSol: 0.01,
+  launchMode: 'bundle',
+  vampMinMcap: 0,
+  vampShowUnknown: false,
   activeToken: null,
   chartToken: null,
   chartEpoch: 0,
@@ -110,6 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshResearch();
   loadMasterWallet();
   loadSubWallets();
+  restoreLaunchPrefs();
   loadTrendingVampTokens();
   loadLiveStats();
 
@@ -1265,6 +1270,7 @@ async function loadStatus() {
     if (data.currentSlot) {
       document.getElementById('slotDisplay').innerText = `Slot: ${data.currentSlot.toLocaleString()}`;
     }
+    if (data.limits && Number(data.limits.maxJitoTipSol) > 0) state.maxJitoTipSol = Number(data.limits.maxJitoTipSol);
     if (data.rpc) paintRpcStatus(data.rpc);
     const rpcRes = await apiFetch('/api/rpc/status');
     if (rpcRes.ok) paintRpcStatus(await rpcRes.json());
@@ -2264,11 +2270,98 @@ async function setTrackedTokenFromNav() {
 
 // ==================== LAUNCHPAD & BUNDLER LOGIC ====================
 
+function restoreLaunchPrefs() {
+  const storedTip = Number(localStorage.getItem('selectedJitoTip'));
+  if (storedTip > 0) state.selectedJitoTip = storedTip;
+  const storedMode = localStorage.getItem('launchMode');
+  if (storedMode === 'standard' || storedMode === 'bundle') state.launchMode = storedMode;
+  const storedMin = Number(localStorage.getItem('vampMinMcap'));
+  if (Number.isFinite(storedMin) && storedMin >= 0) state.vampMinMcap = storedMin;
+  state.vampShowUnknown = localStorage.getItem('vampShowUnknownMcap') === '1';
+  const minInput = document.getElementById('vampMinMcap');
+  if (minInput) minInput.value = String(state.vampMinMcap);
+  const unknownBox = document.getElementById('vampShowUnknown');
+  if (unknownBox) unknownBox.checked = state.vampShowUnknown;
+  paintJitoTips();
+  paintLaunchMode();
+}
+
+function paintJitoTips() {
+  const tip = Number(state.selectedJitoTip);
+  const presets = [0.002, 0.005, 0.01];
+  const labels = { 0.002: 'Fast', 0.005: 'Turbo', 0.01: 'Ultra' };
+  presets.forEach(value => {
+    const btn = document.getElementById(`tipBtn-${value}`);
+    const label = document.getElementById(`tipLabel-${value}`);
+    if (!btn) return;
+    const selected = Math.abs(tip - value) < 1e-9;
+    btn.style.border = selected ? '1px solid #00d4ff' : '1px solid #1a2338';
+    btn.style.background = selected ? 'rgba(0,212,255,0.14)' : '#090d17';
+    btn.style.color = selected ? '#a0e8ff' : '#cfd8dc';
+    if (label) {
+      label.textContent = selected ? `${labels[value]} ✓` : labels[value];
+      label.style.color = selected ? '#00d4ff' : '#78909c';
+      label.style.fontWeight = selected ? '800' : '600';
+    }
+  });
+  const custom = document.getElementById('customJitoTip');
+  if (custom && document.activeElement !== custom) custom.value = String(tip);
+}
+
 function setJitoTip(amount) {
-  state.selectedJitoTip = amount;
-  document.querySelectorAll('.tip-btn').forEach(btn => btn.classList.remove('active', 'border-cyan-500', 'bg-cyan-950/40'));
-  const activeBtn = document.getElementById(`tipBtn-${amount}`);
-  if (activeBtn) activeBtn.classList.add('active', 'border-cyan-500', 'bg-cyan-950/40');
+  const max = Number(state.maxJitoTipSol) > 0 ? Number(state.maxJitoTipSol) : 0.01;
+  const tip = Number(typeof amount === 'string' ? amount.trim() : amount);
+  if (!Number.isFinite(tip) || tip <= 0) {
+    showToast('Enter a Jito tip greater than 0', 'warning');
+    return;
+  }
+  state.selectedJitoTip = Math.min(tip, max);
+  if (tip > max) showToast(`Tip clamped to ${max} SOL`, 'warning');
+  try { localStorage.setItem('selectedJitoTip', String(state.selectedJitoTip)); } catch (err) { /* storage can be blocked */ }
+  paintJitoTips();
+}
+
+function applyCustomJitoTip() {
+  const input = document.getElementById('customJitoTip');
+  setJitoTip(input ? input.value : '');
+}
+
+function paintLaunchMode() {
+  const bundle = document.getElementById('launchModeBundle');
+  const standard = document.getElementById('launchModeStandard');
+  const tips = document.getElementById('jitoTipBlock');
+  const fee = document.getElementById('priorityFeeBlock');
+  const launch = document.getElementById('launchButtonLabel');
+  const selected = state.launchMode === 'standard';
+  [bundle, standard].forEach(btn => {
+    if (!btn) return;
+    const on = (btn.id === 'launchModeStandard') === selected;
+    btn.style.border = on ? '1px solid #00d4ff' : '1px solid #1a2338';
+    btn.style.background = on ? 'rgba(0,212,255,0.14)' : '#090d17';
+    btn.style.color = on ? '#a0e8ff' : '#cfd8dc';
+  });
+  if (tips) tips.style.display = selected ? 'none' : 'block';
+  if (fee) fee.style.display = selected ? 'block' : 'none';
+  if (launch) launch.textContent = selected ? 'LAUNCH STANDARD (NO BUNDLE)' : 'LAUNCH ATOMIC JITO BUNDLE (SLOT 0)';
+}
+
+function setLaunchMode(mode) {
+  state.launchMode = mode === 'standard' ? 'standard' : 'bundle';
+  try { localStorage.setItem('launchMode', state.launchMode); } catch (err) { /* storage can be blocked */ }
+  paintLaunchMode();
+}
+
+function saveVampMinMcap() {
+  const input = document.getElementById('vampMinMcap');
+  const box = document.getElementById('vampShowUnknown');
+  const value = Number(input && input.value);
+  state.vampMinMcap = Number.isFinite(value) && value > 0 ? value : 0;
+  state.vampShowUnknown = Boolean(box && box.checked);
+  try {
+    localStorage.setItem('vampMinMcap', String(state.vampMinMcap));
+    localStorage.setItem('vampShowUnknownMcap', state.vampShowUnknown ? '1' : '0');
+  } catch (err) { /* storage can be blocked */ }
+  loadTrendingVampTokens();
 }
 
 function quickFillSubBuys(amount) {
@@ -2335,7 +2428,9 @@ async function runPreflightCheck() {
       body: JSON.stringify({
         devSolBuy,
         subWalletBuys,
-        jitoTipSol: state.selectedJitoTip
+        jitoTipSol: Number(state.selectedJitoTip),
+        launchMode: state.launchMode,
+        priorityFeeSol: Number(document.getElementById('launchPriorityFee')?.value || '0')
       })
     });
 
@@ -2401,7 +2496,9 @@ async function executeLaunchBundle() {
         tokenMetadataUri: metadataUri,
         devSolBuy,
         subWalletBuys,
-        jitoTipSol: state.selectedJitoTip,
+        jitoTipSol: Number(state.selectedJitoTip),
+        launchMode: state.launchMode,
+        priorityFeeSol: Number(document.getElementById('launchPriorityFee')?.value || '0'),
         subWalletDelaySec: state.subWalletDelaySec || parseFloat(document.getElementById('subWalletBuyDelayInput')?.value || '0')
       })
     });
@@ -2793,7 +2890,8 @@ function fillTrendingCard(card, token) {
 
   const stats = document.createElement('div');
   stats.className = 'text-[9px] font-mono bg-[#090d16] p-1.5 rounded border border-[#192235]';
-  stats.textContent = 'MCap $' + Number(metrics.mcap || 0).toLocaleString() + '   24h $' + Number(metrics.volume24h || 0).toLocaleString();
+  const mcapText = token.mcapUnknown || metrics.mcap == null ? 'MCap unknown' : ('MCap $' + Number(metrics.mcap).toLocaleString());
+  stats.textContent = mcapText + '   24h $' + Number(metrics.volume24h || 0).toLocaleString();
 
   const links = document.createElement('div');
   links.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
@@ -2826,9 +2924,15 @@ async function loadTrendingVampTokens() {
   }
 
   try {
-    const res = await apiFetch('/api/vamp/trending');
+    const params = new URLSearchParams();
+    if (Number(state.vampMinMcap) > 0) params.set('minMcap', String(state.vampMinMcap));
+    if (state.vampShowUnknown) params.set('showUnknown', '1');
+    const query = params.toString();
+    const res = await apiFetch(`/api/vamp/trending${query ? `?${query}` : ''}`);
     const data = await res.json();
     state.trendingTokens = data.tokens || [];
+    const hiddenEl = document.getElementById('vampHiddenCount');
+    if (hiddenEl) hiddenEl.textContent = Number(data.hidden) > 0 ? `${data.hidden} hidden below $${Number(state.vampMinMcap).toLocaleString()}` : '';
 
     // Render Top Movers on Dashboard
     renderTopMovers(state.trendingTokens);
@@ -2846,6 +2950,7 @@ async function loadTrendingVampTokens() {
         const socialCount = [twitter, telegram, website].filter(Boolean).length;
 
         fillTrendingCard(card, t);
+        if (t.mcapUnknown) card.style.opacity = '0.55';
         container.appendChild(card);
       });
     }
