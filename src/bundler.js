@@ -6,6 +6,7 @@ const {
   LAMPORTS_PER_SOL
 } = require('@solana/web3.js');
 const config = require('./config');
+const { assertLiveTrading } = require('./rpc');
 const pumpfun = require('./pumpfun');
 const walletManager = require('./walletManager');
 const { ValidationError, planBundleChunks, requireLaunchAmounts } = require('./validation');
@@ -253,6 +254,7 @@ class BundlerService {
     }
 
     const isSim = walletManager.simulationMode;
+    if (!isSim) assertLiveTrading();
     const mintKeypair = Keypair.generate();
     const mintAddress = mintKeypair.publicKey.toBase58();
     const delaySec = Math.max(0, Math.min(10, parseFloat(subWalletDelaySec || '0') || 0));

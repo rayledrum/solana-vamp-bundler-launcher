@@ -1,10 +1,10 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
-const { Connection } = require('@solana/web3.js');
 const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const config = require('./config');
+const { rpc, startupLine, liveTradingPaused, LIVE_TRADING_PAUSED } = require('./rpc');
 const walletManager = require('./walletManager');
 const bundler = require('./bundler');
 const vampScanner = require('./vampScanner');
@@ -239,18 +239,45 @@ setInterval(async () => {
     } catch (err) {
       slot = null;
     }
+    const current = rpc.status();
     broadcast({
       type: 'HEARTBEAT',
       payload: {
         slot,
         timestamp: Date.now(),
-        simulation: walletManager.simulationMode
+        simulation: walletManager.simulationMode,
+        rpc: {
+          active: current.active,
+          paused: liveTradingPaused(current),
+          providers: current.providers.map(row => ({ name: row.name, healthy: row.healthy }))
+        }
       }
     });
   } catch (err) {
     console.warn('[Heartbeat]', err.message);
   }
 }, 3000);
+
+function refusePublicRpcLive(res) {
+  if (walletManager.simulationMode || !liveTradingPaused()) return false;
+  res.status(400).json({ success: false, error: LIVE_TRADING_PAUSED });
+  return true;
+}
+
+app.get('/api/rpc/status', (req, res) => {
+  const current = rpc.status();
+  res.json({
+    success: true,
+    active: current.active,
+    paused: liveTradingPaused(current),
+    providers: current.providers.map(row => ({
+      name: row.name,
+      configured: row.configured,
+      healthy: row.healthy,
+      cooldownMs: row.cooldownMs
+    }))
+  });
+});
 
 app.get('/api/status', async (req, res) => {
   try {
@@ -269,6 +296,8 @@ app.get('/api/status', async (req, res) => {
       rpcHealthy,
       currentSlot: slot,
       heliusConfigured: config.HELIUS_CONFIGURED,
+      quicknodeConfigured: config.QUICKNODE_CONFIGURED,
+      rpc: rpc.status(),
       jitoEndpoints: config.JITO_ENDPOINTS,
       defaultTip: config.DEFAULT_JITO_TIP,
       limits: {
@@ -296,6 +325,7 @@ app.post('/api/settings/simulation', (req, res) => {
       enabled,
       confirm,
       heliusConfigured: config.HELIUS_CONFIGURED,
+      quicknodeConfigured: config.QUICKNODE_CONFIGURED,
       hasWallets: Boolean(walletManager.masterWallet)
     });
     walletManager.setSimulationMode(next.simulationMode);
@@ -470,6 +500,7 @@ app.post('/api/launch/preflight', async (req, res) => {
 });
 
 app.post('/api/launch/execute', withMutationLock(async (req, res) => {
+  if (refusePublicRpcLive(res)) return;
   const body = req.body || {};
   const { tokenName, tokenSymbol, tokenDescription, tokenMetadataUri } = body;
   if (!tokenName || !tokenSymbol) {
@@ -778,6 +809,7 @@ app.post('/api/trading/track', (req, res) => {
 });
 
 app.post('/api/trading/buy', withMutationLock(async (req, res) => {
+  if (refusePublicRpcLive(res)) return;
   const solAmount = requireSolTradeAmount(req.body && req.body.solAmount);
   const walletAddresses = Array.isArray(req.body && req.body.walletAddresses)
     ? req.body.walletAddresses.map(address => requirePublicKey(address, 'Wallet'))
@@ -787,6 +819,7 @@ app.post('/api/trading/buy', withMutationLock(async (req, res) => {
 }));
 
 app.post('/api/trading/sell', withMutationLock(async (req, res) => {
+  if (refusePublicRpcLive(res)) return;
   const pct = requireSellPct(req.body && req.body.pct);
   const walletAddresses = Array.isArray(req.body && req.body.walletAddresses)
     ? req.body.walletAddresses.map(address => requirePublicKey(address, 'Wallet'))
@@ -796,6 +829,7 @@ app.post('/api/trading/sell', withMutationLock(async (req, res) => {
 }));
 
 app.post('/api/trading/cascade-sell', withMutationLock(async (req, res) => {
+  if (refusePublicRpcLive(res)) return;
   const delayMs = req.body && req.body.delayMs !== undefined ? Number(req.body.delayMs) : 1000;
   const pct = requireSellPct(req.body && req.body.pct !== undefined ? req.body.pct : 100);
   const result = await tradingEngine.executeCascadeSell(delayMs, pct);
@@ -803,9 +837,7 @@ app.post('/api/trading/cascade-sell', withMutationLock(async (req, res) => {
 }));
 
 function slotConnection() {
-  if (!walletManager.simulationMode && config.HELIUS_CONFIGURED) return walletManager.connection;
-  if (!slotConnection.publicRpc) slotConnection.publicRpc = new Connection(config.SOLANA_PUBLIC_RPC_URL, 'confirmed');
-  return slotConnection.publicRpc;
+  return rpc.connection;
 }
 
 app.get('/api/trading/bumper/status', (req, res) => {
@@ -820,6 +852,7 @@ app.get('/api/trading/bumper/status', (req, res) => {
 
 app.post('/api/trading/bumper/start', (req, res) => {
   try {
+    if (refusePublicRpcLive(res)) return;
     if (tradingEngine.isBumping) {
       const stats = tradingEngine.bumpSnapshot();
       return res.json({
@@ -858,7 +891,7 @@ server.listen(PORT, config.HOST, () => {
   console.log('=======================================================');
   console.log('SOLANA VAMP LAUNCHER & BUNDLER DESK');
   console.log(`URL: http://${config.HOST}:${PORT}`);
-  console.log(`Helius RPC: ${config.HELIUS_CONFIGURED ? 'configured from .env' : 'not configured'}`);
+  console.log(startupLine());
   const ignored = ignoredModeMessage();
   if (ignored) console.log(ignored);
   console.log('Mode: SIMULATION (live mode is the dashboard switch and is not saved)');

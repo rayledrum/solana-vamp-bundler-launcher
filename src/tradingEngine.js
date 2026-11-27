@@ -1,6 +1,7 @@
 const walletManager = require('./walletManager');
 const pumpfun = require('./pumpfun');
 const config = require('./config');
+const { assertLiveTrading } = require('./rpc');
 const {
   readOwnerTokenBalance,
   solSpentFromMeta,
@@ -879,6 +880,7 @@ class TradingEngine {
       if (blocked) throw new ValidationError(blocked);
     }
     const isSim = walletManager.simulationMode;
+    if (!isSim) assertLiveTrading();
     if (isSim && typeof this.entryGate === 'function') {
       const gated = applyEntryGate(true, await this.entryGate(mint), amountPerWallet);
       if (gated.action === 'skip') {
@@ -1178,6 +1180,7 @@ class TradingEngine {
     const sellPct = requireSellPct(pct);
     const fraction = sellPct / 100;
     const isSim = walletManager.simulationMode;
+    if (!isSim) assertLiveTrading();
     const targets = this.knownTargets(walletAddresses);
 
     const results = [];
@@ -1350,6 +1353,7 @@ class TradingEngine {
   }
 
   async executeCascadeSell(delayMs = 1200, pct = 100) {
+    if (!walletManager.simulationMode) assertLiveTrading();
     const mint = this.activeToken;
     if (this.bumperActiveOn(mint)) await this.haltBumper('Stopped: user sold out');
     if (!mint) throw new ValidationError('No active token is currently selected');
@@ -1657,6 +1661,7 @@ class TradingEngine {
   }
 
   startVolumeBumper(solAmount, options = {}) {
+    if (!walletManager.simulationMode) assertLiveTrading();
     if (this.isBumping) return this.bumpSnapshot();
     const amount = requireSolTradeAmount(solAmount);
     const limits = readBumpLimits(options, amount);

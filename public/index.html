@@ -172,7 +172,8 @@
           </div>
           <div style="width:1px;height:28px;background:#1a2338;"></div>
           <div class="kpi-chip">
-            <span class="kpi-label">Helius Slot</span>
+            <span class="kpi-label">RPC</span>
+            <span id="rpcStatusDisplay" class="kpi-value" style="color:#94a3b8;font-size:11px;">—</span>
             <span id="slotDisplay" class="kpi-value" style="color:#cfd8dc;">---</span>
           </div>
         </div>
@@ -226,6 +227,9 @@
     </header>
 
     <!-- Simulation Banner -->
+    <div id="publicRpcBanner" style="display:none;margin:0;padding:8px 14px;background:rgba(240,76,94,0.16);border-bottom:1px solid rgba(240,76,94,0.55);color:#fecdd3;font-size:12px;font-weight:700;">
+      Live trading paused: only public RPC available. Charts, balances, and the safety panel still work. Buys, sells, launches, and the volume bot resume when Helius or QuickNode is healthy.
+    </div>
     <div id="simBanner" class="sim-banner">
       <i data-lucide="shield-check" style="width:12px;height:12px;"></i>
       <span><strong style="color:#00d4ff;">Simulation Sandbox:</strong> Balances &amp; bundles are simulated with real Helius data — no real SOL at risk. Switch to LIVE anytime.</span>
