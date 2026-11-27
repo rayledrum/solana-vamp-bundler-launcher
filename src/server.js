@@ -887,13 +887,21 @@ app.post('/api/trading/bumper/stop', async (req, res) => {
 });
 
 const PORT = config.PORT;
-server.listen(PORT, config.HOST, () => {
-  console.log('=======================================================');
-  console.log('SOLANA VAMP LAUNCHER & BUNDLER DESK');
-  console.log(`URL: http://${config.HOST}:${PORT}`);
-  console.log(startupLine());
-  const ignored = ignoredModeMessage();
-  if (ignored) console.log(ignored);
-  console.log('Mode: SIMULATION (live mode is the dashboard switch and is not saved)');
-  console.log('=======================================================');
-});
+async function startServer() {
+  try {
+    await rpc.probe({ timeoutMs: 2500 });
+  } catch (err) {
+    console.warn('[rpc] startup probe failed');
+  }
+  server.listen(PORT, config.HOST, () => {
+    console.log('=======================================================');
+    console.log('SOLANA VAMP LAUNCHER & BUNDLER DESK');
+    console.log(`URL: http://${config.HOST}:${PORT}`);
+    console.log(startupLine());
+    const ignored = ignoredModeMessage();
+    if (ignored) console.log(ignored);
+    console.log('Mode: SIMULATION (live mode is the dashboard switch and is not saved)');
+    console.log('=======================================================');
+  });
+}
+startServer();

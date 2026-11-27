@@ -5,7 +5,7 @@ const bs58 = bs58Raw.default || bs58Raw;
 const config = require('./config');
 
 const READ_COOLDOWN_MS = 5 * 60 * 1000;
-const CREDIT_COOLDOWN_MS = 60 * 60 * 1000;
+const CREDIT_COOLDOWN_MS = 30 * 60 * 1000;
 const LIVE_TRADING_PAUSED = 'Live trading paused: only public RPC available';
 
 function redactUrl(url) {
@@ -25,16 +25,31 @@ function redactText(text) {
 
 function classifyRpcError(err) {
   if (!err) return null;
-  const msg = String(err.message || err).toLowerCase();
-  const code = err.code || err.errno || err.statusCode || err.status;
+  const nested = err.error && typeof err.error === 'object' ? err.error : null;
+  const msg = `${err.message || err} ${nested && nested.message || ''}`.toLowerCase();
+  const code = err.code || err.errno || err.statusCode || err.status || (nested && nested.code);
   if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'EAI_AGAIN' || code === 'ENOTFOUND' || code === 'EPIPE' || code === 'UND_ERR_CONNECT_TIMEOUT') {
     return 'transport';
   }
   if (/econnreset|econnrefused|etimedout|socket hang up|network error|fetch failed|timed out|timeout|aborted/.test(msg)) return 'transport';
-  if (/max usage|credit|exhausted|insufficient credits|api key/.test(msg)) return 'credit';
+  if (/max usage reached|max usage|credit|exhausted|insufficient credits/.test(msg)) return 'credit';
   if (code === 401 || code === 403 || /\b401\b|\b403\b|unauthorized|forbidden/.test(msg)) return 'credit';
-  if (code === 429 || /\b429\b|too many requests|rate limit/.test(msg)) return 'rate';
+  if (code === 429 || code === -32429 || code === '-32429' || /\b429\b|-32429|too many requests|rate limit/.test(msg)) return 'rate';
   return null;
+}
+
+function connectionOptions(provider) {
+  return {
+    commitment: 'confirmed',
+    disableRetryOnRateLimit: true,
+    wsEndpoint: provider && provider.wsUrl ? provider.wsUrl : undefined
+  };
+}
+
+function failoverLabel(kind) {
+  if (kind === 'credit') return 'credit exhausted';
+  if (kind === 'rate') return 'rate limited';
+  return 'unreachable';
 }
 
 function signatureOf(raw) {
@@ -87,10 +102,8 @@ function createRpcPool(options = {}) {
     unhealthyUntil: 0,
     lastKind: null
   }));
-  const connect = options.connect || ((provider) => new Connection(provider.httpUrl, {
-    commitment: 'confirmed',
-    wsEndpoint: provider.wsUrl || undefined
-  }));
+  const log = options.log || (line => console.log(line));
+  const connect = options.connect || ((provider) => new Connection(provider.httpUrl, connectionOptions(provider)));
   const connections = new Map();
   const watched = new Set();
   const socketFailures = new Map();
@@ -117,11 +130,17 @@ function createRpcPool(options = {}) {
   }
 
   function markUnhealthy(name, kind) {
+    const before = pick();
     const provider = providers.find(row => row.name === name);
     if (!provider) return null;
     const wait = kind === 'credit' ? creditCooldownMs : cooldownMs;
     provider.unhealthyUntil = now() + wait;
     provider.lastKind = kind || 'rate';
+    const after = pick();
+    if (before && after && before.name !== after.name) {
+      log(`RPC failover: ${before.name} -> ${after.name} (${failoverLabel(kind)})`);
+      resubscribe();
+    }
     return provider;
   }
 
@@ -208,7 +227,34 @@ function createRpcPool(options = {}) {
     if (count < 2) return;
     socketFailures.set(name, 0);
     markUnhealthy(name, 'transport');
-    resubscribe();
+  }
+
+  async function probe(probeOptions = {}) {
+    const timeoutMs = probeOptions.timeoutMs == null ? 2500 : probeOptions.timeoutMs;
+    const method = probeOptions.method || 'getSlot';
+    const args = method === 'getHealth' ? [] : ['processed'];
+    for (const provider of providers) {
+      if (!healthy(provider)) continue;
+      let timer;
+      try {
+        await Promise.race([
+          invoke(provider, method, args),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              const err = new Error('timeout');
+              err.code = 'ETIMEDOUT';
+              reject(err);
+            }, timeoutMs);
+          })
+        ]);
+        clearTimeout(timer);
+        return provider;
+      } catch (err) {
+        clearTimeout(timer);
+        markUnhealthy(provider.name, classifyRpcError(err) || 'transport');
+      }
+    }
+    return pick();
   }
 
   function resubscribe() {
@@ -282,6 +328,7 @@ function createRpcPool(options = {}) {
     markUnhealthy,
     status,
     noteSocketClosed,
+    probe,
     providers
   };
   return api;
@@ -325,6 +372,7 @@ function startupLine() {
 module.exports = {
   createRpcPool,
   classifyRpcError,
+  connectionOptions,
   redactUrl,
   redactText,
   signatureOf,
