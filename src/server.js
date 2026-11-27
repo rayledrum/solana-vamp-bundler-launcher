@@ -487,10 +487,13 @@ app.post('/api/launch/upload-meta', upload.single('logo'), async (req, res) => {
 
 app.post('/api/launch/preflight', async (req, res) => {
   try {
+    const mode = req.body && req.body.launchMode === 'standard' ? 'standard' : 'bundle';
     const amounts = requireLaunchAmounts({
       devSolBuy: req.body && req.body.devSolBuy,
       subWalletBuys: (req.body && req.body.subWalletBuys) || [],
-      jitoTipSol: req.body && req.body.jitoTipSol
+      jitoTipSol: req.body && req.body.jitoTipSol,
+      priorityFeeSol: req.body && req.body.priorityFeeSol,
+      mode
     });
     const check = await bundler.preflightCheck(amounts);
     res.json({ success: true, ...check });
@@ -513,10 +516,13 @@ app.post('/api/launch/execute', withMutationLock(async (req, res) => {
     }
     if (metadataUrl.protocol !== 'https:') throw new ValidationError('tokenMetadataUri must be an https URL');
   }
+  const mode = body.launchMode === 'standard' ? 'standard' : 'bundle';
   const amounts = requireLaunchAmounts({
     devSolBuy: body.devSolBuy,
     subWalletBuys: body.subWalletBuys || [],
-    jitoTipSol: body.jitoTipSol
+    jitoTipSol: body.jitoTipSol,
+    priorityFeeSol: body.priorityFeeSol,
+    mode
   });
   const delayRaw = body.subWalletDelaySec === undefined || body.subWalletDelaySec === '' ? 0 : Number(body.subWalletDelaySec);
   if (!Number.isFinite(delayRaw) || delayRaw < 0 || delayRaw > 10) {
@@ -527,16 +533,20 @@ app.post('/api/launch/execute', withMutationLock(async (req, res) => {
 
   let launchResult;
   try {
-    launchResult = await bundler.launchBundle({
-    tokenName,
-    tokenSymbol,
-    tokenDescription,
-    tokenMetadataUri,
-    devSolBuy: amounts.devSolBuy,
-    subWalletBuys: amounts.subWalletBuys,
-    jitoTipSol: amounts.jitoTipSol,
-    subWalletDelaySec: delayRaw
-  });
+    const launchArgs = {
+      tokenName,
+      tokenSymbol,
+      tokenDescription,
+      tokenMetadataUri,
+      devSolBuy: amounts.devSolBuy,
+      subWalletBuys: amounts.subWalletBuys,
+      jitoTipSol: amounts.jitoTipSol,
+      priorityFeeSol: amounts.priorityFeeSol,
+      subWalletDelaySec: delayRaw
+    };
+    launchResult = mode === 'standard'
+      ? await bundler.launchStandard(launchArgs)
+      : await bundler.launchBundle(launchArgs);
   } catch (err) {
     broadcast({ type: 'LAUNCH_FAILED', payload: { error: err.message, mint: err.mint || null } });
     throw err;
@@ -575,9 +585,17 @@ app.post('/api/launch/execute', withMutationLock(async (req, res) => {
 app.get('/api/vamp/trending', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit || '12', 10);
-    const tokens = await vampScanner.getTrendingSolanaTokens(Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 12);
+    const capped = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 12;
+    const minMcap = Number(req.query.minMcap);
+    const showUnknown = req.query.showUnknown === '1' || req.query.showUnknown === 'true';
+    const tokens = await vampScanner.getTrendingSolanaTokens(capped, {
+      minMcap: Number.isFinite(minMcap) && minMcap > 0 ? minMcap : 0,
+      showUnknown
+    });
     res.json({
       success: true,
+      hidden: tokens.hidden || 0,
+      unknown: tokens.unknown || 0,
       tokens: tokens.map(token => ({
         ...token,
         devBlacklisted: safetyChecks.isMintFlagged(token.tokenAddress)
