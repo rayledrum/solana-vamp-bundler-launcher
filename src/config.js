@@ -29,6 +29,8 @@ const HELIUS_WS_URL = String(process.env.HELIUS_WS_URL || '').trim()
   || websocketUrl(HELIUS_RPC_URL);
 
 const PUBLIC_RPC = String(process.env.SOLANA_PUBLIC_RPC_URL || '').trim() || 'https://api.mainnet.solana.com';
+const QUICKNODE_RPC_URL = String(process.env.QUICKNODE_RPC_URL || '').trim();
+const QUICKNODE_WS_URL = String(process.env.QUICKNODE_WS_URL || '').trim() || websocketUrl(QUICKNODE_RPC_URL);
 
 const config = {
   PORT: num('PORT', 3000),
@@ -42,6 +44,9 @@ const config = {
   HELIUS_RPC_URL: HELIUS_RPC_URL || PUBLIC_RPC,
   HELIUS_WS_URL,
   HELIUS_CONFIGURED: Boolean(HELIUS_RPC_URL),
+  QUICKNODE_RPC_URL,
+  QUICKNODE_WS_URL,
+  QUICKNODE_CONFIGURED: Boolean(QUICKNODE_RPC_URL),
   SOLANA_PUBLIC_RPC_URL: PUBLIC_RPC,
 
   JITO_BLOCK_ENGINE_URL: String(process.env.JITO_BLOCK_ENGINE_URL || '').trim()

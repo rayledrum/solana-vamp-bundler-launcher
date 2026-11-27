@@ -17,7 +17,7 @@ function ignoredModeMessage(env = process.env) {
 }
 
 // enabled true keeps simulation. enabled false is the live switch.
-function applySimulationChange({ enabled, confirm, heliusConfigured, hasWallets }) {
+function applySimulationChange({ enabled, confirm, heliusConfigured, quicknodeConfigured, hasWallets }) {
   if (enabled !== true && enabled !== false) {
     const err = new Error('enabled must be a boolean (true or false)');
     err.statusCode = 400;
@@ -29,8 +29,8 @@ function applySimulationChange({ enabled, confirm, heliusConfigured, hasWallets 
       err.statusCode = 400;
       throw err;
     }
-    if (!heliusConfigured) {
-      const err = new Error('Cannot switch to live mode without an RPC. Set HELIUS_RPC_URL or HELIUS_API_KEY in .env and restart.');
+    if (!heliusConfigured && !quicknodeConfigured) {
+      const err = new Error('Cannot switch to live mode without an RPC. Set HELIUS_RPC_URL, HELIUS_API_KEY, or QUICKNODE_RPC_URL in .env and restart.');
       err.statusCode = 400;
       throw err;
     }

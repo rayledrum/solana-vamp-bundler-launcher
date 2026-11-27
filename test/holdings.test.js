@@ -6,6 +6,7 @@ const { PublicKey } = require('@solana/web3.js');
 
 process.env.WALLETS_FILE = path.join(os.tmpdir(), `holdings-wallets-${process.pid}.json`);
 const walletManager = require('../src/walletManager');
+const { setLiveTradingOverride } = require('../src/rpc');
 const tradingEngine = require('../src/tradingEngine');
 const pumpfun = require('../src/pumpfun');
 const { TOKEN_2022_PROGRAM } = require('../src/tokenAccounts');
@@ -26,6 +27,7 @@ function tokenAccount(amount) {
 
 test('loading a live mint seeds Token-2022 balances and leaves cost unknown', async () => {
   walletManager.setSimulationMode(false);
+  setLiveTradingOverride('allow');
   tradingEngine.connectPumpPortal = () => {};
   tradingEngine.onMintChange = () => {};
   const originalDex = pumpfun.getTokenDexInfo.bind(pumpfun);
@@ -84,6 +86,7 @@ test('loading a live mint seeds Token-2022 balances and leaves cost unknown', as
     connection.getParsedTokenAccountsByOwner = originalParsed;
     connection.getMultipleAccountsInfo = originalMany;
     pumpfun.getTokenDexInfo = originalDex;
+    setLiveTradingOverride(null);
     walletManager.setSimulationMode(true);
   }
 });

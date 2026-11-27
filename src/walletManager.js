@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  Connection,
   Keypair,
   PublicKey,
   SystemProgram,
@@ -13,15 +12,14 @@ const { readOwnerTokenBalance } = require('./tokenAccounts');
 const bs58Raw = require('bs58');
 const bs58 = bs58Raw.default || bs58Raw;
 const config = require('./config');
+const { rpc } = require('./rpc');
 
 const DEFAULT_DATA_FILE = path.join(__dirname, '..', 'data', 'wallets.json');
 
 class WalletManager {
   constructor(options = {}) {
     this.dataFile = options.dataFile || process.env.WALLETS_FILE || DEFAULT_DATA_FILE;
-    const connectionConfig = { commitment: 'confirmed' };
-    if (config.HELIUS_WS_URL) connectionConfig.wsEndpoint = config.HELIUS_WS_URL;
-    this.connection = options.connection || new Connection(config.HELIUS_RPC_URL, connectionConfig);
+    this.connection = options.connection || rpc.connection;
     this.masterWallet = null;
     this.subWallets = [];
     this.simulationMode = options.simulationMode !== undefined ? options.simulationMode : config.SIMULATION_MODE;

@@ -489,12 +489,8 @@ function readSniperCluster(mint) {
 }
 
 function defaultResearchConnection() {
-  if (!config.HELIUS_CONFIGURED) return null;
-  const { Connection } = require('@solana/web3.js');
-  return new Connection(config.HELIUS_RPC_URL, {
-    commitment: 'confirmed',
-    wsEndpoint: config.HELIUS_WS_URL || undefined
-  });
+  const { rpc } = require('./rpc');
+  return rpc.connection;
 }
 
 function authoritiesFromRug(rug) {

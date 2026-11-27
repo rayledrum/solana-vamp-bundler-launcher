@@ -191,8 +191,11 @@ function handleWsMessage(msg) {
       break;
 
     case 'HEARTBEAT':
+      paintRpcStatus(msg.payload && msg.payload.rpc);
       state.currentSlot = msg.payload.slot;
-      document.getElementById('slotDisplay').innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
+      if (msg.payload && Number.isFinite(msg.payload.slot)) {
+        document.getElementById('slotDisplay').innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
+      }
       const sbSlot = document.getElementById('sidebarSlotBadge');
       if (sbSlot) sbSlot.innerText = `Slot: ${msg.payload.slot.toLocaleString()}`;
       // Placeholder series only. A loaded coin chart is driven by its candles and trades.
@@ -1241,6 +1244,18 @@ function switchTab(tabId) {
   }
 }
 
+function paintRpcStatus(rpc) {
+  const el = document.getElementById('rpcStatusDisplay');
+  const banner = document.getElementById('publicRpcBanner');
+  if (el && rpc && rpc.active) {
+    const row = (rpc.providers || []).find(item => item.name === rpc.active);
+    const healthy = !row || row.healthy !== false;
+    el.textContent = `${rpc.active} · ${healthy ? 'healthy' : 'unhealthy'}`;
+    el.style.color = healthy ? '#86efac' : '#fda4af';
+  }
+  if (banner) banner.style.display = rpc && rpc.paused ? 'block' : 'none';
+}
+
 async function loadStatus() {
   try {
     const res = await apiFetch('/api/status');
@@ -1250,6 +1265,9 @@ async function loadStatus() {
     if (data.currentSlot) {
       document.getElementById('slotDisplay').innerText = `Slot: ${data.currentSlot.toLocaleString()}`;
     }
+    if (data.rpc) paintRpcStatus(data.rpc);
+    const rpcRes = await apiFetch('/api/rpc/status');
+    if (rpcRes.ok) paintRpcStatus(await rpcRes.json());
   } catch (err) {
     console.error('Failed to load status:', err);
   }

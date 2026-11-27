@@ -5,6 +5,7 @@ const path = require('path');
 
 process.env.WALLETS_FILE = path.join(os.tmpdir(), `bump-wallets-${process.pid}.json`);
 const walletManager = require('../src/walletManager');
+const { setLiveTradingOverride } = require('../src/rpc');
 const tradingEngine = require('../src/tradingEngine');
 const { chooseBumpSide, createRandomStrategy } = require('../src/volumeStrategy');
 const realBuy = tradingEngine.executeBuy.bind(tradingEngine);
@@ -144,6 +145,7 @@ test('graduation stops the bumper and sells the open lot', async () => {
 test('live mode uses the same trade calls and the live balance reserve', async () => {
   quiet();
   walletManager.setSimulationMode(false);
+  setLiveTradingOverride('allow');
   const [first] = addresses();
   walletManager.liveBalanceCache = { at: Date.now(), key: 'x', values: { [first]: 0.05 }, error: null };
   addresses().slice(1).forEach(address => {
@@ -161,6 +163,7 @@ test('live mode uses the same trade calls and the live balance reserve', async (
     assert.match(tradingEngine.bumpLastTx, /^(buy|sell)-/);
   } finally {
     await tradingEngine.stopVolumeBumper();
+    setLiveTradingOverride(null);
     walletManager.setSimulationMode(true);
   }
 });

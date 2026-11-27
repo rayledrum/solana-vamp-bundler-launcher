@@ -130,7 +130,9 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
   let fetched = 0;
   let failedFetches = 0;
   let heliusBySig = null;
-  if (process.env.HELIUS_API_KEY && picked.chosen.length) {
+  const { rpc } = require('../rpc');
+  const heliusProvider = rpc.status().providers.find(row => row.name === 'Helius');
+  if (process.env.HELIUS_API_KEY && heliusProvider && heliusProvider.healthy && picked.chosen.length) {
     try {
       const response = await fetch(`https://api.helius.xyz/v0/transactions?api-key=${encodeURIComponent(process.env.HELIUS_API_KEY)}`, {
         method: 'POST',
@@ -145,9 +147,14 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
             if (tx && tx.signature) heliusBySig.set(tx.signature, tradesFromHelius(tx));
           });
         }
+      } else if (response.status === 429) {
+        rpc.markUnhealthy('Helius', 'rate');
+      } else if (response.status === 401 || response.status === 403) {
+        rpc.markUnhealthy('Helius', 'credit');
       }
     } catch (err) {
       heliusBySig = null;
+      rpc.markUnhealthy('Helius', 'transport');
     }
   }
   for (const sig of picked.chosen) {
@@ -196,11 +203,13 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
 }
 
 function researchRpc() {
-  const { Connection } = require('@solana/web3.js');
-  if (config.HELIUS_CONFIGURED) {
-    return { connection: new Connection(config.HELIUS_RPC_URL, 'confirmed'), helius: true, minIntervalMs: 400 };
-  }
-  return { connection: new Connection(config.SOLANA_PUBLIC_RPC_URL, 'confirmed'), helius: false, minIntervalMs: 2000 };
+  const { rpc } = require('../rpc');
+  const active = rpc.status().active;
+  return {
+    connection: rpc.connection,
+    helius: active === 'Helius',
+    minIntervalMs: active === 'Public' ? 2000 : 400
+  };
 }
 
 function fundingDefaultOn() {
