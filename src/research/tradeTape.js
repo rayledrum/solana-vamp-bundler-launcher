@@ -139,18 +139,18 @@ async function readCurveTape({ connection, mint, programId, pace, cache, maxPage
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ transactions: picked.chosen.slice(0, 100).map(row => row.signature) })
       });
-      if (response.ok) {
-        const body = await response.json();
-        if (Array.isArray(body)) {
-          heliusBySig = new Map();
-          body.forEach(tx => {
-            if (tx && tx.signature) heliusBySig.set(tx.signature, tradesFromHelius(tx));
-          });
-        }
-      } else if (response.status === 429) {
-        rpc.markUnhealthy('Helius', 'rate');
-      } else if (response.status === 401 || response.status === 403) {
-        rpc.markUnhealthy('Helius', 'credit');
+      const body = await response.json().catch(() => null);
+      if (response.ok && Array.isArray(body)) {
+        heliusBySig = new Map();
+        body.forEach(tx => {
+          if (tx && tx.signature) heliusBySig.set(tx.signature, tradesFromHelius(tx));
+        });
+      } else {
+        const text = `${response.status} ${JSON.stringify(body || '')}`;
+        const kind = /max usage|credit|exhausted/.test(text.toLowerCase()) || response.status === 401 || response.status === 403
+          ? 'credit'
+          : (response.status === 429 || /-32429/.test(text) ? 'rate' : null);
+        if (kind) rpc.markUnhealthy('Helius', kind);
       }
     } catch (err) {
       heliusBySig = null;

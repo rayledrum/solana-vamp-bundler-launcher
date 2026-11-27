@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
@@ -19,6 +20,7 @@ const {
   liveTradingPaused,
   assertLiveTrading,
   bindLiveTradingPool,
+  connectionOptions,
   LIVE_TRADING_PAUSED
 } = require('../src/rpc');
 const walletManager = require('../src/walletManager');
@@ -42,6 +44,11 @@ function providerStub(name, behavior) {
       stub.calls.push('getBalance');
       if (behavior.getBalance) return behavior.getBalance();
       return 5;
+    },
+    async getSlot() {
+      stub.calls.push('getSlot');
+      if (behavior.getSlot) return behavior.getSlot();
+      return 1;
     },
     async sendRawTransaction() {
       stub.calls.push('sendRawTransaction');
@@ -79,17 +86,19 @@ function signedTransaction() {
   return { raw: tx.serialize(), signature: bs58.encode(tx.signature) };
 }
 
-function pool(behaviors, now) {
+function pool(behaviors, now, logLines) {
   const stubs = {
     Helius: providerStub('Helius', behaviors.Helius || {}),
     QuickNode: providerStub('QuickNode', behaviors.QuickNode || {}),
     Public: providerStub('Public', behaviors.Public || {})
   };
-  let clock = now || 1_000_000;
+  const lines = Array.isArray(now) ? now : logLines;
+  let clock = typeof now === 'number' ? now : 1_000_000;
   const api = createRpcPool({
     now: () => clock,
+    log: lines ? (line) => lines.push(line) : () => {},
     cooldownMs: 5 * 60 * 1000,
-    creditCooldownMs: 60 * 60 * 1000,
+    creditCooldownMs: 30 * 60 * 1000,
     providers: [
       { name: 'Helius', httpUrl: 'https://helius.example/secret', wsUrl: 'wss://helius.example/secret', configured: true },
       { name: 'QuickNode', httpUrl: 'https://example.quiknode.pro/secret-key', wsUrl: 'wss://example.quiknode.pro/secret-key', configured: true },
@@ -130,7 +139,7 @@ test('a credit error cools down longer than a rate limit', () => {
   const row = api.status().providers.find(item => item.name === 'Helius');
   assert.equal(row.healthy, false);
   assert.ok(row.cooldownMs > 5 * 60 * 1000);
-  assert.equal(row.cooldownMs, 60 * 60 * 1000);
+  assert.equal(row.cooldownMs, 30 * 60 * 1000);
 });
 
 test('URLs are redacted after the host', () => {
@@ -263,6 +272,70 @@ test('a live buy and volume start are refused while only the public RPC is activ
     await tradingEngine.stopVolumeBumper();
     walletManager.setSimulationMode(true);
   }
+});
+
+test('a 429 fails over once, without a second try on the same provider', async () => {
+  const lines = [];
+  const { api, stubs } = pool({
+    Helius: {
+      getBalance() {
+        const err = new Error('Server responded with 429 Too Many Requests');
+        err.code = -32429;
+        throw err;
+      }
+    }
+  }, lines);
+  assert.equal(classifyRpcError(Object.assign(new Error('max usage reached'), { code: -32429 })), 'credit');
+  const balance = await api.connection.getBalance('addr');
+  assert.equal(balance, 5);
+  assert.equal(stubs.Helius.calls.filter(row => row === 'getBalance').length, 1);
+  assert.equal(stubs.QuickNode.calls.filter(row => row === 'getBalance').length, 1);
+  assert.deepEqual(lines, ['RPC failover: Helius -> QuickNode (rate limited)']);
+  assert.equal(connectionOptions({ wsUrl: 'wss://example.quiknode.pro/secret' }).disableRetryOnRateLimit, true);
+});
+
+test('the startup probe skips an unhealthy Helius and moves sockets to QuickNode', async () => {
+  const lines = [];
+  const { api, stubs } = pool({
+    Helius: {
+      getSlot() {
+        const err = new Error('429 Too Many Requests');
+        err.code = 429;
+        throw err;
+      }
+    },
+    QuickNode: {
+      getSlot() { return 42; }
+    }
+  }, lines);
+  const id = api.connection.onAccountChange('curve', () => {}, 'processed');
+  assert.equal(stubs.Helius.subs, 1);
+  const chosen = await api.probe({ timeoutMs: 50 });
+  assert.equal(chosen.name, 'QuickNode');
+  assert.equal(api.status().active, 'QuickNode');
+  assert.equal(stubs.Helius.calls.filter(row => row === 'getSlot').length, 1);
+  assert.equal(stubs.QuickNode.calls.filter(row => row === 'getSlot').length, 1);
+  assert.equal(stubs.Public.calls.filter(row => row === 'getSlot').length, 0);
+  assert.equal(stubs.QuickNode.subs, 1);
+  assert.equal(lines[0], 'RPC failover: Helius -> QuickNode (rate limited)');
+  api.connection.removeAccountChangeListener(id);
+});
+
+test('every Connection is built with rate-limit retries disabled', () => {
+  const files = [];
+  const walk = (dir) => {
+    fs.readdirSync(dir).forEach(name => {
+      const full = path.join(dir, name);
+      if (fs.statSync(full).isDirectory()) walk(full);
+      else if (name.endsWith('.js')) files.push(full);
+    });
+  };
+  walk(path.join(__dirname, '..', 'src'));
+  const constructors = files.filter(file => fs.readFileSync(file, 'utf8').includes('new Connection('));
+  assert.deepEqual(constructors.map(file => path.basename(file)), ['rpc.js']);
+  const source = fs.readFileSync(constructors[0], 'utf8');
+  assert.match(source, /disableRetryOnRateLimit:\s*true/);
+  assert.match(source, /new Connection\(provider\.httpUrl, connectionOptions\(provider\)\)/);
 });
 
 test('a websocket that closes twice resubscribes on the next provider', () => {
