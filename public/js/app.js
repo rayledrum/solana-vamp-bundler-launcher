@@ -12,6 +12,7 @@ const state = {
   selectedJitoTip: 0.005,
   maxJitoTipSol: 0.01,
   launchMode: 'bundle',
+  bundleForm: emptyBundleForm(),
   vampMinMcap: 0,
   vampShowUnknown: false,
   activeToken: null,
@@ -84,7 +85,10 @@ function bindShellActions() {
     if (name === 'saveFarmRide') return saveFarmRide(el.checked);
     if (name === 'refreshResearch') return refreshResearch();
     if (name === 'logoSelect') return handleLogoSelect(event);
-    if (name === 'bundleMetrics') return calculateBundleMetrics();
+    if (name === 'bundleMetrics') {
+      captureBundleInput(el);
+      return calculateBundleMetrics();
+    }
     const fn = window[name];
     if (typeof fn !== 'function') return;
     if (arg === undefined) return fn();
@@ -2295,8 +2299,55 @@ function restoreLaunchPrefs() {
   if (minInput) minInput.value = String(state.vampMinMcap);
   const unknownBox = document.getElementById('vampShowUnknown');
   if (unknownBox) unknownBox.checked = state.vampShowUnknown;
+  try {
+    state.bundleForm = bundleFormFromStorage(JSON.parse(localStorage.getItem('bundleForm') || 'null'));
+  } catch (err) {
+    state.bundleForm = emptyBundleForm();
+  }
+  paintBundleFields();
   paintJitoTips();
   paintLaunchMode();
+}
+
+function persistBundleForm() {
+  try { localStorage.setItem('bundleForm', JSON.stringify(state.bundleForm)); } catch (err) { /* storage can be blocked */ }
+}
+
+function captureBundleInput(el) {
+  if (!el || !el.id) return;
+  if (el.id === 'devSolBuy') state.bundleForm = rememberField(state.bundleForm, 'devSolBuy', el.value);
+  else if (el.id === 'customJitoTip') state.bundleForm = rememberField(state.bundleForm, 'tip', el.value);
+  else if (el.id.indexOf('subBuyInput-') === 0) {
+    const key = el.dataset.wallet || el.id;
+    state.bundleForm = rememberField(state.bundleForm, { buyKey: key }, el.value);
+  } else return;
+  persistBundleForm();
+}
+
+function paintBundleFields() {
+  const dev = document.getElementById('devSolBuy');
+  const devShown = displayValue(state.bundleForm, 'devSolBuy', { focused: document.activeElement === dev });
+  if (dev && devShown.write) dev.value = devShown.value;
+  const count = document.getElementById('subWalletCountSelect');
+  const countShown = displayValue(state.bundleForm, 'walletCount', { focused: document.activeElement === count });
+  if (count && countShown.write && Array.from(count.options).some(option => option.value === countShown.value)) count.value = countShown.value;
+}
+
+function currentLaunchAmounts() {
+  const dev = document.getElementById('devSolBuy');
+  if (dev) state.bundleForm = rememberField(state.bundleForm, 'devSolBuy', dev.value);
+  const tip = document.getElementById('customJitoTip');
+  if (tip && state.bundleForm.tipEdited) state.bundleForm = rememberField(state.bundleForm, 'tip', tip.value);
+  (state.subWallets || []).forEach((wallet, index) => {
+    const input = document.getElementById(`subBuyInput-${index}`);
+    if (!input) return;
+    const key = wallet.address || ('#' + index);
+    state.bundleForm = rememberField(state.bundleForm, { buyKey: key }, input.value);
+  });
+  persistBundleForm();
+  const amounts = launchAmounts(state.bundleForm, state.subWallets || []);
+  if (!(amounts.jitoTipSol > 0)) amounts.jitoTipSol = Number(state.selectedJitoTip);
+  return amounts;
 }
 
 function paintJitoTips() {
@@ -2318,7 +2369,9 @@ function paintJitoTips() {
     }
   });
   const custom = document.getElementById('customJitoTip');
-  if (custom && document.activeElement !== custom) custom.value = String(tip);
+  const draft = displayValue(state.bundleForm, 'tip', { focused: document.activeElement === custom });
+  if (custom && draft.write) custom.value = draft.value;
+  else if (custom && document.activeElement !== custom) custom.value = String(tip);
 }
 
 function setJitoTip(amount) {
@@ -2330,6 +2383,8 @@ function setJitoTip(amount) {
   }
   state.selectedJitoTip = Math.min(tip, max);
   if (tip > max) showToast(`Tip clamped to ${max} SOL`, 'warning');
+  state.bundleForm = noteAppliedTip(state.bundleForm, state.selectedJitoTip);
+  persistBundleForm();
   try { localStorage.setItem('selectedJitoTip', String(state.selectedJitoTip)); } catch (err) { /* storage can be blocked */ }
   paintJitoTips();
 }
@@ -2378,22 +2433,27 @@ function saveVampMinMcap() {
 }
 
 function quickFillSubBuys(amount) {
-  state.subWallets.forEach((_, idx) => {
+  state.subWallets.forEach((wallet, idx) => {
+    const key = wallet.address || ('#' + idx);
+    state.bundleForm = rememberField(state.bundleForm, { buyKey: key }, amount);
     const el = document.getElementById(`subBuyInput-${idx}`);
     if (el) el.value = amount;
   });
+  persistBundleForm();
   calculateBundleMetrics();
 }
 
 function randomizeSubBuys() {
-  state.subWallets.forEach((_, idx) => {
+  state.subWallets.forEach((wallet, idx) => {
+    const base = 0.05;
+    const jitter = (Math.random() * 0.16) - 0.08;
+    const amount = Math.max(0.05, Number((base + jitter).toFixed(3)));
+    const key = wallet.address || ('#' + idx);
+    state.bundleForm = rememberField(state.bundleForm, { buyKey: key }, amount);
     const el = document.getElementById(`subBuyInput-${idx}`);
-    if (el) {
-      const base = 0.05;
-      const jitter = (Math.random() * 0.16) - 0.08;
-      el.value = Math.max(0.05, Number((base + jitter).toFixed(3)));
-    }
+    if (el) el.value = amount;
   });
+  persistBundleForm();
   calculateBundleMetrics();
 }
 
@@ -2432,8 +2492,9 @@ async function runPreflightCheck() {
   btn.innerText = 'Validating balances & compute budget...';
 
   try {
-    const devSolBuy = parseFloat(document.getElementById('devSolBuy').value || '0.5');
-    const subWalletBuys = state.subWallets.map((_, i) => parseFloat(document.getElementById(`subBuyInput-${i}`)?.value || '0'));
+    const amounts = currentLaunchAmounts();
+    const devSolBuy = amounts.devSolBuy;
+    const subWalletBuys = amounts.subWalletBuys;
 
     const res = await apiFetch('/api/launch/preflight', {
       method: 'POST',
@@ -2441,7 +2502,7 @@ async function runPreflightCheck() {
       body: JSON.stringify({
         devSolBuy,
         subWalletBuys,
-        jitoTipSol: Number(state.selectedJitoTip),
+        jitoTipSol: amounts.jitoTipSol,
         launchMode: state.launchMode,
         priorityFeeSol: Number(document.getElementById('launchPriorityFee')?.value || '0')
       })
@@ -2496,8 +2557,9 @@ async function executeLaunchBundle() {
     const metaData = await metaRes.json();
     const metadataUri = metaData.metadataUri;
 
-    const devSolBuy = parseFloat(document.getElementById('devSolBuy').value || '0.5');
-    const subWalletBuys = state.subWallets.map((_, i) => parseFloat(document.getElementById(`subBuyInput-${i}`)?.value || '0'));
+    const amounts = currentLaunchAmounts();
+    const devSolBuy = amounts.devSolBuy;
+    const subWalletBuys = amounts.subWalletBuys;
 
     const launchRes = await apiFetch('/api/launch/execute', {
       method: 'POST',
@@ -2509,7 +2571,7 @@ async function executeLaunchBundle() {
         tokenMetadataUri: metadataUri,
         devSolBuy,
         subWalletBuys,
-        jitoTipSol: Number(state.selectedJitoTip),
+        jitoTipSol: amounts.jitoTipSol,
         launchMode: state.launchMode,
         priorityFeeSol: Number(document.getElementById('launchPriorityFee')?.value || '0'),
         subWalletDelaySec: state.subWalletDelaySec || parseFloat(document.getElementById('subWalletBuyDelayInput')?.value || '0')
@@ -2631,25 +2693,66 @@ async function loadSubWallets() {
   }
 }
 
+function subBuyKey(wallet, index) {
+  return (wallet && wallet.address) || ('#' + index);
+}
+
 function renderSubWalletBuysInputs() {
   const container = document.getElementById('subWalletBuysContainer');
   if (!container) return;
+  const wallets = state.subWallets || [];
   const countBadge = document.getElementById('subWalletCountBadge');
-  if (countBadge) countBadge.innerText = `${state.subWallets.length} Wallets`;
-  container.innerHTML = '';
-
-  state.subWallets.forEach((w, idx) => {
+  if (countBadge) countBadge.textContent = `${wallets.length} Wallets`;
+  const signature = wallets.map((wallet, index) => subBuyKey(wallet, index)).join(',');
+  const existing = container.querySelectorAll('input[id^="subBuyInput-"]');
+  if (container.dataset.wallets === signature && existing.length === wallets.length) {
+    wallets.forEach((wallet, idx) => {
+      const bal = document.getElementById(`subBuyBal-${idx}`);
+      if (bal) renderDualBalance(bal, wallet);
+      const input = document.getElementById(`subBuyInput-${idx}`);
+      if (!input || document.activeElement === input) return;
+      const shown = displayValue(state.bundleForm, { buyKey: subBuyKey(wallet, idx) }, { focused: false });
+      if (shown.write) input.value = shown.value;
+    });
+    return;
+  }
+  const focused = document.activeElement;
+  if (focused && focused.id && focused.id.indexOf('subBuyInput-') === 0 && focused.dataset.wallet) {
+    state.bundleForm = rememberField(state.bundleForm, { buyKey: focused.dataset.wallet }, focused.value);
+    persistBundleForm();
+  }
+  container.replaceChildren();
+  container.dataset.wallets = signature;
+  wallets.forEach((wallet, idx) => {
+    const key = subBuyKey(wallet, idx);
+    const shown = displayValue(state.bundleForm, { buyKey: key }, { focused: false });
     const div = document.createElement('div');
     div.className = 'bg-[#090d16] p-1.5 rounded border border-[#192235] space-y-1';
-    div.innerHTML = `
-      <div class="flex justify-between items-center text-[9px] text-slate-400">
-        <span class="font-bold">#${idx + 1} (${String(w.address || '').slice(0, 4)}...)</span>
-        <span class="sub-buy-bal font-mono"></span>
-      </div>
-      <input type="number" step="0.01" min="0" max="0.1" value="0" id="subBuyInput-${idx}" data-fn="bundleMetrics" data-evt="input" class="input-field py-0.5 px-1.5 text-xs font-mono font-bold text-center">
-    `;
-    renderDualBalance(div.querySelector('.sub-buy-bal'), w);
+    const head = document.createElement('div');
+    head.className = 'flex justify-between items-center text-[9px] text-slate-400';
+    const label = document.createElement('span');
+    label.className = 'font-bold';
+    const address = String(wallet.address || '');
+    label.textContent = `#${idx + 1} (${address.slice(0, 4)}...)`;
+    const bal = document.createElement('span');
+    bal.id = `subBuyBal-${idx}`;
+    bal.className = 'sub-buy-bal font-mono';
+    head.append(label, bal);
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = '0.01';
+    input.min = '0';
+    input.max = '0.1';
+    input.id = `subBuyInput-${idx}`;
+    input.dataset.fn = 'bundleMetrics';
+    input.dataset.evt = 'input';
+    input.dataset.wallet = key;
+    input.className = 'input-field py-0.5 px-1.5 text-xs font-mono font-bold text-center';
+    input.value = shown.value;
+    div.append(head, input);
+    renderDualBalance(bal, wallet);
     container.appendChild(div);
+    if (focused && focused.dataset && focused.dataset.wallet === key) input.focus();
   });
 }
 
@@ -2747,7 +2850,10 @@ async function confirmedWalletPost(url, body) {
 }
 
 async function regenerateSubWallets() {
-  const count = parseInt(document.getElementById('subWalletCountSelect').value, 10);
+  const select = document.getElementById('subWalletCountSelect');
+  const count = parseInt(select.value, 10);
+  state.bundleForm = rememberField(state.bundleForm, 'walletCount', select.value);
+  persistBundleForm();
   if (!window.confirm('Replace the sub-wallets? A timestamped backup is saved under data/backups. Export the current keys first if they hold funds.')) return;
   try {
     await confirmedWalletPost('/api/wallets/sub/generate', { count });
