@@ -17,6 +17,8 @@ const {
   redactUrl,
   signatureOf,
   liveTradingPaused,
+  assertLiveTrading,
+  bindLiveTradingPool,
   LIVE_TRADING_PAUSED
 } = require('../src/rpc');
 const walletManager = require('../src/walletManager');
@@ -199,18 +201,52 @@ test('live trading pauses on the public RPC and resumes when Helius or QuickNode
   assert.equal(liveTradingPaused(api.status()), false);
 });
 
+function publicOnlyPool() {
+  return createRpcPool({
+    providers: [{ name: 'Public', httpUrl: 'https://public.example/unused', wsUrl: '', configured: true }],
+    connect() { return {}; }
+  });
+}
+
 test('a live buy and volume start are refused while only the public RPC is active', async () => {
+  const dedicated = createRpcPool({
+    providers: [
+      { name: 'QuickNode', httpUrl: 'https://qn.example/unused', wsUrl: '', configured: true },
+      { name: 'Public', httpUrl: 'https://public.example/unused', wsUrl: '', configured: true }
+    ],
+    connect() { return {}; }
+  });
+  bindLiveTradingPool(dedicated);
+  assert.equal(liveTradingPaused(), false);
+  assert.doesNotThrow(() => assertLiveTrading());
+
+  bindLiveTradingPool(publicOnlyPool());
+  assert.equal(liveTradingPaused(), true);
+  assert.throws(() => assertLiveTrading(), (err) => err && err.message === LIVE_TRADING_PAUSED);
   walletManager.setSimulationMode(false);
   tradingEngine.connectPumpPortal = () => {};
   tradingEngine.onMintChange = () => {};
   const mint = Keypair.generate().publicKey.toBase58();
   tradingEngine.setActiveToken(mint, []);
   try {
-    await assert.rejects(
-      () => tradingEngine.executeBuy({ solAmount: 0.01, walletAddresses: [walletManager.masterWallet.publicKey.toBase58()] }),
-      new RegExp(LIVE_TRADING_PAUSED)
-    );
-    assert.throws(() => tradingEngine.startVolumeBumper(0.01), new RegExp(LIVE_TRADING_PAUSED));
+    let buyResolved;
+    try {
+      buyResolved = await tradingEngine.executeBuy({
+        solAmount: 0.01,
+        walletAddresses: [walletManager.masterWallet.publicKey.toBase58()]
+      });
+    } catch (err) {
+      assert.equal(err && err.message, LIVE_TRADING_PAUSED);
+      buyResolved = err;
+    }
+    assert.ok(buyResolved instanceof Error, 'live buy must reject instead of resolving');
+    let bumperError;
+    try {
+      tradingEngine.startVolumeBumper(0.01);
+    } catch (err) {
+      bumperError = err;
+    }
+    assert.equal(bumperError && bumperError.message, LIVE_TRADING_PAUSED);
     walletManager.setSimulationMode(true);
     const started = tradingEngine.startVolumeBumper(0.01, {
       reserveSol: 0,
@@ -223,6 +259,7 @@ test('a live buy and volume start are refused while only the public RPC is activ
     });
     assert.equal(started.simulated, true);
   } finally {
+    bindLiveTradingPool(null);
     await tradingEngine.stopVolumeBumper();
     walletManager.setSimulationMode(true);
   }
