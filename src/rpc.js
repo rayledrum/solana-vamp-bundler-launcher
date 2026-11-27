@@ -294,11 +294,16 @@ function scrub(err) {
 
 const rpc = createRpcPool();
 let liveOverride = null;
+let boundPool = null;
+
+function bindLiveTradingPool(pool) {
+  boundPool = pool || null;
+}
 
 function liveTradingPaused(snapshot) {
   if (liveOverride === 'allow') return false;
   if (liveOverride === 'pause') return true;
-  const current = snapshot || rpc.status();
+  const current = snapshot || (boundPool || rpc).status();
   return !current || current.active == null || current.active === 'Public';
 }
 
@@ -329,6 +334,7 @@ module.exports = {
   liveTradingPaused,
   assertLiveTrading,
   setLiveTradingOverride,
+  bindLiveTradingPool,
   LIVE_TRADING_PAUSED,
   READ_COOLDOWN_MS,
   CREDIT_COOLDOWN_MS
