@@ -187,14 +187,15 @@
 
         <!-- Right: Mode toggle + balance -->
         <div style="display:flex;align-items:center;gap:10px;">
+          <span id="liveModeBadge" role="status" aria-live="polite" style="display:none;align-items:center;padding:3px 8px;font-size:10px;font-weight:900;letter-spacing:0.08em;border-radius:6px;"></span>
           <!-- Simulation / Live toggle -->
           <div style="display:flex;align-items:center;background:#0d1120;padding:3px;border-radius:8px;border:1px solid #1a2338;">
-            <button id="modeSimBtn" data-fn="toggleSimulation" data-arg="true"
+            <button id="modeSimBtn" type="button" data-fn="toggleSimulation" data-arg="true" aria-pressed="true"
               style="padding:3px 10px;font-size:10px;font-weight:800;border-radius:6px;background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.25);cursor:pointer;letter-spacing:0.05em;">
               SIM
             </button>
-            <button id="modeLiveBtn" data-fn="toggleSimulation" data-arg="false"
-              style="padding:3px 10px;font-size:10px;font-weight:800;border-radius:6px;color:#546e7a;border:1px solid transparent;cursor:pointer;letter-spacing:0.05em;background:none;">
+            <button id="modeLiveBtn" type="button" data-fn="toggleSimulation" data-arg="false" aria-pressed="false"
+              style="padding:3px 10px;font-size:10px;font-weight:800;border-radius:6px;color:#546e7a;border:1px solid transparent;cursor:pointer;letter-spacing:0.05em;background:transparent;">
               LIVE
             </button>
           </div>
@@ -233,6 +234,9 @@
     <div id="simBanner" class="sim-banner">
       <i data-lucide="shield-check" style="width:12px;height:12px;"></i>
       <span><strong style="color:#00d4ff;">Simulation Sandbox:</strong> Balances &amp; bundles are simulated with real Helius data — no real SOL at risk. Switch to LIVE anytime.</span>
+    </div>
+    <div id="liveBanner" style="display:none;margin:0;padding:5px 16px;background:rgba(244,63,94,0.16);border-bottom:1px solid rgba(244,63,94,0.55);color:#fecdd3;font-size:11px;font-weight:800;text-align:center;">
+      LIVE MAINNET: real SOL can be spent. This mode is not saved, and a restart returns to simulation.
     </div>
 
     <!-- ==================== MAIN BODY ==================== -->
@@ -1095,6 +1099,7 @@
   </div>
 
   <script src="js/escapeHtml.js"></script>
+  <script src="js/simulationSwitch.js"></script>
   <script src="js/chartBook.js"></script>
   <script src="js/chartScale.js"></script>
   <script src="js/app.js"></script>
