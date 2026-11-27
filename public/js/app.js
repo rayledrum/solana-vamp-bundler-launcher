@@ -109,6 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (window.lucide) lucide.createIcons();
   initChart();
   bindTrackedCaInputs();
+  updateSimulationUi(state.simulationMode);
   connectWebSocket();
   loadStatus();
   refreshResearch();
@@ -181,21 +182,18 @@ function connectWebSocket() {
 function handleWsMessage(msg) {
   switch (msg.type) {
     case 'CONNECTED':
-      if (msg.payload && typeof msg.payload.simulation === 'boolean') {
-        state.simulationMode = msg.payload.simulation;
-        updateSimulationUi(state.simulationMode);
-      }
+      noteSimulationMode(simulationModeFromUpdate(msg));
       break;
 
     case 'SIMULATION_TOGGLED':
-      state.simulationMode = Boolean(msg.payload && msg.payload.simulation);
-      updateSimulationUi(state.simulationMode);
+      noteSimulationMode(simulationModeFromUpdate(msg));
       loadMasterWallet();
       loadSubWallets();
       loadLiveStats();
       break;
 
     case 'HEARTBEAT':
+      noteSimulationMode(simulationModeFromUpdate(msg));
       paintRpcStatus(msg.payload && msg.payload.rpc);
       state.currentSlot = msg.payload.slot;
       if (msg.payload && Number.isFinite(msg.payload.slot)) {
@@ -1265,8 +1263,7 @@ async function loadStatus() {
   try {
     const res = await apiFetch('/api/status');
     const data = await res.json();
-    state.simulationMode = data.simulationMode;
-    updateSimulationUi(state.simulationMode);
+    noteSimulationMode(simulationModeFromUpdate(data));
     if (data.currentSlot) {
       document.getElementById('slotDisplay').innerText = `Slot: ${data.currentSlot.toLocaleString()}`;
     }
@@ -1296,8 +1293,7 @@ async function toggleSimulation(enable) {
       showToast(data.error || 'Mode change refused', 'error');
       return;
     }
-    state.simulationMode = data.simulationMode;
-    updateSimulationUi(state.simulationMode);
+    noteSimulationMode(simulationModeFromUpdate(data));
     loadMasterWallet();
     loadSubWallets();
     loadLiveStats();
@@ -1307,22 +1303,39 @@ async function toggleSimulation(enable) {
   }
 }
 
-function updateSimulationUi(isSim) {
-  const simBtn = document.getElementById('modeSimBtn');
-  const liveBtn = document.getElementById('modeLiveBtn');
-  const banner = document.getElementById('simBanner');
-  if (!simBtn || !liveBtn) return;
+function paintModeButton(button, style) {
+  if (!button || !style) return;
+  button.style.background = style.background;
+  button.style.color = style.color;
+  button.style.border = style.border;
+  button.setAttribute('aria-pressed', style.pressed ? 'true' : 'false');
+}
 
-  if (isSim) {
-    simBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded transition-all bg-cyan-500/20 text-cyan-400 border border-cyan-500/30';
-    liveBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded text-slate-400 hover:text-rose-400 transition-all';
-    if (banner) banner.classList.remove('hidden');
-  } else {
-    liveBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded transition-all bg-rose-500/20 text-rose-400 border border-rose-500/30';
-    simBtn.className = 'px-2 py-0.5 text-[11px] font-semibold rounded text-slate-400 hover:text-cyan-400 transition-all';
-    if (banner) banner.classList.add('hidden');
+function noteSimulationMode(value) {
+  if (value !== true && value !== false) return;
+  state.simulationMode = value;
+  updateSimulationUi(value);
+}
+
+function updateSimulationUi(isSim) {
+  const styles = simulationSwitchStyles(isSim);
+  paintModeButton(document.getElementById('modeSimBtn'), styles.sim);
+  paintModeButton(document.getElementById('modeLiveBtn'), styles.live);
+  const badge = document.getElementById('liveModeBadge');
+  if (badge) {
+    badge.style.display = styles.badge.display;
+    badge.style.background = styles.badge.background;
+    badge.style.color = styles.badge.color;
+    badge.style.border = styles.badge.border;
+    badge.textContent = styles.badge.text;
   }
+  const simBanner = document.getElementById('simBanner');
+  if (simBanner) simBanner.style.display = styles.simBanner;
+  const liveBanner = document.getElementById('liveBanner');
+  if (liveBanner) liveBanner.style.display = styles.liveBanner;
+  if (document.body) document.body.dataset.tradingMode = isSim === false ? 'live' : 'sim';
   if (typeof renderStoredBalances === 'function') renderStoredBalances();
+  if (typeof renderFeedStatus === 'function') renderFeedStatus();
 }
 
 // ==================== MANUAL TRADING ENGINE (BUY GREEN / SELL RED) ====================
