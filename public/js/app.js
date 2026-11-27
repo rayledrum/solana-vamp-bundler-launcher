@@ -2946,6 +2946,18 @@ async function loadTrendingVampTokens() {
     state.trendingTokens = data.tokens || [];
     const hiddenEl = document.getElementById('vampHiddenCount');
     if (hiddenEl) hiddenEl.textContent = Number(data.hidden) > 0 ? `${data.hidden} hidden below $${Number(state.vampMinMcap).toLocaleString()}` : '';
+    const summaryEl = document.getElementById('vampScanSummary');
+    if (summaryEl) {
+      const scanned = Number(data.scanned) || 0;
+      const sources = Number(data.sources) || 0;
+      const matched = Number(data.matched) || 0;
+      const floor = Number(state.vampMinMcap) || 0;
+      summaryEl.textContent = floor > 0
+        ? `Scanned ${scanned} candidates from ${sources} sources · ${matched} match ≥ $${floor.toLocaleString()}`
+        : `Scanned ${scanned} candidates from ${sources} sources`;
+      summaryEl.style.fontSize = '10px';
+      summaryEl.style.color = '#94a3b8';
+    }
 
     // Render Top Movers on Dashboard
     renderTopMovers(state.trendingTokens);

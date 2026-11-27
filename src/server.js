@@ -596,6 +596,10 @@ app.get('/api/vamp/trending', async (req, res) => {
       success: true,
       hidden: tokens.hidden || 0,
       unknown: tokens.unknown || 0,
+      scanned: tokens.scanned || 0,
+      sources: tokens.sources || 0,
+      matched: tokens.matched || 0,
+      minMcap: Number.isFinite(minMcap) && minMcap > 0 ? minMcap : 0,
       tokens: tokens.map(token => ({
         ...token,
         devBlacklisted: safetyChecks.isMintFlagged(token.tokenAddress)
