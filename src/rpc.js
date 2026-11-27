@@ -52,18 +52,63 @@ function failoverLabel(kind) {
   return 'unreachable';
 }
 
-function signatureOf(raw) {
-  if (!raw) return null;
-  const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-  try {
-    const versioned = VersionedTransaction.deserialize(buf);
-    if (versioned.signatures && versioned.signatures[0]) return bs58.encode(versioned.signatures[0]);
-  } catch (err) { /* legacy tx next */ }
-  try {
-    const legacy = Transaction.from(buf);
-    if (legacy.signature) return bs58.encode(legacy.signature);
-  } catch (err) { /* not a transaction */ }
+function isVersionedTx(value) {
+  if (value instanceof VersionedTransaction) return true;
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && typeof value.serialize === 'function'
+    && Array.isArray(value.signatures)
+    && value.message
+    && !Array.isArray(value.instructions)
+  );
+}
+
+function isLegacyTx(value) {
+  if (value instanceof Transaction) return true;
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && typeof value.sign === 'function'
+    && Array.isArray(value.instructions)
+  );
+}
+
+function encodeSig(sig) {
+  if (!sig || sig.length === 0) return null;
+  return bs58.encode(sig);
+}
+
+function toBytes(raw) {
+  if (Buffer.isBuffer(raw)) return raw;
+  if (raw instanceof Uint8Array) return Buffer.from(raw);
+  if (Array.isArray(raw)) {
+    if (!raw.every(item => typeof item === 'number')) return null;
+    return Buffer.from(raw);
+  }
+  if (typeof raw === 'string' && raw) return Buffer.from(raw, 'base64');
   return null;
+}
+
+function signatureOf(raw) {
+  try {
+    if (raw == null || typeof raw === 'number' || typeof raw === 'boolean') return null;
+    if (isVersionedTx(raw)) return encodeSig(raw.signatures && raw.signatures[0]);
+    if (isLegacyTx(raw)) return encodeSig(raw.signature);
+    const buf = toBytes(raw);
+    if (!buf || buf.length === 0) return null;
+    try {
+      const versioned = VersionedTransaction.deserialize(buf);
+      if (versioned.signatures && versioned.signatures[0]) return encodeSig(versioned.signatures[0]);
+    } catch (err) { /* legacy tx next */ }
+    try {
+      const legacy = Transaction.from(buf);
+      if (legacy.signature) return encodeSig(legacy.signature);
+    } catch (err) { /* not a transaction */ }
+    return null;
+  } catch (err) {
+    return null;
+  }
 }
 
 function providersFromConfig(cfg = config) {
@@ -189,12 +234,46 @@ function createRpcPool(options = {}) {
     }
   }
 
+  async function prepareSend(method, args) {
+    const list = args || [];
+    if (method !== 'sendTransaction') {
+      return { method, args: list, signature: signatureOf(list[0]) };
+    }
+    const tx = list[0];
+    if (isVersionedTx(tx)) {
+      if (Array.isArray(list[1])) throw new Error('Invalid arguments');
+      const raw = tx.serialize();
+      return { method: 'sendRawTransaction', args: [raw, list[1]], signature: signatureOf(tx) || signatureOf(raw) };
+    }
+    if (isLegacyTx(tx)) {
+      const signers = list[1];
+      if (!Array.isArray(signers)) throw new Error('Invalid arguments');
+      if (!tx.recentBlockhash && !tx.nonceInfo) {
+        const latest = await call('getLatestBlockhash', ['confirmed']);
+        const value = latest && latest.blockhash ? latest : latest && latest.value;
+        if (!value || !value.blockhash) throw new Error('failed to get recent blockhash');
+        tx.recentBlockhash = value.blockhash;
+        tx.lastValidBlockHeight = value.lastValidBlockHeight;
+      }
+      if (!tx.feePayer) {
+        const payer = signers[0] && signers[0].publicKey;
+        if (!payer) throw new Error('sendTransaction needs a fee payer');
+        tx.feePayer = payer;
+      }
+      tx.sign(...signers);
+      const raw = tx.serialize();
+      return { method: 'sendRawTransaction', args: [raw, list[2]], signature: signatureOf(raw) };
+    }
+    return { method, args: list, signature: signatureOf(tx) };
+  }
+
   async function send(method, args) {
     const first = pick();
     if (!first) throw new Error('No RPC provider is configured');
-    const signature = signatureOf(args && args[0]);
+    // Sign a Transaction once, then every attempt uses those exact bytes.
+    const prepared = await prepareSend(method, args);
     try {
-      return await invoke(first, method, args);
+      return await invoke(first, prepared.method, prepared.args);
     } catch (err) {
       const kind = classifyRpcError(err);
       if (!kind) throw scrub(err);
@@ -202,12 +281,12 @@ function createRpcPool(options = {}) {
       if (kind !== 'transport') throw scrub(err);
       const next = pick();
       if (!next || next.name === first.name) throw scrub(err);
-      if (signature) {
-        const landed = await signatureLanded(next, signature);
-        if (landed === true) return signature;
+      if (prepared.signature) {
+        const landed = await signatureLanded(next, prepared.signature);
+        if (landed === true) return prepared.signature;
         if (landed == null) throw scrub(err);
       }
-      return invoke(next, method, args);
+      return invoke(next, prepared.method, prepared.args);
     }
   }
 
@@ -307,6 +386,9 @@ function createRpcPool(options = {}) {
       if (prop === 'removeAccountChangeListener') return (id) => unsubscribe('onAccountChange', id);
       if (prop === 'removeOnLogsListener') return (id) => unsubscribe('onLogs', id);
       if (prop === 'sendRawTransaction' || prop === 'sendTransaction') return (...args) => send(prop, args);
+      // Transaction and Message objects must reach the connection unchanged.
+      // They are not raw bytes, and they are not signed here.
+      if (prop === 'simulateTransaction' || prop === 'getFeeForMessage') return (...args) => call(prop, args);
       if (prop === 'then') return undefined;
       const active = pick();
       const conn = active ? connectionFor(active) : null;
