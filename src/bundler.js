@@ -2,8 +2,7 @@ const {
   Keypair,
   PublicKey,
   Transaction,
-  SystemProgram,
-  LAMPORTS_PER_SOL
+  SystemProgram
 } = require('@solana/web3.js');
 const config = require('./config');
 const { assertLiveTrading } = require('./rpc');
@@ -15,7 +14,9 @@ const {
   fetchSingleVersionedTx,
   sendAndConfirmVersioned,
   sendBundle,
-  pollBundleUntilSettled
+  pollBundleUntilSettled,
+  tipLamports,
+  bundleBlockhash
 } = require('./portalTx');
 
 class BundlerService {
@@ -93,9 +94,12 @@ class BundlerService {
     return body;
   }
 
-  async buildTipTransaction(lamports) {
+  async buildTipTransaction(lamports, blockhash) {
+    if (!Number.isInteger(lamports) || lamports < 1000) {
+      throw new Error(`Jito tip must be at least 1000 lamports (got ${lamports})`);
+    }
+    if (!blockhash) throw new Error('Jito tip requires the same recent blockhash as the bundle');
     const tipAccount = this.getRandomTipAccount();
-    const latest = await this.connection.getLatestBlockhash('confirmed');
     const tipTx = new Transaction().add(
       SystemProgram.transfer({
         fromPubkey: walletManager.masterWallet.publicKey,
@@ -103,11 +107,16 @@ class BundlerService {
         lamports
       })
     );
-    tipTx.recentBlockhash = latest.blockhash;
+    tipTx.recentBlockhash = blockhash;
     tipTx.feePayer = walletManager.masterWallet.publicKey;
     tipTx.sign(walletManager.masterWallet);
+    if (!config.JITO_TIP_ACCOUNTS.includes(tipAccount.toBase58())) {
+      throw new Error('Jito tip account is not an official tip account');
+    }
     return {
       tipAccount: tipAccount.toBase58(),
+      lamports,
+      blockhash,
       encoded: Buffer.from(tipTx.serialize()).toString('base64')
     };
   }
@@ -154,18 +163,19 @@ class BundlerService {
 
   async submitChunk(descs, jitoTipSol, label) {
     const encodedUsers = await this.buildChunkTransactions(descs);
-    const perBundleTip = jitoTipSol;
-    const tip = await this.buildTipTransaction(Math.floor(perBundleTip * LAMPORTS_PER_SOL));
+    const blockhash = bundleBlockhash(encodedUsers);
+    const tip = await this.buildTipTransaction(tipLamports(jitoTipSol), blockhash);
     const encoded = encodedUsers.concat(tip.encoded);
-    if (encoded.length > config.JITO_MAX_TXS) {
-      throw new Error(`Refusing to submit a Jito bundle of ${encoded.length} transactions (max ${config.JITO_MAX_TXS})`);
-    }
+    const shared = bundleBlockhash(encoded);
+    console.log(`[Bundler] Jito ${label}: ${encoded.length} txs, tip ${tip.lamports} lamports, blockhash ${shared}`);
     const bundleId = await sendBundle(encoded);
     const settled = await pollBundleUntilSettled(bundleId);
     if (!settled.landed) {
-      const error = new Error(`Jito bundle ${bundleId} (${label}) did not land: ${settled.status}`);
+      const detail = settled.details ? ` ${JSON.stringify(settled.details)}` : '';
+      const error = new Error(`Jito bundle ${bundleId} (${label}) did not land: ${settled.status}${detail}`);
       error.statusCode = 502;
       error.bundleId = bundleId;
+      error.jitoStatus = settled;
       throw error;
     }
     return {

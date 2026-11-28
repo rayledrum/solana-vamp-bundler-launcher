@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { VersionedTransaction } = require('@solana/web3.js');
+const { Transaction, VersionedTransaction } = require('@solana/web3.js');
 const bs58Raw = require('bs58');
 const bs58 = bs58Raw.default || bs58Raw;
 const config = require('./config');
@@ -104,12 +104,43 @@ async function sendAndConfirmVersioned(connection, tx) {
   return signature;
 }
 
+const JITO_MIN_TIP_LAMPORTS = 1000;
+
 function jitoEndpoint(kind) {
-  const root = String(config.JITO_BLOCK_ENGINE_URL || '').replace(/\/bundles\/?$/, '');
-  if (kind === 'send') return config.JITO_BLOCK_ENGINE_URL;
-  if (kind === 'inflight') return `${root}/getInflightBundleStatuses`;
-  if (kind === 'status') return `${root}/getBundleStatuses`;
+  if (kind === 'send' || kind === 'inflight' || kind === 'status') return config.JITO_BLOCK_ENGINE_URL;
   throw new Error(`Unknown Jito endpoint ${kind}`);
+}
+
+function tipLamports(sol) {
+  const lamports = Math.floor(Number(sol) * 1_000_000_000);
+  if (!Number.isInteger(lamports) || lamports < JITO_MIN_TIP_LAMPORTS) {
+    throw new Error(`Jito tip must be at least ${JITO_MIN_TIP_LAMPORTS} lamports`);
+  }
+  return lamports;
+}
+
+function transactionBlockhash(encoded) {
+  const bytes = Uint8Array.from(Buffer.from(encoded, 'base64'));
+  try {
+    return VersionedTransaction.deserialize(bytes).message.recentBlockhash;
+  } catch (err) {
+    return Transaction.from(bytes).recentBlockhash;
+  }
+}
+
+function bundleBlockhash(encodedTxs) {
+  if (!Array.isArray(encodedTxs) || encodedTxs.length < 1) {
+    throw new Error('Bundle has no transactions');
+  }
+  if (encodedTxs.length > config.JITO_MAX_TXS) {
+    throw new Error(`Refusing a Jito bundle of ${encodedTxs.length} transactions (max ${config.JITO_MAX_TXS})`);
+  }
+  const hashes = encodedTxs.map(transactionBlockhash);
+  const first = hashes[0];
+  if (!first || hashes.some(hash => hash !== first)) {
+    throw new Error('Bundle transactions do not share one recent blockhash');
+  }
+  return first;
 }
 
 async function jitoRpc(kind, method, params) {
@@ -127,7 +158,9 @@ async function jitoRpc(kind, method, params) {
     throw new Error(`Jito ${method} HTTP ${response.status}: ${portalErrorText(response.data)}`);
   }
   if (response.data && response.data.error) {
-    throw new Error(`Jito ${method} error: ${JSON.stringify(response.data.error).slice(0, 400)}`);
+    const body = JSON.stringify(response.data.error).slice(0, 800);
+    console.error(`[Jito] ${method} error: ${body}`);
+    throw new Error(`Jito ${method} error: ${body}`);
   }
   return response.data || {};
 }
@@ -152,7 +185,15 @@ async function pollBundleUntilSettled(bundleId) {
     const status = row && row.status ? row.status : 'Pending';
     last = status;
     if (status === 'Failed' || status === 'Invalid') {
-      return { landed: false, status, inflight: row };
+      let details = null;
+      try {
+        const landed = await jitoRpc('status', 'getBundleStatuses', [[bundleId]]);
+        details = landed.result && landed.result.value ? landed.result.value[0] : null;
+      } catch (err) {
+        details = { lookupError: err.message };
+      }
+      console.error(`[Jito] bundle ${bundleId} ${status}: ${JSON.stringify({ inflight: row, details }).slice(0, 800)}`);
+      return { landed: false, status, inflight: row, details };
     }
     if (status === 'Landed') {
       let details = null;
@@ -176,5 +217,8 @@ module.exports = {
   sendAndConfirmVersioned,
   sendBundle,
   pollBundleUntilSettled,
-  jitoEndpoint
+  jitoEndpoint,
+  tipLamports,
+  bundleBlockhash,
+  JITO_MIN_TIP_LAMPORTS
 };
