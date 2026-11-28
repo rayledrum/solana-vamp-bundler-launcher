@@ -1,5 +1,6 @@
 const axios = require('axios');
 const config = require('./config');
+const { collectVampMetadata } = require('./vampMetadata');
 
 const SOURCE_TIMEOUT_MS = 6000;
 const SOURCE_CACHE_MS = 60 * 1000;
@@ -473,63 +474,22 @@ class VampScanner {
     return list;
   }
 
-  // Inspect any token by CA or Pump.fun URL for direct Vamp Cloning
-  async inspectToken(tokenAddress) {
+  // Inspect any token by CA or Pump.fun URL for direct Vamp Cloning.
+  // Pump, then on-chain metadata, then DexScreener, then Gecko. Empty fields stay empty.
+  async inspectToken(tokenAddress, connection) {
     const match = String(tokenAddress).match(/[1-9A-HJ-NP-za-km-z]{32,44}/);
     const cleanAddress = match ? match[0] : tokenAddress;
-
-    try {
-      let pair = null;
-      // 1. Try direct DexScreener tokens endpoint
-      try {
-        const res = await axios.get(`${config.DEXSCREENER_API}/tokens/${cleanAddress}`, { timeout: 4000 });
-        if (res.data?.pairs?.[0]) pair = res.data.pairs[0];
-      } catch (e) {}
-
-      // 2. Fallback to DexScreener search endpoint (reliably catches newly created pump.fun coins)
-      if (!pair) {
-        try {
-          const searchRes = await axios.get(`${config.DEXSCREENER_API}/search?q=${cleanAddress}`, { timeout: 4000 });
-          if (searchRes.data?.pairs && searchRes.data.pairs.length > 0) {
-            pair = searchRes.data.pairs.find(p => p.baseToken?.address === cleanAddress) || searchRes.data.pairs[0];
-          }
-        } catch (e) {}
-      }
-
-      if (pair) {
-        const base = pair.baseToken || {};
-        const info = pair.info || {};
-        const twitter = (info.socials || []).find(s => (s.type || s.platform || '').toLowerCase().includes('twitter') || (s.url || '').includes('x.com') || (s.url || '').includes('twitter.com'))?.url || '';
-        const telegram = (info.socials || []).find(s => (s.type || s.platform || '').toLowerCase().includes('telegram') || (s.url || '').includes('t.me'))?.url || '';
-        const website = (info.websites || [])[0]?.url || (typeof (info.websites || [])[0] === 'string' ? (info.websites || [])[0] : '') || '';
-
-        return {
-          address: cleanAddress,
-          name: base.name || 'Unknown',
-          symbol: base.symbol || 'VAMP',
-          description: info.description || `${base.name} - cloned & launched with Svarog/Vamp bundler`,
-          icon: info.imageUrl || '',
-          socials: { twitter, telegram, website },
-          twitter,
-          telegram,
-          website,
-          priceUsd: pair.priceUsd,
-          marketCap: pair.marketCap,
-          volume24h: pair.volume?.h24
-        };
-      }
-    } catch (e) {
-      console.warn('[VampScanner] Failed to inspect token:', e.message);
+    let conn = connection;
+    if (!conn) {
+      try { conn = require('./rpc').rpc.connection; } catch (err) { conn = null; }
     }
-
-    return {
-      address: cleanAddress,
-      name: 'Vamped Meme Coin',
-      symbol: 'VAMP',
-      description: 'Instant vamp launch on Pump.fun bonding curve',
-      icon: '',
-      socials: {}
-    };
+    const token = await collectVampMetadata(cleanAddress, {
+      connection: conn,
+      get: (url) => axios.get(url, { timeout: 6000, headers: { Accept: 'application/json,image/*,*/*' } })
+    });
+    token.socials = { twitter: token.twitter, telegram: token.telegram, website: token.website };
+    token.imageUrl = token.icon;
+    return token;
   }
 
   // Generate Vamp Mutation (e.g. clone + slight twist)

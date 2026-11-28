@@ -4,7 +4,7 @@ const path = require('path');
 const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const config = require('./config');
-const { rpc, startupLine, liveTradingPaused, LIVE_TRADING_PAUSED } = require('./rpc');
+const { rpc, startupLine, liveTradingPaused, describeRpcAccount, LIVE_TRADING_PAUSED } = require('./rpc');
 const walletManager = require('./walletManager');
 const bundler = require('./bundler');
 const vampScanner = require('./vampScanner');
@@ -256,11 +256,10 @@ setInterval(async () => {
         slot,
         timestamp: Date.now(),
         simulation: walletManager.simulationMode,
-        rpc: {
-          active: current.active,
-          paused: liveTradingPaused(current),
-          providers: current.providers.map(row => ({ name: row.name, healthy: row.healthy }))
-        }
+        rpc: describeRpcAccount(current, {
+          heliusConfigured: config.HELIUS_CONFIGURED,
+          quicknodeConfigured: config.QUICKNODE_CONFIGURED
+        })
       }
     });
   } catch (err) {
@@ -278,14 +277,10 @@ app.get('/api/rpc/status', (req, res) => {
   const current = rpc.status();
   res.json({
     success: true,
-    active: current.active,
-    paused: liveTradingPaused(current),
-    providers: current.providers.map(row => ({
-      name: row.name,
-      configured: row.configured,
-      healthy: row.healthy,
-      cooldownMs: row.cooldownMs
-    }))
+    ...describeRpcAccount(current, {
+      heliusConfigured: config.HELIUS_CONFIGURED,
+      quicknodeConfigured: config.QUICKNODE_CONFIGURED
+    })
   });
 });
 

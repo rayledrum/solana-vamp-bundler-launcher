@@ -632,6 +632,26 @@ function bindLiveTradingPool(pool) {
   boundPool = pool || null;
 }
 
+function describeRpcAccount(status, flags = {}) {
+  const active = status && status.active ? status.active : null;
+  const heliusConfigured = Boolean(flags.heliusConfigured);
+  let account = 'n/a';
+  if (active === 'Helius' && heliusConfigured) account = 'Helius configured';
+  else if (active === 'QuickNode') account = 'QuickNode';
+  else if (active === 'Public') account = 'live paused';
+  return {
+    active: active || 'Public',
+    paused: !status || active == null || active === 'Public',
+    account,
+    providers: ((status && status.providers) || []).map(row => ({
+      name: row.name,
+      configured: row.configured !== false,
+      healthy: row.healthy !== false,
+      cooldownMs: row.cooldownMs || 0
+    }))
+  };
+}
+
 function liveTradingPaused(snapshot) {
   if (liveOverride === 'allow') return false;
   if (liveOverride === 'pause') return true;
@@ -665,6 +685,7 @@ module.exports = {
   providersFromConfig,
   rpc,
   startupLine,
+  describeRpcAccount,
   liveTradingPaused,
   assertLiveTrading,
   setLiveTradingOverride,
