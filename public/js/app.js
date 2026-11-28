@@ -2316,7 +2316,7 @@ async function setTrackedTokenFromNav() {
     state.activeToken = data.activeToken;
     updateActiveTokenUi(data.activeToken);
     loadLiveStats();
-    showToast(`Tracking: ${mint.slice(0, 8)}...`, 'success');
+    showToast(`Tracking mint ${mint.slice(0, 8)}... as our launch`, 'success');
   } catch (e) {
     showToast('Failed to track CA: ' + e.message, 'error');
   }
