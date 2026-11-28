@@ -3,6 +3,17 @@ const { PublicKey } = require('@solana/web3.js');
 
 const { ignoredModeEnv } = require('./simulationMode');
 
+function rpsEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === '') return fallback;
+  if (String(raw).trim().toLowerCase() === 'unlimited') return Infinity;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`Environment variable ${name} must be a positive number or unlimited`);
+  }
+  return value;
+}
+
 function num(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || String(raw).trim() === '') return fallback;
@@ -48,6 +59,9 @@ const config = {
   QUICKNODE_WS_URL,
   QUICKNODE_CONFIGURED: Boolean(QUICKNODE_RPC_URL),
   SOLANA_PUBLIC_RPC_URL: PUBLIC_RPC,
+  QUICKNODE_RPS: rpsEnv('QUICKNODE_RPS', 12),
+  HELIUS_RPS: rpsEnv('HELIUS_RPS', Infinity),
+  PUBLIC_RPS: rpsEnv('PUBLIC_RPS', 4),
 
   JITO_BLOCK_ENGINE_URL: String(process.env.JITO_BLOCK_ENGINE_URL || '').trim()
     || 'https://mainnet.block-engine.jito.wtf/api/v1/bundles',

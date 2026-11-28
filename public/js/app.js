@@ -136,7 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // the fallback, and it is how simulation still refreshes the on-chain LIVE number.
   setInterval(() => {
     loadLiveStats();
-  }, 3000);
+  }, 8000);
   setInterval(() => {
     loadMasterWallet();
     loadSubWallets();

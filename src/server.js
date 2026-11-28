@@ -154,6 +154,12 @@ const curveFeed = new CurveFeed({
 
 tradingEngine.onChainSnapshot = (mint) => curveFeed.snapshot(mint);
 
+function paceLiveStep() {
+  return new Promise(resolve => setTimeout(resolve, 150));
+}
+
+// Switching to live does not rerun the startup provider probe. The reads and
+// subscriptions below are staggered so one burst cannot look like an outage.
 async function syncLiveFeed() {
   if (walletManager.simulationMode) {
     liveFeed.stop();
@@ -169,6 +175,7 @@ async function syncLiveFeed() {
       console.warn('[Tokens] Could not read mint owner program:', err.message);
     }
   }
+  await paceLiveStep();
   if (tradingEngine.activeToken) {
     try {
       await tradingEngine.seedOnChainHoldings(tradingEngine.activeToken);
@@ -176,14 +183,17 @@ async function syncLiveFeed() {
       console.warn('[Tokens] Holding seed failed:', err.message);
     }
   }
+  await paceLiveStep();
   liveFeed.setWallets(walletManager.walletList().map(wallet => wallet.publicKey.toBase58()));
   liveFeed.setMint(tradingEngine.activeToken);
   liveFeed.start();
+  await paceLiveStep();
   try {
     await liveFeed.resync();
   } catch (err) {
     console.warn('[Tokens] Account resync failed:', err.message);
   }
+  await paceLiveStep();
   curveFeed.setMint(tradingEngine.activeToken);
   curveFeed.start();
 }
@@ -256,7 +266,7 @@ setInterval(async () => {
   } catch (err) {
     console.warn('[Heartbeat]', err.message);
   }
-}, 3000);
+}, 10000);
 
 function refusePublicRpcLive(res) {
   if (walletManager.simulationMode || !liveTradingPaused()) return false;
