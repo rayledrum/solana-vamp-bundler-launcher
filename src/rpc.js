@@ -38,11 +38,29 @@ function redactText(text) {
   return String(text || '').replace(/\b(?:https?|wss?):\/\/[^\s'")]+/gi, (url) => redactUrl(url));
 }
 
+function errorCodes(err) {
+  const nested = err && err.error && typeof err.error === 'object' ? err.error : null;
+  return [err && err.code, err && err.errno, err && err.statusCode, err && err.status, nested && nested.code]
+    .filter(code => code != null);
+}
+
+function isQuotaCode(code) {
+  return code === -32003 || code === '-32003';
+}
+
+function msUntilNextUtcDay(at) {
+  const when = new Date(at);
+  const next = Date.UTC(when.getUTCFullYear(), when.getUTCMonth(), when.getUTCDate() + 1);
+  return Math.max(1000, next - at);
+}
+
 function classifyRpcError(err) {
   if (!err) return null;
   const nested = err.error && typeof err.error === 'object' ? err.error : null;
   const msg = `${err.message || err} ${nested && nested.message || ''}`.toLowerCase();
-  const code = err.code || err.errno || err.statusCode || err.status || (nested && nested.code);
+  const codes = errorCodes(err);
+  const code = codes[0];
+  if (codes.some(isQuotaCode) || /daily request limit|-32003/.test(msg)) return 'quota';
   if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'EAI_AGAIN' || code === 'ENOTFOUND' || code === 'EPIPE' || code === 'UND_ERR_CONNECT_TIMEOUT') {
     return 'transport';
   }
@@ -146,6 +164,7 @@ function connectionOptions(provider) {
 }
 
 function failoverLabel(kind) {
+  if (kind === 'quota') return 'daily quota exhausted';
   if (kind === 'credit') return 'credit exhausted';
   if (kind === 'rate') return 'rate limited';
   return 'unreachable';
@@ -296,7 +315,10 @@ function createRpcPool(options = {}) {
     const before = pick();
     const provider = providers.find(row => row.name === name);
     if (!provider) return null;
-    const wait = kind === 'credit' ? creditCooldownMs : (kind === 'rate' ? (options.rateFailoverMs == null ? RATE_FAILOVER_MS : options.rateFailoverMs) : cooldownMs);
+    const quotaCooldownMs = options.quotaCooldownMs == null ? msUntilNextUtcDay(now()) : options.quotaCooldownMs;
+    const wait = kind === 'quota'
+      ? quotaCooldownMs
+      : (kind === 'credit' ? creditCooldownMs : (kind === 'rate' ? (options.rateFailoverMs == null ? RATE_FAILOVER_MS : options.rateFailoverMs) : cooldownMs));
     provider.unhealthyUntil = now() + wait;
     provider.lastKind = kind || 'rate';
     const after = pick();
@@ -342,6 +364,12 @@ function createRpcPool(options = {}) {
       return result;
     } catch (err) {
       const kind = classifyRpcError(err);
+      if (kind === 'quota') {
+        markUnhealthy(provider.name, 'quota');
+        const next = pick();
+        if (!next || next.name === provider.name) throw scrub(err);
+        return runWith(next, method, args, { priority, rateTries: 0, failover });
+      }
       if (kind === 'rate') {
         if (!provider.rateSince) provider.rateSince = now();
         const sustained = now() - provider.rateSince >= rateSustainedMs;
@@ -423,6 +451,12 @@ function createRpcPool(options = {}) {
         return sent;
       } catch (err) {
         const kind = classifyRpcError(err);
+        if (kind === 'quota') {
+          markUnhealthy(provider.name, 'quota');
+          const next = pick();
+          if (!next || next.name === provider.name) throw scrub(err);
+          return deliver(next, 0);
+        }
         if (kind === 'rate') {
           if (prepared.signature) {
             const landed = await signatureLanded(provider, prepared.signature);
@@ -498,6 +532,10 @@ function createRpcPool(options = {}) {
       } catch (err) {
         clearTimeout(timer);
         const kind = classifyRpcError(err);
+        if (kind === 'quota') {
+          markUnhealthy(provider.name, 'quota');
+          continue;
+        }
         if (kind === 'rate') continue;
         markUnhealthy(provider.name, kind || 'transport');
       }
@@ -608,6 +646,33 @@ function createRpcPool(options = {}) {
     }
   });
 
+  async function reprobe() {
+    const active = pick();
+    if (!active) return null;
+    const activeIndex = providers.indexOf(active);
+    for (let index = 0; index < activeIndex; index += 1) {
+      const provider = providers[index];
+      if (healthy(provider)) continue;
+      if (provider.lastKind === 'quota') continue;
+      try {
+        await invoke(provider, 'getSlot', ['processed'], false);
+        provider.unhealthyUntil = 0;
+        provider.lastKind = null;
+        provider.rateSince = 0;
+        const next = pick();
+        if (next && next.name !== active.name) {
+          log(`RPC failback: ${active.name} -> ${next.name}`);
+          resubscribe();
+        }
+        return next;
+      } catch (err) {
+        const kind = classifyRpcError(err);
+        if (kind) markUnhealthy(provider.name, kind);
+      }
+    }
+    return pick();
+  }
+
   const api = {
     connection,
     call,
@@ -617,6 +682,7 @@ function createRpcPool(options = {}) {
     status,
     noteSocketClosed,
     probe,
+    reprobe,
     providers
   };
   if (process.env.RPC_DEBUG === '1') {

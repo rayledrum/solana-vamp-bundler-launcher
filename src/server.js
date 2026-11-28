@@ -243,6 +243,7 @@ wss.on('connection', ws => {
 
 setInterval(async () => {
   try {
+    try { await rpc.reprobe(); } catch (err) { /* the next heartbeat tries again */ }
     let slot = null;
     try {
       slot = await slotConnection().getSlot('processed');
