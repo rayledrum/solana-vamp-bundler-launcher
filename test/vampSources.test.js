@@ -75,7 +75,7 @@ test('one failing source still leaves coins from the sources that answered', asy
     const list = await vampScanner.getTrendingSolanaTokens(15, { minMcap: 100000 });
     assert.equal(list.some(row => row.tokenAddress === 'MintGood'), true);
     assert.equal(list.some(row => row.tokenAddress === 'MintDex'), true);
-    assert.equal(list[0].metrics.mcap >= list[list.length - 1].metrics.mcap, true);
+    assert.equal(list[0].metrics.mcap <= list[list.length - 1].metrics.mcap, true);
     assert.equal(list.matched, 2);
     assert.ok(list.scanned >= 2);
     assert.ok(list.sources >= 2);

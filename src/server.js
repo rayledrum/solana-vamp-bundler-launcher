@@ -587,9 +587,21 @@ app.get('/api/vamp/trending', async (req, res) => {
     const limit = parseInt(req.query.limit || '12', 10);
     const capped = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 12;
     const minMcap = Number(req.query.minMcap);
+    const maxMcap = Number(req.query.maxMcap);
+    const minAgeMs = Number(req.query.minAgeMs);
+    const maxAgeMs = Number(req.query.maxAgeMs);
+    const minVolume = Number(req.query.minVolume);
+    const minLiquidity = Number(req.query.minLiquidity);
     const showUnknown = req.query.showUnknown === '1' || req.query.showUnknown === 'true';
+    const sort = ['closest', 'newest', 'biggest'].includes(req.query.sort) ? req.query.sort : '';
     const tokens = await vampScanner.getTrendingSolanaTokens(capped, {
       minMcap: Number.isFinite(minMcap) && minMcap > 0 ? minMcap : 0,
+      maxMcap: Number.isFinite(maxMcap) && maxMcap > 0 ? maxMcap : 0,
+      minAgeMs: Number.isFinite(minAgeMs) && minAgeMs > 0 ? minAgeMs : 0,
+      maxAgeMs: Number.isFinite(maxAgeMs) && maxAgeMs > 0 ? maxAgeMs : 0,
+      minVolume: Number.isFinite(minVolume) && minVolume > 0 ? minVolume : 0,
+      minLiquidity: Number.isFinite(minLiquidity) && minLiquidity > 0 ? minLiquidity : 0,
+      sort,
       showUnknown
     });
     res.json({
@@ -599,7 +611,9 @@ app.get('/api/vamp/trending', async (req, res) => {
       scanned: tokens.scanned || 0,
       sources: tokens.sources || 0,
       matched: tokens.matched || 0,
+      sort: tokens.sort || sort,
       minMcap: Number.isFinite(minMcap) && minMcap > 0 ? minMcap : 0,
+      maxMcap: Number.isFinite(maxMcap) && maxMcap > 0 ? maxMcap : 0,
       tokens: tokens.map(token => ({
         ...token,
         devBlacklisted: safetyChecks.isMintFlagged(token.tokenAddress)
