@@ -9,6 +9,10 @@ const READ_COOLDOWN_MS = 5 * 60 * 1000;
 const CREDIT_COOLDOWN_MS = 30 * 60 * 1000;
 const RATE_SUSTAINED_MS = 30 * 1000;
 const RATE_FAILOVER_MS = 30 * 1000;
+const WS_COOLDOWN_MS = 30 * 60 * 1000;
+const WS_FAILS_BEFORE_COOLDOWN = 3;
+const PUBLIC_WS_URL = 'wss://api.mainnet.solana.com';
+const ACCOUNT_POLL_MS = 2000;
 const RATE_RETRIES = 3;
 const MAX_LOG_SUBS = 8;
 const LIVE_TRADING_PAUSED = 'Live trading paused: only public RPC available';
@@ -38,11 +42,30 @@ function redactText(text) {
   return String(text || '').replace(/\b(?:https?|wss?):\/\/[^\s'")]+/gi, (url) => redactUrl(url));
 }
 
+function errorCodes(err) {
+  const nested = err && err.error && typeof err.error === 'object' ? err.error : null;
+  return [err && err.code, err && err.errno, err && err.statusCode, err && err.status, nested && nested.code]
+    .filter(code => code != null);
+}
+
+function isQuotaCode(code) {
+  return code === -32003 || code === '-32003';
+}
+
+function msUntilNextUtcDay(at) {
+  const when = new Date(at);
+  const next = Date.UTC(when.getUTCFullYear(), when.getUTCMonth(), when.getUTCDate() + 1);
+  return Math.max(1000, next - at);
+}
+
 function classifyRpcError(err) {
   if (!err) return null;
   const nested = err.error && typeof err.error === 'object' ? err.error : null;
   const msg = `${err.message || err} ${nested && nested.message || ''}`.toLowerCase();
-  const code = err.code || err.errno || err.statusCode || err.status || (nested && nested.code);
+  const codes = errorCodes(err);
+  const code = codes[0];
+  if (codes.some(isQuotaCode) || /daily request limit|-32003/.test(msg)) return 'quota';
+  if (/-32601|method not found|method not allowed|unsupported method|is not available/.test(msg)) return null;
   if (code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'EAI_AGAIN' || code === 'ENOTFOUND' || code === 'EPIPE' || code === 'UND_ERR_CONNECT_TIMEOUT') {
     return 'transport';
   }
@@ -146,6 +169,7 @@ function connectionOptions(provider) {
 }
 
 function failoverLabel(kind) {
+  if (kind === 'quota') return 'daily quota exhausted';
   if (kind === 'credit') return 'credit exhausted';
   if (kind === 'rate') return 'rate limited';
   return 'unreachable';
@@ -239,7 +263,7 @@ function providersFromConfig(cfg = config) {
   list.push({
     name: 'Public',
     httpUrl: cfg.SOLANA_PUBLIC_RPC_URL,
-    wsUrl: '',
+    wsUrl: cfg.PUBLIC_WS_URL || PUBLIC_WS_URL,
     configured: true
   });
   return list;
@@ -261,6 +285,9 @@ function createRpcPool(options = {}) {
       unhealthyUntil: 0,
       lastKind: null,
       rateSince: 0,
+      wsCooldownUntil: 0,
+      wsFailures: 0,
+      wsLogged: false,
       limiter: createTokenBucket({ rps, now, sleep }),
       limitInFetch: usingDefaultConnect && Number.isFinite(rps)
     };
@@ -296,26 +323,61 @@ function createRpcPool(options = {}) {
     const before = pick();
     const provider = providers.find(row => row.name === name);
     if (!provider) return null;
-    const wait = kind === 'credit' ? creditCooldownMs : (kind === 'rate' ? (options.rateFailoverMs == null ? RATE_FAILOVER_MS : options.rateFailoverMs) : cooldownMs);
+    const quotaCooldownMs = options.quotaCooldownMs == null ? msUntilNextUtcDay(now()) : options.quotaCooldownMs;
+    const wait = kind === 'quota'
+      ? quotaCooldownMs
+      : (kind === 'credit' ? creditCooldownMs : (kind === 'rate' ? (options.rateFailoverMs == null ? RATE_FAILOVER_MS : options.rateFailoverMs) : cooldownMs));
     provider.unhealthyUntil = now() + wait;
     provider.lastKind = kind || 'rate';
     const after = pick();
     if (before && after && before.name !== after.name) {
       log(`RPC failover: ${before.name} -> ${after.name} (${failoverLabel(kind)})`);
-      resubscribe();
+      retargetSubscriptions();
     }
     return provider;
+  }
+
+  function wsUrlOf(provider) {
+    if (!provider) return '';
+    if (provider.wsUrl) return provider.wsUrl;
+    if (provider.name === 'Public') return PUBLIC_WS_URL;
+    return '';
+  }
+
+  function wsAvailable(provider, at = now()) {
+    if (!provider || !wsUrlOf(provider)) return false;
+    if ((provider.wsCooldownUntil || 0) > at) return false;
+    if (provider.wsLogged && (provider.wsCooldownUntil || 0) <= at) {
+      provider.wsLogged = false;
+      provider.wsFailures = 0;
+    }
+    return true;
+  }
+
+  function pickWs(at = now()) {
+    const http = pick(at);
+    if (http && wsAvailable(http, at)) return http;
+    return providers.find(row => wsAvailable(row, at)) || null;
+  }
+
+  function wsSnapshot(at = now()) {
+    const socket = pickWs(at);
+    if (socket) return { mode: 'socket', provider: socket.name, status: 'open' };
+    const cooling = providers.some(row => (row.wsCooldownUntil || 0) > at);
+    return { mode: 'poll', provider: null, status: cooling ? 'rejected' : 'polling' };
   }
 
   function status(at = now()) {
     const active = pick(at);
     return {
       active: active ? active.name : null,
+      ws: wsSnapshot(at),
       providers: providers.map(row => ({
         name: row.name,
         configured: row.configured !== false,
         healthy: healthy(row, at),
-        cooldownMs: Math.max(0, row.unhealthyUntil - at)
+        cooldownMs: Math.max(0, row.unhealthyUntil - at),
+        wsCooldownMs: Math.max(0, (row.wsCooldownUntil || 0) - at)
       }))
     };
   }
@@ -342,6 +404,12 @@ function createRpcPool(options = {}) {
       return result;
     } catch (err) {
       const kind = classifyRpcError(err);
+      if (kind === 'quota') {
+        markUnhealthy(provider.name, 'quota');
+        const next = pick();
+        if (!next || next.name === provider.name) throw scrub(err);
+        return runWith(next, method, args, { priority, rateTries: 0, failover });
+      }
       if (kind === 'rate') {
         if (!provider.rateSince) provider.rateSince = now();
         const sustained = now() - provider.rateSince >= rateSustainedMs;
@@ -423,6 +491,12 @@ function createRpcPool(options = {}) {
         return sent;
       } catch (err) {
         const kind = classifyRpcError(err);
+        if (kind === 'quota') {
+          markUnhealthy(provider.name, 'quota');
+          const next = pick();
+          if (!next || next.name === provider.name) throw scrub(err);
+          return deliver(next, 0);
+        }
         if (kind === 'rate') {
           if (prepared.signature) {
             const landed = await signatureLanded(provider, prepared.signature);
@@ -457,22 +531,57 @@ function createRpcPool(options = {}) {
     return deliver(first, 0);
   }
 
+  const lastWsError = new Map();
+  let pollTimer = null;
+
   function watchSocket(provider, conn) {
     if (watched.has(provider.name)) return;
     const ws = conn && conn._rpcWebSocket;
     if (!ws || typeof ws.on !== 'function') return;
     watched.add(provider.name);
-    const note = () => noteSocketClosed(provider.name);
-    ws.on('error', note);
-    ws.on('close', note);
+    ws.on('error', (err) => {
+      lastWsError.set(provider.name, err && err.message ? err.message : String(err || ''));
+    });
+    ws.on('close', () => noteWsFailure(provider.name, lastWsError.get(provider.name) || ''));
+  }
+
+  function silenceSocket(conn) {
+    const ws = conn && conn._rpcWebSocket;
+    if (!ws) return;
+    try {
+      ws.max_reconnects = 0;
+      ws.reconnect = false;
+      if (ws.socket) {
+        ws.socket.max_reconnects = 0;
+        ws.socket.reconnect = false;
+      }
+      if (typeof ws.close === 'function') ws.close();
+    } catch (err) { /* already closed */ }
+  }
+
+  function noteWsFailure(name, message) {
+    const provider = providers.find(row => row.name === name);
+    if (!provider) return;
+    const text = String(message || '');
+    if ((provider.wsCooldownUntil || 0) > now()) {
+      silenceSocket(connections.get(name));
+      return;
+    }
+    provider.wsFailures = (provider.wsFailures || 0) + 1;
+    if (provider.wsFailures < WS_FAILS_BEFORE_COOLDOWN) return;
+    const cooldown = options.wsCooldownMs == null ? WS_COOLDOWN_MS : options.wsCooldownMs;
+    provider.wsCooldownUntil = now() + cooldown;
+    silenceSocket(connections.get(name));
+    if (!provider.wsLogged) {
+      provider.wsLogged = true;
+      const httpName = pick() ? pick().name : 'the current HTTP provider';
+      log(`RPC ${name} websocket rejected (${/403/.test(text) ? '403' : 'closed'}); HTTP stays on ${httpName}. Not retrying that socket until the cooldown ends.`);
+    }
+    retargetSubscriptions();
   }
 
   function noteSocketClosed(name) {
-    const count = (socketFailures.get(name) || 0) + 1;
-    socketFailures.set(name, count);
-    if (count < 2) return;
-    socketFailures.set(name, 0);
-    markUnhealthy(name, 'transport');
+    noteWsFailure(name, lastWsError.get(name) || '');
   }
 
   async function probe(probeOptions = {}) {
@@ -498,6 +607,10 @@ function createRpcPool(options = {}) {
       } catch (err) {
         clearTimeout(timer);
         const kind = classifyRpcError(err);
+        if (kind === 'quota') {
+          markUnhealthy(provider.name, 'quota');
+          continue;
+        }
         if (kind === 'rate') continue;
         markUnhealthy(provider.name, kind || 'transport');
       }
@@ -505,23 +618,91 @@ function createRpcPool(options = {}) {
     return pick();
   }
 
-  function resubscribe() {
-    const provider = pick();
-    if (!provider) return;
-    subscriptions.forEach(sub => {
-      const previous = providers.find(row => row.name === sub.provider);
-      const previousConn = previous && connections.get(previous.name);
-      if (previousConn && sub.remoteId != null) {
-        const remove = sub.method === 'onLogs' ? 'removeOnLogsListener' : 'removeAccountChangeListener';
-        if (typeof previousConn[remove] === 'function') {
-          try { previousConn[remove](sub.remoteId); } catch (err) { /* already closed */ }
-        }
-      }
-      const conn = connectionFor(provider);
-      if (typeof conn[sub.method] !== 'function') return;
+  function detachSubscription(sub) {
+    if (!sub || sub.remoteId == null) return;
+    const previous = providers.find(row => row.name === sub.provider);
+    const previousConn = previous && connections.get(previous.name);
+    const remove = sub.method === 'onLogs' ? 'removeOnLogsListener' : 'removeAccountChangeListener';
+    if (previousConn && typeof previousConn[remove] === 'function') {
+      try { previousConn[remove](sub.remoteId); } catch (err) { /* already closed */ }
+    }
+    sub.remoteId = null;
+  }
+
+  function accountKey(value) {
+    if (!value) return '';
+    if (typeof value.toBase58 === 'function') return value.toBase58();
+    return String(value);
+  }
+
+  function stopPoll() {
+    if (!pollTimer) return;
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  async function pollSubscriptions() {
+    if (pickWs()) {
+      stopPoll();
+      retargetSubscriptions();
+      return;
+    }
+    const accounts = subscriptions.filter(sub => sub.method === 'onAccountChange' && sub.mode === 'poll');
+    if (!accounts.length || !pick()) return;
+    try {
+      const infos = await call('getMultipleAccountsInfo', [accounts.map(sub => sub.args[0]), 'processed']);
+      accounts.forEach((sub, index) => {
+        const info = infos ? infos[index] : null;
+        const key = accountKey(sub.args[0]);
+        const next = info ? JSON.stringify({ lamports: info.lamports, data: info.data && info.data.length }) : 'null';
+        if (sub.lastPolled === next) return;
+        sub.lastPolled = next;
+        const callback = sub.args[1];
+        if (typeof callback === 'function') callback(info, null);
+      });
+    } catch (err) { /* the next poll tries again */ }
+  }
+
+  function ensurePoll() {
+    if (pollTimer || !subscriptions.some(sub => sub.mode === 'poll')) return;
+    pollTimer = setInterval(() => { pollSubscriptions(); }, options.pollMs == null ? ACCOUNT_POLL_MS : options.pollMs);
+    if (typeof pollTimer.unref === 'function') pollTimer.unref();
+  }
+
+  function attachSubscription(sub, provider) {
+    sub.mode = 'socket';
+    sub.provider = provider.name;
+    const conn = connectionFor(provider);
+    if (typeof conn[sub.method] !== 'function') return;
+    try {
       sub.remoteId = conn[sub.method](...sub.args);
-      sub.provider = provider.name;
+    } catch (err) {
+      sub.remoteId = null;
+    }
+  }
+
+  function retargetSubscriptions() {
+    const http = pick();
+    const socket = (http && wsAvailable(http) && http) || pickWs();
+    if (!socket) {
+      subscriptions.forEach(sub => {
+        detachSubscription(sub);
+        sub.mode = 'poll';
+        sub.provider = null;
+      });
+      ensurePoll();
+      return;
+    }
+    stopPoll();
+    subscriptions.forEach(sub => {
+      if (sub.mode === 'socket' && sub.provider === socket.name && sub.remoteId != null) return;
+      detachSubscription(sub);
+      attachSubscription(sub, socket);
     });
+  }
+
+  function resubscribe() {
+    retargetSubscriptions();
   }
 
   function subscriptionKey(method, args) {
@@ -532,19 +713,18 @@ function createRpcPool(options = {}) {
   }
 
   function openSubscription(sub, attempt) {
-    const provider = providers.find(row => row.name === sub.provider) || pick();
-    if (!provider) return;
-    const conn = connectionFor(provider);
+    const provider = pickWs() || (pick() && wsAvailable(pick()) ? pick() : null);
+    if (!provider) {
+      sub.mode = 'poll';
+      sub.provider = null;
+      ensurePoll();
+      return;
+    }
     const start = () => {
       if (!subscriptions.includes(sub)) return;
-      try {
-        sub.remoteId = typeof conn[sub.method] === 'function' ? conn[sub.method](...sub.args) : null;
-        sub.provider = provider.name;
-      } catch (err) {
-        if (classifyRpcError(err) === 'rate' && attempt < rateRetries) {
-          sleep(backoffMs(attempt)).then(() => openSubscription(sub, attempt + 1));
-          return;
-        }
+      attachSubscription(sub, provider);
+      if (sub.remoteId == null && classifyRpcError(sub.lastError) === 'rate' && attempt < rateRetries) {
+        sleep(backoffMs(attempt)).then(() => openSubscription(sub, attempt + 1));
       }
     };
     if (!provider.limiter || !Number.isFinite(provider.rps)) {
@@ -555,8 +735,7 @@ function createRpcPool(options = {}) {
   }
 
   function subscribe(method, args) {
-    const provider = pick();
-    if (!provider) throw new Error('No RPC provider is configured');
+    if (!pick()) throw new Error('No RPC provider is configured');
     const key = subscriptionKey(method, args);
     const existing = subscriptions.find(row => row.key === key);
     if (existing) return existing.localId;
@@ -565,7 +744,7 @@ function createRpcPool(options = {}) {
       return 0;
     }
     const localId = ++subSeq;
-    const sub = { localId, remoteId: null, method, args, provider: provider.name, key };
+    const sub = { localId, remoteId: null, method, args, provider: null, key, mode: 'socket', lastPolled: null };
     subscriptions.push(sub);
     openSubscription(sub, 0);
     return localId;
@@ -608,6 +787,33 @@ function createRpcPool(options = {}) {
     }
   });
 
+  async function reprobe() {
+    const active = pick();
+    if (!active) return null;
+    const activeIndex = providers.indexOf(active);
+    for (let index = 0; index < activeIndex; index += 1) {
+      const provider = providers[index];
+      if (healthy(provider)) continue;
+      if (provider.lastKind === 'quota') continue;
+      try {
+        await invoke(provider, 'getSlot', ['processed'], false);
+        provider.unhealthyUntil = 0;
+        provider.lastKind = null;
+        provider.rateSince = 0;
+        const next = pick();
+        if (next && next.name !== active.name) {
+          log(`RPC failback: ${active.name} -> ${next.name}`);
+          retargetSubscriptions();
+        }
+        return next;
+      } catch (err) {
+        const kind = classifyRpcError(err);
+        if (kind) markUnhealthy(provider.name, kind);
+      }
+    }
+    return pick();
+  }
+
   const api = {
     connection,
     call,
@@ -617,6 +823,8 @@ function createRpcPool(options = {}) {
     status,
     noteSocketClosed,
     probe,
+    reprobe,
+    pollSubscriptions,
     providers
   };
   if (process.env.RPC_DEBUG === '1') {
@@ -649,10 +857,14 @@ function describeRpcAccount(status, flags = {}) {
   else if (active === 'QuickNode') account = 'QuickNode';
   else if (active === 'Alchemy') account = 'Alchemy';
   else if (active === 'Public') account = 'live paused';
+  const ws = status && status.ws;
+  const wsLabel = !ws ? 'polling' : (ws.mode === 'socket' && ws.provider ? ws.provider : 'polling');
   return {
     active: active || 'Public',
     paused: !status || active == null || active === 'Public',
     account,
+    ws: wsLabel,
+    wsMode: ws && ws.mode ? ws.mode : 'poll',
     providers: ((status && status.providers) || []).map(row => ({
       name: row.name,
       configured: row.configured !== false,

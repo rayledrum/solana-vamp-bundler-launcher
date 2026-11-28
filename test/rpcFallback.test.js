@@ -339,15 +339,19 @@ test('every Connection is built with rate-limit retries disabled', () => {
   assert.match(source, /new Connection\(provider\.httpUrl, connectionOptions\(provider\)\)/);
 });
 
-test('a websocket that closes twice resubscribes on the next provider', () => {
+test('three websocket closes move the subscription and leave HTTP on the same provider', () => {
   const { api, stubs } = pool({});
   const id = api.connection.onAccountChange('pda', () => {}, 'processed');
   assert.equal(stubs.Helius.subs, 1);
-  assert.equal(stubs.QuickNode.subs, 0);
+  assert.equal(api.status().active, 'Helius');
+  stubs.Helius.ws.emit('close');
   stubs.Helius.ws.emit('close');
   assert.equal(stubs.QuickNode.subs, 0);
+  assert.equal(api.status().active, 'Helius');
   stubs.Helius.ws.emit('close');
   assert.equal(stubs.QuickNode.subs, 1);
+  assert.equal(api.status().active, 'Helius');
+  assert.equal(api.status().providers.find(row => row.name === 'Helius').healthy, true);
   assert.equal(stubs.Helius.calls.includes('removeAccountChangeListener'), true);
   api.connection.removeAccountChangeListener(id);
   assert.equal(stubs.QuickNode.calls.includes('removeAccountChangeListener'), true);

@@ -1295,7 +1295,11 @@ function paintSidebarRpc(rpc) {
   }
   if (note) {
     const paused = name === 'Public' || rpc.paused;
-    note.textContent = paused ? 'live paused' : (rpc.account || 'n/a');
+    const socket = rpc.ws && typeof rpc.ws === 'object'
+      ? (rpc.ws.mode === 'socket' && rpc.ws.provider ? rpc.ws.provider : 'polling')
+      : (rpc.ws || 'polling');
+    const account = paused ? 'live paused' : (rpc.account || name);
+    note.textContent = `${account} · WS ${socket}`;
     note.style.color = paused ? '#f04c5e' : '#78909c';
   }
 }
