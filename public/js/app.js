@@ -93,6 +93,10 @@ function bindShellActions() {
     if (name === 'saveFarmRide') return saveFarmRide(el.checked);
     if (name === 'refreshResearch') return refreshResearch();
     if (name === 'logoSelect') return handleLogoSelect(event);
+    if (name === 'captureLaunchDraft') {
+      captureLaunchDraft(el);
+      return;
+    }
     if (name === 'bundleMetrics') {
       captureBundleInput(el);
       return calculateBundleMetrics();
@@ -1252,6 +1256,8 @@ function switchTab(tabId) {
     loadSubWallets();
   } else if (tabId === 'vamp') {
     loadTrendingVampTokens();
+  } else if (tabId === 'launchpad') {
+    paintLaunchDraft();
   }
 
   if (window.lucide) {
@@ -1269,6 +1275,29 @@ function paintRpcStatus(rpc) {
     el.style.color = healthy ? '#86efac' : '#fda4af';
   }
   if (banner) banner.style.display = rpc && rpc.paused ? 'block' : 'none';
+  paintSidebarRpc(rpc);
+}
+
+function paintSidebarRpc(rpc) {
+  if (!rpc) return;
+  const name = rpc.active || 'Public';
+  const colors = { Helius: '#00c48c', QuickNode: '#00d4ff', Public: '#f04c5e' };
+  const color = colors[name] || '#94a3b8';
+  const label = document.getElementById('sidebarRpcName');
+  const dot = document.getElementById('sidebarRpcDot');
+  const note = document.getElementById('sidebarRpcNote');
+  if (dot) dot.style.background = color;
+  if (label) {
+    label.style.color = color;
+    const text = label.childNodes[label.childNodes.length - 1];
+    if (text && text.nodeType === 3) text.nodeValue = name.toUpperCase();
+    else label.appendChild(document.createTextNode(name.toUpperCase()));
+  }
+  if (note) {
+    const paused = name === 'Public' || rpc.paused;
+    note.textContent = paused ? 'live paused' : (rpc.account || 'n/a');
+    note.style.color = paused ? '#f04c5e' : '#78909c';
+  }
 }
 
 async function loadStatus() {
@@ -2321,6 +2350,13 @@ function restoreLaunchPrefs() {
   paintBundleFields();
   paintJitoTips();
   paintLaunchMode();
+  try {
+    const draft = JSON.parse(localStorage.getItem('launchDraft') || 'null');
+    if (draft && typeof draft === 'object') state.launchDraft = draft;
+  } catch (err) {
+    state.launchDraft = null;
+  }
+  paintLaunchDraft();
 }
 
 function persistBundleForm() {
@@ -3484,13 +3520,77 @@ async function inspectCustomVampCaFromLaunchpad() {
 }
 window.inspectCustomVampCaFromLaunchpad = inspectCustomVampCaFromLaunchpad;
 
+function captureLaunchDraft(el) {
+  if (!state.launchDraft || !el) return;
+  const map = {
+    tokenName: 'name',
+    tokenSymbol: 'symbol',
+    tokenDescription: 'description',
+    tokenTwitter: 'twitter',
+    tokenTelegram: 'telegram',
+    tokenWebsite: 'website'
+  };
+  const key = map[el.id];
+  if (!key) return;
+  state.launchDraft[key] = el.value;
+  try { localStorage.setItem('launchDraft', JSON.stringify(state.launchDraft)); } catch (err) { /* storage can be blocked */ }
+}
+
+function paintLaunchDraft() {
+  const draft = state.launchDraft;
+  if (!draft) return;
+  const write = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el || document.activeElement === el) return;
+    el.value = value == null ? '' : String(value);
+  };
+  write('tokenName', draft.name);
+  write('tokenSymbol', draft.symbol);
+  write('tokenDescription', draft.description);
+  write('tokenTwitter', draft.twitter);
+  write('tokenTelegram', draft.telegram);
+  write('tokenWebsite', draft.website);
+  const note = document.getElementById('logoMissingNote');
+  if (note) {
+    const missing = Array.isArray(draft.missing) ? draft.missing : [];
+    note.textContent = missing.includes('logo') ? 'logo not found' : (missing.length ? `${missing.join(', ')} not found` : '');
+    note.style.display = note.textContent ? 'block' : 'none';
+    note.style.color = '#fbbf24';
+    note.style.fontSize = '10px';
+  }
+  if (state.logoFile) return;
+  const iconUrl = typeof safeHttpsUrl === 'function' ? safeHttpsUrl(draft.icon || '') : '';
+  state.vampedImageUrl = iconUrl || null;
+  const preview = document.getElementById('logoPreview');
+  const placeholder = document.getElementById('logoIconPlaceholder');
+  if (preview) {
+    preview.src = iconUrl || '';
+    preview.style.display = iconUrl ? 'block' : 'none';
+  }
+  if (placeholder) placeholder.style.display = iconUrl ? 'none' : 'block';
+}
+
 function applyVampToLaunchpad(token) {
   if (!token) return;
+  const iconUrl = typeof safeHttpsUrl === 'function' ? safeHttpsUrl(token.icon || token.imageUrl || token.image || '') : '';
+  state.logoFile = null;
+  const linkOf = (needles) => (token.links || []).find(link => needles.some(needle => (link.url || '').includes(needle)));
+  state.launchDraft = {
+    name: token.name || '',
+    symbol: token.symbol || '',
+    description: token.description || '',
+    twitter: token.twitter || (token.socials && token.socials.twitter) || (linkOf(['x.com', 'twitter']) || {}).url || '',
+    telegram: token.telegram || (token.socials && token.socials.telegram) || (linkOf(['t.me']) || {}).url || '',
+    website: token.website || (token.socials && token.socials.website) || '',
+    icon: iconUrl,
+    missing: Array.isArray(token.missing) ? token.missing : (iconUrl ? [] : ['logo'])
+  };
+  try { localStorage.setItem('launchDraft', JSON.stringify(state.launchDraft)); } catch (err) { /* storage can be blocked */ }
 
   // 1. Name, Symbol & Description
-  document.getElementById('tokenName').value = token.name || '';
-  document.getElementById('tokenSymbol').value = token.symbol || '';
-  document.getElementById('tokenDescription').value = token.description || '';
+  document.getElementById('tokenName').value = state.launchDraft.name;
+  document.getElementById('tokenSymbol').value = state.launchDraft.symbol;
+  document.getElementById('tokenDescription').value = state.launchDraft.description;
 
   // 2. Source / Vamped Token CA window
   const ca = externalMint(token.address || token.tokenAddress || '');
@@ -3502,38 +3602,10 @@ function applyVampToLaunchpad(token) {
     pumpLink.style.display = 'inline-block';
   }
 
-  // 3. Socials
-  const twitter = token.twitter || token.socials?.twitter || (token.links || []).find(l => (l.url || '').includes('x.com') || (l.url || '').includes('twitter'))?.url || '';
-  const telegram = token.telegram || token.socials?.telegram || (token.links || []).find(l => (l.url || '').includes('t.me'))?.url || '';
-  const website = token.website || token.socials?.website || (token.links || []).find(l => !(l.url || '').includes('twitter') && !(l.url || '').includes('t.me') && !(l.url || '').includes('x.com'))?.url || '';
-
-  document.getElementById('tokenTwitter').value = twitter;
-  document.getElementById('tokenTelegram').value = telegram;
-  document.getElementById('tokenWebsite').value = website;
-
-  // 4. Logo Picture Display & Storage
-  const iconUrl = typeof safeHttpsUrl === 'function' ? safeHttpsUrl(token.icon || token.imageUrl || token.image || '') : '';
-  state.vampedImageUrl = iconUrl;
-  const preview = document.getElementById('logoPreview');
-  const placeholder = document.getElementById('logoIconPlaceholder');
-
-  if (iconUrl) {
-    if (preview) {
-      preview.src = iconUrl;
-      preview.style.display = 'block';
-    }
-    if (placeholder) {
-      placeholder.style.display = 'none';
-    }
-  } else {
-    if (preview) {
-      preview.src = '';
-      preview.style.display = 'none';
-    }
-    if (placeholder) {
-      placeholder.style.display = 'block';
-    }
-  }
+  document.getElementById('tokenTwitter').value = state.launchDraft.twitter;
+  document.getElementById('tokenTelegram').value = state.launchDraft.telegram;
+  document.getElementById('tokenWebsite').value = state.launchDraft.website;
+  paintLaunchDraft();
 }
 
 function handleLogoSelect(e) {
