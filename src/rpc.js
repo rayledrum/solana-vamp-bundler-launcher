@@ -55,6 +55,7 @@ function classifyRpcError(err) {
 
 function defaultRps(name, cfg = config) {
   if (name === 'QuickNode') return cfg.QUICKNODE_RPS;
+  if (name === 'Alchemy') return cfg.ALCHEMY_RPS;
   if (name === 'Helius') return cfg.HELIUS_RPS;
   return cfg.PUBLIC_RPS;
 }
@@ -224,6 +225,14 @@ function providersFromConfig(cfg = config) {
       name: 'QuickNode',
       httpUrl: cfg.QUICKNODE_RPC_URL,
       wsUrl: cfg.QUICKNODE_WS_URL || '',
+      configured: true
+    });
+  }
+  if (cfg.ALCHEMY_CONFIGURED && cfg.ALCHEMY_RPC_URL) {
+    list.push({
+      name: 'Alchemy',
+      httpUrl: cfg.ALCHEMY_RPC_URL,
+      wsUrl: cfg.ALCHEMY_WS_URL || '',
       configured: true
     });
   }
@@ -638,6 +647,7 @@ function describeRpcAccount(status, flags = {}) {
   let account = 'n/a';
   if (active === 'Helius' && heliusConfigured) account = 'Helius configured';
   else if (active === 'QuickNode') account = 'QuickNode';
+  else if (active === 'Alchemy') account = 'Alchemy';
   else if (active === 'Public') account = 'live paused';
   return {
     active: active || 'Public',

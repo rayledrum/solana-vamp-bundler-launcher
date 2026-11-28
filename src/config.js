@@ -43,6 +43,16 @@ const PUBLIC_RPC = String(process.env.SOLANA_PUBLIC_RPC_URL || '').trim() || 'ht
 const QUICKNODE_RPC_URL = String(process.env.QUICKNODE_RPC_URL || '').trim();
 const QUICKNODE_WS_URL = String(process.env.QUICKNODE_WS_URL || '').trim() || websocketUrl(QUICKNODE_RPC_URL);
 
+function alchemyEndpoints(env = process.env) {
+  const key = String(env.ALCHEMY_API_KEY || '').trim();
+  const httpUrl = String(env.ALCHEMY_RPC_URL || '').trim()
+    || (key ? `https://solana-mainnet.g.alchemy.com/v2/${key}` : '');
+  const wsUrl = String(env.ALCHEMY_WS_URL || '').trim() || websocketUrl(httpUrl);
+  return { httpUrl, wsUrl, configured: Boolean(httpUrl) };
+}
+
+const alchemy = alchemyEndpoints();
+
 const config = {
   PORT: num('PORT', 3000),
   HOST: String(process.env.HOST || '').trim() || '127.0.0.1',
@@ -58,8 +68,13 @@ const config = {
   QUICKNODE_RPC_URL,
   QUICKNODE_WS_URL,
   QUICKNODE_CONFIGURED: Boolean(QUICKNODE_RPC_URL),
+  ALCHEMY_API_KEY: String(process.env.ALCHEMY_API_KEY || '').trim(),
+  ALCHEMY_RPC_URL: alchemy.httpUrl,
+  ALCHEMY_WS_URL: alchemy.wsUrl,
+  ALCHEMY_CONFIGURED: alchemy.configured,
   SOLANA_PUBLIC_RPC_URL: PUBLIC_RPC,
   QUICKNODE_RPS: rpsEnv('QUICKNODE_RPS', 12),
+  ALCHEMY_RPS: rpsEnv('ALCHEMY_RPS', 12),
   HELIUS_RPS: rpsEnv('HELIUS_RPS', Infinity),
   PUBLIC_RPS: rpsEnv('PUBLIC_RPS', 4),
 
@@ -153,4 +168,5 @@ if (config.FARM_RIDE_STOP_PCT <= 0 || config.FARM_RIDE_STOP_PCT >= 100 || config
   throw new Error('Farm ride stop, KOL window, and max hold must be positive, and the stop must be under 100%');
 }
 
+config.alchemyEndpoints = alchemyEndpoints;
 module.exports = config;
