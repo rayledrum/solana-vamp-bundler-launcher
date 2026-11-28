@@ -1,4 +1,5 @@
 const { PublicKey } = require('@solana/web3.js');
+const { decodeTokenAmount } = require('./subscriptionBook');
 const { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } = require('@solana/spl-token');
 
 const CLASSIC_TOKEN_PROGRAM = TOKEN_PROGRAM_ID.toBase58();
@@ -106,6 +107,41 @@ async function readMintSupply(connection, mint) {
   return result;
 }
 
+async function readMintTokenBalances(connection, owners, mint) {
+  const list = (owners || []).map(owner => String(owner || '')).filter(Boolean);
+  const balances = new Map();
+  if (!list.length) return balances;
+  if (connection && typeof connection.getMultipleAccountsInfo === 'function') {
+    try {
+      const program = await resolveMintTokenProgram(connection, mint);
+      const supply = await readMintSupply(connection, mint);
+      const decimals = supply.decimals || 6;
+      const atas = list.map(owner => new PublicKey(ataAddress(owner, mint, program)));
+      const infos = await connection.getMultipleAccountsInfo(atas, 'confirmed');
+      const rawAccount = info => info == null || (info.data && !info.data.parsed);
+      if (Array.isArray(infos) && infos.length === list.length && infos.every(rawAccount)) {
+        list.forEach((owner, index) => {
+          const info = infos[index];
+          const raw = info && info.data ? decodeTokenAmount(info.data) : 0;
+          balances.set(owner, {
+            ui: raw / (10 ** decimals),
+            raw: String(raw),
+            decimals,
+            programId: program.toBase58()
+          });
+        });
+        return balances;
+      }
+    } catch (err) {
+      // Fall through to one parsed read per wallet.
+    }
+  }
+  for (const owner of list) {
+    balances.set(owner, await readOwnerTokenBalance(connection, owner, mint));
+  }
+  return balances;
+}
+
 async function readOwnerTokenBalance(connection, owner, mint) {
   const response = await connection.getParsedTokenAccountsByOwner(
     new PublicKey(owner),
@@ -141,5 +177,6 @@ module.exports = {
   tokenChangeFromMeta,
   noTokensMessage,
   readOwnerTokenBalance,
+  readMintTokenBalances,
   readMintSupply
 };

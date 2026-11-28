@@ -4,6 +4,7 @@ const config = require('./config');
 const { assertLiveTrading } = require('./rpc');
 const {
   readOwnerTokenBalance,
+  readMintTokenBalances,
   solSpentFromMeta,
   tokenChangeFromMeta,
   accountKeysFromTransaction,
@@ -270,11 +271,22 @@ class TradingEngine {
     const run = (async () => {
       const wallets = walletManager.walletList();
       let failed = false;
-      await Promise.all(wallets.map(async (wallet) => {
-        const address = wallet.publicKey.toBase58();
-        try {
-          const balance = await readOwnerTokenBalance(walletManager.connection, address, mint);
-          if (this.activeToken !== mint) return;
+      let balances = new Map();
+      try {
+        balances = await readMintTokenBalances(
+          walletManager.connection,
+          wallets.map(wallet => wallet.publicKey.toBase58()),
+          mint
+        );
+      } catch (err) {
+        failed = true;
+        console.warn(`[Tokens] ${mint} balance read failed: ${err.message}`);
+      }
+      if (this.activeToken === mint) {
+        for (const wallet of wallets) {
+          const address = wallet.publicKey.toBase58();
+          const balance = balances.get(address);
+          if (!balance) continue;
           const existing = this.positions.get(address);
           if (existing && existing.costKnown === true) {
             existing.tokens = balance.ui;
@@ -293,11 +305,8 @@ class TradingEngine {
             this.positions.set(address, position);
           }
           walletManager.noteTokenBalance(address, mint, balance.ui);
-        } catch (err) {
-          failed = true;
-          console.warn(`[Tokens] ${address} ${mint} balance read failed: ${err.message}`);
         }
-      }));
+      }
       if (this.activeToken !== mint) return;
       if (!failed) this.seededMint = mint;
       this.publishPnl(mint);

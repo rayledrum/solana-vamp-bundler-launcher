@@ -406,7 +406,7 @@ class CurveFeed {
       } catch (err) { /* next poll retries */ }
     };
     tick();
-    this.migratedTimer = setInterval(tick, 2000);
+    this.migratedTimer = setInterval(tick, 10000);
   }
 
   stopMigratedPoll() {

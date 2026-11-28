@@ -104,6 +104,7 @@ function pool(behaviors, now, logLines) {
       { name: 'QuickNode', httpUrl: 'https://example.quiknode.pro/secret-key', wsUrl: 'wss://example.quiknode.pro/secret-key', configured: true },
       { name: 'Public', httpUrl: 'https://api.mainnet.solana.com', wsUrl: '', configured: true }
     ],
+    sleep: async (ms) => { clock += ms; },
     connect: (provider) => stubs[provider.name]
   });
   return { api, stubs, advance: (ms) => { clock += ms; } };
@@ -112,7 +113,7 @@ function pool(behaviors, now, logLines) {
 test('reads fail over from Helius to QuickNode and honor the cooldown', async () => {
   const { api, stubs, advance } = pool({
     Helius: {
-      getBalance() { throw fail('429 Too Many Requests', 429); }
+      getBalance() { throw fail('socket hang up', 'ECONNRESET'); }
     }
   });
   assert.equal(classifyRpcError(fail('429 Too Many Requests', 429)), 'rate');
@@ -190,8 +191,9 @@ test('a signed send is retried once only when the provider never saw it', async 
   assert.equal(result, 'landed-on-quicknode');
   assert.equal(quickSends, 1);
   await assert.rejects(() => api.connection.sendRawTransaction(raw), /429/);
-  assert.equal(quickSends, 2);
+  assert.equal(quickSends > 2, true);
   assert.equal(stubs.Public.calls.includes('sendRawTransaction'), false);
+  assert.equal(api.status().providers.find(row => row.name === 'QuickNode').healthy, true);
 });
 
 test('live trading pauses on the public RPC and resumes when Helius or QuickNode is healthy', () => {
@@ -274,23 +276,26 @@ test('a live buy and volume start are refused while only the public RPC is activ
   }
 });
 
-test('a 429 fails over once, without a second try on the same provider', async () => {
+test('a 429 is retried on the same provider and does not cool it down', async () => {
   const lines = [];
   const { api, stubs } = pool({
     Helius: {
       getBalance() {
-        const err = new Error('Server responded with 429 Too Many Requests');
-        err.code = -32429;
+        const err = new Error('429 Too Many Requests: {"code":-32007,"message":"15/second request limit reached"}');
+        err.code = -32007;
         throw err;
       }
     }
   }, lines);
   assert.equal(classifyRpcError(Object.assign(new Error('max usage reached'), { code: -32429 })), 'credit');
-  const balance = await api.connection.getBalance('addr');
-  assert.equal(balance, 5);
-  assert.equal(stubs.Helius.calls.filter(row => row === 'getBalance').length, 1);
-  assert.equal(stubs.QuickNode.calls.filter(row => row === 'getBalance').length, 1);
-  assert.deepEqual(lines, ['RPC failover: Helius -> QuickNode (rate limited)']);
+  assert.equal(classifyRpcError(Object.assign(new Error('15/second request limit reached'), { code: -32007 })), 'rate');
+  await assert.rejects(() => api.connection.getBalance('addr'), /429|request limit/);
+  assert.equal(api.status().active, 'Helius');
+  assert.equal(api.status().providers.find(row => row.name === 'Helius').healthy, true);
+  assert.equal(api.status().providers.find(row => row.name === 'Helius').cooldownMs, 0);
+  assert.equal(stubs.QuickNode.calls.filter(row => row === 'getBalance').length, 0);
+  assert.equal(stubs.Helius.calls.filter(row => row === 'getBalance').length > 1, true);
+  assert.deepEqual(lines, []);
   assert.equal(connectionOptions({ wsUrl: 'wss://example.quiknode.pro/secret' }).disableRetryOnRateLimit, true);
 });
 
@@ -298,11 +303,7 @@ test('the startup probe skips an unhealthy Helius and moves sockets to QuickNode
   const lines = [];
   const { api, stubs } = pool({
     Helius: {
-      getSlot() {
-        const err = new Error('429 Too Many Requests');
-        err.code = 429;
-        throw err;
-      }
+      getSlot() { throw fail('socket hang up', 'ECONNRESET'); }
     },
     QuickNode: {
       getSlot() { return 42; }
@@ -317,7 +318,7 @@ test('the startup probe skips an unhealthy Helius and moves sockets to QuickNode
   assert.equal(stubs.QuickNode.calls.filter(row => row === 'getSlot').length, 1);
   assert.equal(stubs.Public.calls.filter(row => row === 'getSlot').length, 0);
   assert.equal(stubs.QuickNode.subs, 1);
-  assert.equal(lines[0], 'RPC failover: Helius -> QuickNode (rate limited)');
+  assert.equal(lines[0], 'RPC failover: Helius -> QuickNode (unreachable)');
   api.connection.removeAccountChangeListener(id);
 });
 

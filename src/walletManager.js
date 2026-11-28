@@ -8,7 +8,7 @@ const {
   sendAndConfirmTransaction,
   LAMPORTS_PER_SOL
 } = require('@solana/web3.js');
-const { readOwnerTokenBalance } = require('./tokenAccounts');
+const { readMintTokenBalances } = require('./tokenAccounts');
 const bs58Raw = require('bs58');
 const bs58 = bs58Raw.default || bs58Raw;
 const config = require('./config');
@@ -333,6 +333,21 @@ class WalletManager {
   async getSubWalletsInfo(tokenMint = null) {
     const book = await this.balanceBook();
     const byAddress = new Map(book.rows.map(row => [row.address, row]));
+    const missing = [];
+    if (!this.simulationMode && tokenMint) {
+      for (const wallet of this.subWallets) {
+        const address = wallet.publicKey.toBase58();
+        if (this.tokenBalanceOf(address, tokenMint) == null) missing.push(address);
+      }
+    }
+    let fetched = new Map();
+    if (missing.length) {
+      try {
+        fetched = await readMintTokenBalances(this.connection, missing, tokenMint);
+      } catch (err) {
+        fetched = new Map();
+      }
+    }
     const list = [];
     for (let i = 0; i < this.subWallets.length; i++) {
       const wallet = this.subWallets[i];
@@ -345,12 +360,8 @@ class WalletManager {
         if (noted != null) {
           tokenBalance = noted;
         } else {
-          try {
-            const balance = await readOwnerTokenBalance(this.connection, address, tokenMint);
-            tokenBalance = balance.ui;
-          } catch (e) {
-            tokenBalance = 0;
-          }
+          const balance = fetched.get(address);
+          tokenBalance = balance ? balance.ui : 0;
         }
       }
 
