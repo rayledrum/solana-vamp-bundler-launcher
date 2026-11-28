@@ -47,6 +47,8 @@ function alchemyEndpoints(env = process.env) {
   const key = String(env.ALCHEMY_API_KEY || '').trim();
   const httpUrl = String(env.ALCHEMY_RPC_URL || '').trim()
     || (key ? `https://solana-mainnet.g.alchemy.com/v2/${key}` : '');
+  // Alchemy's documented Solana socket is the HTTPS URL with wss://.
+  // A 403 on that handshake means the plan rejected websockets, not a bad path.
   const wsUrl = String(env.ALCHEMY_WS_URL || '').trim() || websocketUrl(httpUrl);
   return { httpUrl, wsUrl, configured: Boolean(httpUrl) };
 }

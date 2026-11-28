@@ -9,6 +9,15 @@ function dailyQuotaError() {
   return err;
 }
 
+test('a method the provider does not serve is not a provider outage', () => {
+  const blocked = new Error('403 method not allowed: logsSubscribe');
+  blocked.code = 403;
+  assert.equal(classifyRpcError(blocked), null);
+  const forbidden = new Error('403 forbidden');
+  forbidden.code = 403;
+  assert.equal(classifyRpcError(forbidden), 'credit');
+});
+
 test('a daily request cap is a quota error, and a per-second cap stays a rate error', () => {
   assert.equal(classifyRpcError(dailyQuotaError()), 'quota');
   assert.equal(classifyRpcError(Object.assign(new Error('failed'), { code: -32003 })), 'quota');
@@ -111,4 +120,112 @@ test('a recovered higher provider is probed and the pool fails back onto it', as
   assert.equal(api.status().active, 'QuickNode');
   assert.equal(lines.includes('RPC failback: Alchemy -> QuickNode'), true);
   assert.equal(opened.filter(name => name === 'QuickNode').length >= 2, true);
+});
+
+test('an Alchemy websocket drop does not switch the sidebar to Public while getSlot works', async () => {
+  const { EventEmitter } = require('events');
+  const lines = [];
+  const opened = [];
+  let alchemyWs = null;
+  const api = createRpcPool({
+    log: (line) => lines.push(line),
+    providers: [
+      { name: 'Alchemy', httpUrl: 'https://solana-mainnet.g.alchemy.com/v2/replace-me', wsUrl: 'wss://solana-mainnet.g.alchemy.com/v2/replace-me', configured: true, rps: 12 },
+      { name: 'Public', httpUrl: 'https://api.mainnet.solana.com', wsUrl: '', configured: true, rps: 4 }
+    ],
+    connect: (provider) => {
+      const ws = new EventEmitter();
+      if (provider.name === 'Alchemy') alchemyWs = ws;
+      return {
+        _rpcWebSocket: ws,
+        async getSlot() {
+          if (provider.name !== 'Alchemy') throw new Error('public getSlot');
+          return 9;
+        },
+        async getProgramAccounts() {
+          const err = new Error('403 method not allowed');
+          err.code = 403;
+          throw err;
+        },
+        onAccountChange() {
+          opened.push(provider.name);
+          return opened.length;
+        },
+        removeAccountChangeListener() {}
+      };
+    }
+  });
+  api.connection.onAccountChange('curve', () => {}, 'processed');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(api.status().active, 'Alchemy');
+  await assert.rejects(() => api.connection.getProgramAccounts('pump'), /method not allowed/);
+  assert.equal(api.status().active, 'Alchemy');
+  alchemyWs.emit('error', new Error('Unexpected server response: 403'));
+  alchemyWs.emit('close');
+  assert.equal(api.status().active, 'Alchemy');
+  assert.equal(api.status().providers.find(row => row.name === 'Alchemy').healthy, true);
+  assert.equal(opened.includes('Public'), false);
+  assert.equal(lines.some(line => line.includes('RPC failover')), false);
+});
+
+test('an Alchemy websocket 403 keeps HTTP on Alchemy and polls when no socket is left', async () => {
+  const { EventEmitter } = require('events');
+  const { describeRpcAccount } = require('../src/rpc');
+  const lines = [];
+  const opened = [];
+  const sockets = {};
+  let polls = 0;
+  const api = createRpcPool({
+    log: (line) => lines.push(line),
+    providers: [
+      { name: 'Alchemy', httpUrl: 'https://solana-mainnet.g.alchemy.com/v2/replace-me', wsUrl: 'wss://solana-mainnet.g.alchemy.com/v2/replace-me', configured: true, rps: 12 },
+      { name: 'Public', httpUrl: 'https://api.mainnet.solana.com', wsUrl: 'wss://api.mainnet.solana.com', configured: true, rps: 4 }
+    ],
+    connect: (provider) => {
+      const ws = new EventEmitter();
+      sockets[provider.name] = ws;
+      return {
+        _rpcWebSocket: ws,
+        async getSlot() { return provider.name === 'Alchemy' ? 9 : 1; },
+        async getMultipleAccountsInfo() {
+          polls += 1;
+          return [{ lamports: 5, data: Buffer.alloc(0) }];
+        },
+        onAccountChange() {
+          opened.push(provider.name);
+          return opened.length;
+        },
+        removeAccountChangeListener() {}
+      };
+    }
+  });
+  const seen = [];
+  api.connection.onAccountChange('curve', (info) => seen.push(info && info.lamports), 'processed');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(api.status().active, 'Alchemy');
+  assert.equal(opened[0], 'Alchemy');
+  for (let i = 0; i < 4; i += 1) {
+    sockets.Alchemy.emit('error', new Error('Unexpected server response: 403'));
+    sockets.Alchemy.emit('close');
+  }
+  assert.equal(api.status().active, 'Alchemy');
+  assert.equal(api.status().providers.find(row => row.name === 'Alchemy').healthy, true);
+  assert.equal(lines.filter(line => line.startsWith('RPC Alchemy websocket rejected')).length, 1);
+  assert.equal(lines.some(line => line.includes('Alchemy -> Public')), false);
+  assert.equal(opened.includes('Public'), true);
+  const moved = describeRpcAccount(api.status(), { alchemyConfigured: true });
+  assert.equal(moved.active, 'Alchemy');
+  assert.equal(moved.ws, 'Public');
+  assert.equal(moved.paused, false);
+  for (let i = 0; i < 3; i += 1) {
+    sockets.Public.emit('error', new Error('Unexpected server response: 403'));
+    sockets.Public.emit('close');
+  }
+  assert.equal(api.status().active, 'Alchemy');
+  assert.equal(api.status().ws.mode, 'poll');
+  await api.pollSubscriptions();
+  assert.equal(polls, 1);
+  assert.deepEqual(seen, [5]);
+  await api.pollSubscriptions();
+  assert.equal(seen.length, 1);
 });
