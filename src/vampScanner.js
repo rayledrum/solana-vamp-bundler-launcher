@@ -4,13 +4,43 @@ const config = require('./config');
 const SOURCE_TIMEOUT_MS = 6000;
 const SOURCE_CACHE_MS = 60 * 1000;
 const SOL = 'So11111111111111111111111111111111111111112';
-const PUMP_MCAP_URL = 'https://frontend-api-v3.pump.fun/coins?offset=0&limit=50&sort=market_cap&order=DESC&includeNsfw=false';
-const PUMP_LIVE_URL = `${PUMP_MCAP_URL}&complete=false`;
+const PUMP_DESC_PAGES = [
+  { offset: 0, low: 5100000, high: Infinity },
+  { offset: 50, low: 1700000, high: 5100000 },
+  { offset: 150, low: 640000, high: 1000000 },
+  { offset: 200, low: 440000, high: 650000 },
+  { offset: 250, low: 340000, high: 450000 },
+  { offset: 300, low: 260000, high: 350000 },
+  { offset: 400, low: 160000, high: 220000 },
+  { offset: 500, low: 100000, high: 160000 }
+];
 
 function finiteOrNull(value) {
   if (value == null || value === '') return null;
   const amount = Number(value);
   return Number.isFinite(amount) ? amount : null;
+}
+
+function positiveOrNull(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+function timeMs(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'string' && value.includes('-')) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount < 1e12 ? amount * 1000 : amount;
+}
+
+function pumpCoinsUrl({ offset = 0, sort = 'market_cap', order = 'DESC', complete = null } = {}) {
+  let url = `https://frontend-api-v3.pump.fun/coins?offset=${offset}&limit=50&sort=${sort}&order=${order}&includeNsfw=false`;
+  if (complete === false) url += '&complete=false';
+  return url;
 }
 
 class VampScanner {
@@ -63,6 +93,8 @@ class VampScanner {
           priceNative: attrs.base_token_price_native_currency ?? null,
           mcap: finiteOrNull(attrs.market_cap_usd != null ? attrs.market_cap_usd : attrs.fdv_usd),
           volume24h: finiteOrNull(attrs.volume_usd && attrs.volume_usd.h24),
+          liquidityUsd: finiteOrNull(attrs.reserve_in_usd),
+          createdAt: timeMs(attrs.pool_created_at),
           priceChange24h: finiteOrNull(change.h24),
           dexId
         }
@@ -87,31 +119,51 @@ class VampScanner {
       metrics: {
         priceUsd: null,
         mcap,
-        volume24h: null,
+        volume24h: finiteOrNull(coin.volume_24h != null ? coin.volume_24h : coin.volume),
+        liquidityUsd: finiteOrNull(coin.canonical_pool_liquidity_usd != null ? coin.canonical_pool_liquidity_usd : coin.liquidity),
+        createdAt: timeMs(coin.created_timestamp),
         priceChange24h: null,
         dexId: coin.complete ? 'pump-graduated' : 'pump'
       }
     };
   }
 
-  // Top coins by market cap, plus coins still on the bonding curve.
-  // /coins/graduated is not a live route; graduated coins come back from the market-cap sort.
-  async getPumpMarketCapCoins(extraOffsets = false) {
-    const urls = [PUMP_MCAP_URL, PUMP_LIVE_URL];
-    if (extraOffsets) {
-      urls.push(PUMP_MCAP_URL.replace('offset=0', 'offset=50'), PUMP_MCAP_URL.replace('offset=0', 'offset=100'));
+  // Descending market-cap pages are included only when the requested max still
+  // reaches that page. The first page is multi-million coins, so a $1M max skips it.
+  pumpDescOffsets({ minMcap = 0, maxMcap = 0 } = {}) {
+    const min = positiveOrNull(minMcap) || 0;
+    const max = positiveOrNull(maxMcap) || Infinity;
+    return PUMP_DESC_PAGES.filter(page => page.low <= max && page.high >= min).map(page => page.offset);
+  }
+
+  async fetchPumpCoins(url) {
+    try {
+      const data = await this.cachedGet(url);
+      const tokens = [];
+      for (const coin of Array.isArray(data) ? data : []) {
+        if (coin && coin.mint) tokens.push(this.tokenFromPumpCoin(coin));
+      }
+      return tokens;
+    } catch (err) {
+      console.warn('[VampScanner] Pump feed failed:', err.message);
+      return [];
     }
-    const tokens = [];
-    for (const url of urls) {
-      try {
-        const data = await this.cachedGet(url);
-        for (const coin of Array.isArray(data) ? data : []) {
-          if (coin && coin.mint) tokens.push(this.tokenFromPumpCoin(coin));
-        }
-      } catch (err) {
-        console.warn('[VampScanner] Pump market-cap feed failed:', err.message);
+  }
+
+  // Newest coins and the bonding-curve list, plus descending pages that overlap the range.
+  async getPumpMarketCapCoins(options = {}) {
+    const opts = options === true ? { minMcap: 1 } : (options || {});
+    const urls = [
+      pumpCoinsUrl({ sort: 'created_timestamp', order: 'DESC' }),
+      pumpCoinsUrl({ sort: 'market_cap', order: 'ASC', complete: false })
+    ];
+    if (positiveOrNull(opts.minMcap) || positiveOrNull(opts.maxMcap)) {
+      for (const offset of this.pumpDescOffsets(opts)) {
+        urls.push(pumpCoinsUrl({ offset, sort: 'market_cap', order: 'DESC' }));
       }
     }
+    const tokens = [];
+    for (const url of urls) tokens.push(...await this.fetchPumpCoins(url));
     return tokens;
   }
 
@@ -150,8 +202,10 @@ class VampScanner {
     const metrics = pair ? {
       priceUsd: pair.priceUsd,
       mcap: finiteOrNull(pair.marketCap),
-      volume24h: finiteOrNull(pair.volume && pair.volume.h24) || 0,
-      priceChange24h: finiteOrNull(pair.priceChange && pair.priceChange.h24) || 0,
+      volume24h: finiteOrNull(pair.volume && pair.volume.h24),
+      liquidityUsd: finiteOrNull(pair.liquidity && pair.liquidity.usd),
+      createdAt: timeMs(pair.pairCreatedAt),
+      priceChange24h: finiteOrNull(pair.priceChange && pair.priceChange.h24),
       dexId: pair.dexId
     } : null;
     return {
@@ -245,6 +299,11 @@ class VampScanner {
       other = current;
     }
     const metrics = { ...(other.metrics || {}), ...(winner.metrics || {}) };
+    for (const key of ['volume24h', 'liquidityUsd', 'createdAt', 'priceUsd', 'priceChange24h']) {
+      const fromWinner = finiteOrNull(winner.metrics && winner.metrics[key]);
+      const fromOther = finiteOrNull(other.metrics && other.metrics[key]);
+      metrics[key] = fromWinner != null ? fromWinner : fromOther;
+    }
     if (a != null || b != null) metrics.mcap = a == null ? b : (b == null ? a : Math.max(a, b));
     return {
       ...other,
@@ -271,26 +330,75 @@ class VampScanner {
     return [...byMint.values()];
   }
 
-  filterByMinMcap(tokens, { minMcap = 0, showUnknown = false } = {}) {
-    const floor = Number(minMcap);
-    const min = Number.isFinite(floor) && floor > 0 ? floor : 0;
-    if (!(min > 0)) return { tokens: tokens || [], hidden: 0, unknown: 0 };
+  filterByMinMcap(tokens, options = {}) {
+    return this.filterCandidates(tokens, {
+      minMcap: options.minMcap,
+      showUnknown: options.showUnknown,
+      now: options.now
+    });
+  }
+
+  filterCandidates(tokens, options = {}) {
+    const min = positiveOrNull(options.minMcap) || 0;
+    const max = positiveOrNull(options.maxMcap);
+    const minAge = positiveOrNull(options.minAgeMs);
+    const maxAge = positiveOrNull(options.maxAgeMs);
+    const minVolume = positiveOrNull(options.minVolume);
+    const minLiquidity = positiveOrNull(options.minLiquidity);
+    const showUnknown = Boolean(options.showUnknown);
+    const now = positiveOrNull(options.now) || Date.now();
+    const active = min > 0 || max || minAge || maxAge || minVolume || minLiquidity;
+    if (!active) return { tokens: tokens || [], hidden: 0, unknown: 0 };
     const kept = [];
     let hidden = 0;
     let unknown = 0;
     for (const token of tokens || []) {
-      const mcap = finiteOrNull(token && token.metrics && token.metrics.mcap);
-      if (mcap == null) {
-        unknown += 1;
-        if (showUnknown) kept.push({ ...token, mcapUnknown: true });
-        else hidden += 1;
-      } else if (mcap < min) {
+      const metrics = (token && token.metrics) || {};
+      const verdicts = [];
+      if (min > 0 || max) verdicts.push(this.rangeVerdict(finiteOrNull(metrics.mcap), min > 0 ? min : null, max));
+      if (minAge || maxAge) {
+        const created = finiteOrNull(metrics.createdAt);
+        const age = created == null ? null : now - created;
+        verdicts.push(this.rangeVerdict(age, minAge, maxAge));
+      }
+      if (minVolume) verdicts.push(this.rangeVerdict(finiteOrNull(metrics.volume24h), minVolume, null));
+      if (minLiquidity) verdicts.push(this.rangeVerdict(finiteOrNull(metrics.liquidityUsd), minLiquidity, null));
+      if (verdicts.includes('low') || verdicts.includes('high')) {
         hidden += 1;
+      } else if (verdicts.includes('unknown')) {
+        unknown += 1;
+        if (showUnknown) kept.push({ ...token, mcapUnknown: finiteOrNull(metrics.mcap) == null });
+        else hidden += 1;
       } else {
         kept.push(token);
       }
     }
     return { tokens: kept, hidden, unknown };
+  }
+
+  rangeVerdict(value, min, max) {
+    if (value == null) return 'unknown';
+    if (min != null && value < min) return 'low';
+    if (max != null && value > max) return 'high';
+    return 'ok';
+  }
+
+  sortCandidates(tokens, mode) {
+    const list = (tokens || []).map((token, index) => ({ token, index }));
+    const metric = (token, key) => finiteOrNull(token && token.metrics && token.metrics[key]);
+    const direction = mode === 'closest' ? 'asc' : 'desc';
+    const key = mode === 'newest' ? 'createdAt' : 'mcap';
+    if (mode !== 'closest' && mode !== 'newest' && mode !== 'biggest') return (tokens || []).slice();
+    list.sort((a, b) => {
+      const av = metric(a.token, key);
+      const bv = metric(b.token, key);
+      if (av == null && bv == null) return a.index - b.index;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (av === bv) return a.index - b.index;
+      return direction === 'asc' ? av - bv : bv - av;
+    });
+    return list.map(row => row.token);
   }
 
   mergeTrendingTokens(pumpTokens, dexTokens, limit) {
@@ -311,19 +419,28 @@ class VampScanner {
   }
 
   async getTrendingSolanaTokens(limit = 15, options = {}) {
-    const minMcap = Number(options && options.minMcap);
-    const floor = Number.isFinite(minMcap) && minMcap > 0 ? minMcap : 0;
+    const opts = options || {};
+    const minMcap = positiveOrNull(opts.minMcap) || 0;
+    const maxMcap = positiveOrNull(opts.maxMcap);
+    const minAgeMs = positiveOrNull(opts.minAgeMs);
+    const maxAgeMs = positiveOrNull(opts.maxAgeMs);
+    const minVolume = positiveOrNull(opts.minVolume);
+    const minLiquidity = positiveOrNull(opts.minLiquidity);
+    const filtering = minMcap > 0 || maxMcap || minAgeMs || maxAgeMs || minVolume || minLiquidity;
     const requested = Number(limit);
     const safeLimit = Number.isFinite(requested) && requested > 0 ? requested : 15;
-    const scan = floor > 0 ? Math.max(safeLimit, 50) : safeLimit;
-    const show = floor > 0 ? Math.min(Math.max(safeLimit, 30), 50) : safeLimit;
+    const scan = filtering ? Math.max(safeLimit, 50) : safeLimit;
+    const show = filtering ? 50 : safeLimit;
+    const sort = ['closest', 'newest', 'biggest'].includes(opts.sort)
+      ? opts.sort
+      : ((minMcap > 0 || maxMcap) ? 'closest' : 'newest');
     const jobs = [
-      ['Pump market cap', () => this.getPumpMarketCapCoins(floor > 0)],
+      ['Pump coins', () => this.getPumpMarketCapCoins({ minMcap, maxMcap })],
       ['Gecko movers', () => this.getPumpFunMovers(scan)],
       ['Gecko trending', () => this.getGeckoTrendingPools()],
       ['DexScreener', () => this.getDexScreenerCandidates()]
     ];
-    if (floor > 0) {
+    if (filtering) {
       jobs.push(
         ['Gecko pump-fun pages', () => this.getGeckoPools('pump-fun', [2, 3], 'pumpfun')],
         ['Gecko pumpswap pages', () => this.getGeckoPools('pumpswap', [2, 3], 'pumpswap')]
@@ -340,27 +457,19 @@ class VampScanner {
     }));
     const merged = this.dedupeTokens(buckets.flatMap(bucket => bucket.tokens));
     const sources = buckets.filter(bucket => bucket.ok).length;
-    if (!(floor > 0)) {
-      const list = merged.slice(0, show);
-      list.scanned = merged.length;
-      list.sources = sources;
-      list.matched = merged.length;
-      list.hidden = 0;
-      list.unknown = 0;
-      return list;
-    }
-    const filtered = this.filterByMinMcap(merged, { minMcap: floor, showUnknown: Boolean(options.showUnknown) });
-    const sorted = filtered.tokens.slice().sort((a, b) => {
-      const am = finiteOrNull(a.metrics && a.metrics.mcap) || 0;
-      const bm = finiteOrNull(b.metrics && b.metrics.mcap) || 0;
-      return bm - am;
-    });
-    const list = sorted.slice(0, show);
+    const filtered = filtering
+      ? this.filterCandidates(merged, { minMcap, maxMcap, minAgeMs, maxAgeMs, minVolume, minLiquidity, showUnknown: Boolean(opts.showUnknown) })
+      : { tokens: merged, hidden: 0, unknown: 0 };
+    const ordered = sort === 'newest' && !filtering
+      ? this.sortCandidates(filtered.tokens, 'newest')
+      : this.sortCandidates(filtered.tokens, sort);
+    const list = ordered.slice(0, show);
     list.hidden = filtered.hidden;
     list.unknown = filtered.unknown;
     list.scanned = merged.length;
     list.sources = sources;
-    list.matched = filtered.tokens.length;
+    list.matched = filtering ? filtered.tokens.length : merged.length;
+    list.sort = sort;
     return list;
   }
 

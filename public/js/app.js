@@ -14,6 +14,14 @@ const state = {
   launchMode: 'bundle',
   bundleForm: emptyBundleForm(),
   vampMinMcap: 0,
+  vampMaxMcap: 0,
+  vampMinAge: 0,
+  vampMaxAge: 0,
+  vampAgeUnit: 'minutes',
+  vampMinVolume: 0,
+  vampMinLiquidity: 0,
+  vampSort: '',
+  vampSortTouched: false,
   vampShowUnknown: false,
   activeToken: null,
   chartToken: null,
@@ -2294,11 +2302,17 @@ function restoreLaunchPrefs() {
   if (storedMode === 'standard' || storedMode === 'bundle') state.launchMode = storedMode;
   const storedMin = Number(localStorage.getItem('vampMinMcap'));
   if (Number.isFinite(storedMin) && storedMin >= 0) state.vampMinMcap = storedMin;
+  state.vampMaxMcap = storedOptionalNumber('vampMaxMcap');
+  state.vampMinAge = storedOptionalNumber('vampMinAge');
+  state.vampMaxAge = storedOptionalNumber('vampMaxAge');
+  state.vampAgeUnit = localStorage.getItem('vampAgeUnit') === 'hours' ? 'hours' : 'minutes';
+  state.vampMinVolume = storedOptionalNumber('vampMinVolume');
+  state.vampMinLiquidity = storedOptionalNumber('vampMinLiquidity');
+  state.vampSortTouched = localStorage.getItem('vampSortTouched') === '1';
+  const storedSort = localStorage.getItem('vampSort');
+  if (storedSort === 'closest' || storedSort === 'newest' || storedSort === 'biggest') state.vampSort = storedSort;
   state.vampShowUnknown = localStorage.getItem('vampShowUnknownMcap') === '1';
-  const minInput = document.getElementById('vampMinMcap');
-  if (minInput) minInput.value = String(state.vampMinMcap);
-  const unknownBox = document.getElementById('vampShowUnknown');
-  if (unknownBox) unknownBox.checked = state.vampShowUnknown;
+  paintVampFilters();
   try {
     state.bundleForm = bundleFormFromStorage(JSON.parse(localStorage.getItem('bundleForm') || 'null'));
   } catch (err) {
@@ -2419,14 +2433,78 @@ function setLaunchMode(mode) {
   paintLaunchMode();
 }
 
+function storedOptionalNumber(key) {
+  const value = Number(localStorage.getItem(key));
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function readOptionalInput(id) {
+  const value = Number(document.getElementById(id) && document.getElementById(id).value);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function effectiveVampSort() {
+  if (state.vampSortTouched && (state.vampSort === 'closest' || state.vampSort === 'newest' || state.vampSort === 'biggest')) {
+    return state.vampSort;
+  }
+  return (state.vampMinMcap > 0 || state.vampMaxMcap > 0) ? 'closest' : 'newest';
+}
+
+function paintVampFilters() {
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = value > 0 ? String(value) : '';
+  };
+  const min = document.getElementById('vampMinMcap');
+  if (min && document.activeElement !== min) min.value = String(state.vampMinMcap || 0);
+  setValue('vampMaxMcap', state.vampMaxMcap);
+  setValue('vampMinAge', state.vampMinAge);
+  setValue('vampMaxAge', state.vampMaxAge);
+  setValue('vampMinVolume', state.vampMinVolume);
+  setValue('vampMinLiquidity', state.vampMinLiquidity);
+  const unit = document.getElementById('vampAgeUnit');
+  if (unit && document.activeElement !== unit) unit.value = state.vampAgeUnit === 'hours' ? 'hours' : 'minutes';
+  const sort = document.getElementById('vampSort');
+  if (sort && document.activeElement !== sort) sort.value = effectiveVampSort();
+  const unknownBox = document.getElementById('vampShowUnknown');
+  if (unknownBox) unknownBox.checked = state.vampShowUnknown;
+}
+
+function ageInputToMs(value) {
+  if (!(value > 0)) return 0;
+  return value * (state.vampAgeUnit === 'hours' ? 60 * 60 * 1000 : 60 * 1000);
+}
+
+function saveVampSort() {
+  const sort = document.getElementById('vampSort');
+  state.vampSort = sort && (sort.value === 'closest' || sort.value === 'newest' || sort.value === 'biggest') ? sort.value : 'newest';
+  state.vampSortTouched = true;
+  saveVampMinMcap();
+}
+
 function saveVampMinMcap() {
-  const input = document.getElementById('vampMinMcap');
+  state.vampMinMcap = readOptionalInput('vampMinMcap');
+  state.vampMaxMcap = readOptionalInput('vampMaxMcap');
+  state.vampMinAge = readOptionalInput('vampMinAge');
+  state.vampMaxAge = readOptionalInput('vampMaxAge');
+  state.vampMinVolume = readOptionalInput('vampMinVolume');
+  state.vampMinLiquidity = readOptionalInput('vampMinLiquidity');
+  const unit = document.getElementById('vampAgeUnit');
+  state.vampAgeUnit = unit && unit.value === 'hours' ? 'hours' : 'minutes';
   const box = document.getElementById('vampShowUnknown');
-  const value = Number(input && input.value);
-  state.vampMinMcap = Number.isFinite(value) && value > 0 ? value : 0;
   state.vampShowUnknown = Boolean(box && box.checked);
+  if (!state.vampSortTouched) state.vampSort = effectiveVampSort();
+  paintVampFilters();
   try {
     localStorage.setItem('vampMinMcap', String(state.vampMinMcap));
+    localStorage.setItem('vampMaxMcap', String(state.vampMaxMcap));
+    localStorage.setItem('vampMinAge', String(state.vampMinAge));
+    localStorage.setItem('vampMaxAge', String(state.vampMaxAge));
+    localStorage.setItem('vampAgeUnit', state.vampAgeUnit);
+    localStorage.setItem('vampMinVolume', String(state.vampMinVolume));
+    localStorage.setItem('vampMinLiquidity', String(state.vampMinLiquidity));
+    localStorage.setItem('vampSort', effectiveVampSort());
+    localStorage.setItem('vampSortTouched', state.vampSortTouched ? '1' : '0');
     localStorage.setItem('vampShowUnknownMcap', state.vampShowUnknown ? '1' : '0');
   } catch (err) { /* storage can be blocked */ }
   loadTrendingVampTokens();
@@ -3044,23 +3122,32 @@ async function loadTrendingVampTokens() {
 
   try {
     const params = new URLSearchParams();
-    if (Number(state.vampMinMcap) > 0) params.set('minMcap', String(state.vampMinMcap));
+    const filtering = state.vampMinMcap > 0 || state.vampMaxMcap > 0 || state.vampMinAge > 0 || state.vampMaxAge > 0 || state.vampMinVolume > 0 || state.vampMinLiquidity > 0;
+    if (filtering) params.set('limit', '50');
+    if (state.vampMinMcap > 0) params.set('minMcap', String(state.vampMinMcap));
+    if (state.vampMaxMcap > 0) params.set('maxMcap', String(state.vampMaxMcap));
+    if (ageInputToMs(state.vampMinAge) > 0) params.set('minAgeMs', String(ageInputToMs(state.vampMinAge)));
+    if (ageInputToMs(state.vampMaxAge) > 0) params.set('maxAgeMs', String(ageInputToMs(state.vampMaxAge)));
+    if (state.vampMinVolume > 0) params.set('minVolume', String(state.vampMinVolume));
+    if (state.vampMinLiquidity > 0) params.set('minLiquidity', String(state.vampMinLiquidity));
+    params.set('sort', effectiveVampSort());
     if (state.vampShowUnknown) params.set('showUnknown', '1');
     const query = params.toString();
     const res = await apiFetch(`/api/vamp/trending${query ? `?${query}` : ''}`);
     const data = await res.json();
     state.trendingTokens = data.tokens || [];
     const hiddenEl = document.getElementById('vampHiddenCount');
-    if (hiddenEl) hiddenEl.textContent = Number(data.hidden) > 0 ? `${data.hidden} hidden below $${Number(state.vampMinMcap).toLocaleString()}` : '';
+    if (hiddenEl) hiddenEl.textContent = Number(data.hidden) > 0 ? `${data.hidden} hidden by filters` : '';
     const summaryEl = document.getElementById('vampScanSummary');
     if (summaryEl) {
       const scanned = Number(data.scanned) || 0;
       const sources = Number(data.sources) || 0;
       const matched = Number(data.matched) || 0;
       const floor = Number(state.vampMinMcap) || 0;
-      summaryEl.textContent = floor > 0
-        ? `Scanned ${scanned} candidates from ${sources} sources · ${matched} match ≥ $${floor.toLocaleString()}`
-        : `Scanned ${scanned} candidates from ${sources} sources`;
+      const cap = Number(state.vampMaxMcap) || 0;
+      const minText = `$${floor.toLocaleString()}`;
+      const maxText = cap > 0 ? `$${cap.toLocaleString()}` : 'any';
+      summaryEl.textContent = `Scanned ${scanned} candidates from ${sources} sources · ${matched} match ${minText}–${maxText}`;
       summaryEl.style.fontSize = '10px';
       summaryEl.style.color = '#94a3b8';
     }
