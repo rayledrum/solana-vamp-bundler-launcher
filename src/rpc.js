@@ -170,6 +170,7 @@ function connectionOptions(provider) {
 
 function failoverLabel(kind) {
   if (kind === 'quota') return 'daily quota exhausted';
+  if (kind === 'budget') return 'daily budget reached';
   if (kind === 'credit') return 'credit exhausted';
   if (kind === 'rate') return 'rate limited';
   return 'unreachable';
@@ -234,6 +235,13 @@ function signatureOf(raw) {
   }
 }
 
+function dailyBudgetFor(name, env = process.env) {
+  const raw = env[`${String(name || '').toUpperCase()}_DAILY_BUDGET`];
+  if (raw == null || String(raw).trim() === '') return Infinity;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : Infinity;
+}
+
 function providersFromConfig(cfg = config) {
   const list = [];
   if (cfg.HELIUS_CONFIGURED && cfg.HELIUS_RPC_URL) {
@@ -288,6 +296,9 @@ function createRpcPool(options = {}) {
       wsCooldownUntil: 0,
       wsFailures: 0,
       wsLogged: false,
+      callsToday: 0,
+      callDay: null,
+      dailyBudget: row.dailyBudget != null ? Number(row.dailyBudget) : dailyBudgetFor(row.name),
       limiter: createTokenBucket({ rps, now, sleep }),
       limitInFetch: usingDefaultConnect && Number.isFinite(rps)
     };
@@ -324,7 +335,7 @@ function createRpcPool(options = {}) {
     const provider = providers.find(row => row.name === name);
     if (!provider) return null;
     const quotaCooldownMs = options.quotaCooldownMs == null ? msUntilNextUtcDay(now()) : options.quotaCooldownMs;
-    const wait = kind === 'quota'
+    const wait = kind === 'quota' || kind === 'budget'
       ? quotaCooldownMs
       : (kind === 'credit' ? creditCooldownMs : (kind === 'rate' ? (options.rateFailoverMs == null ? RATE_FAILOVER_MS : options.rateFailoverMs) : cooldownMs));
     provider.unhealthyUntil = now() + wait;
@@ -377,7 +388,9 @@ function createRpcPool(options = {}) {
         configured: row.configured !== false,
         healthy: healthy(row, at),
         cooldownMs: Math.max(0, row.unhealthyUntil - at),
-        wsCooldownMs: Math.max(0, (row.wsCooldownUntil || 0) - at)
+        wsCooldownMs: Math.max(0, (row.wsCooldownUntil || 0) - at),
+        callsToday: row.callsToday || 0,
+        dailyBudget: Number.isFinite(row.dailyBudget) ? row.dailyBudget : null
       }))
     };
   }
@@ -387,7 +400,25 @@ function createRpcPool(options = {}) {
     return base + Math.floor(Math.random() * 50);
   }
 
+  function noteCall(provider) {
+    const day = new Date(now()).toISOString().slice(0, 10);
+    if (provider.callDay !== day) {
+      provider.callDay = day;
+      provider.callsToday = 0;
+      if (provider.lastKind === 'budget') {
+        provider.unhealthyUntil = 0;
+        provider.lastKind = null;
+      }
+    }
+    provider.callsToday = (provider.callsToday || 0) + 1;
+    const budget = Number(provider.dailyBudget);
+    if (Number.isFinite(budget) && provider.callsToday >= budget && provider.lastKind !== 'budget') {
+      markUnhealthy(provider.name, 'budget');
+    }
+  }
+
   async function invoke(provider, method, args, priority) {
+    noteCall(provider);
     if (provider.limiter && !provider.limitInFetch) await provider.limiter.acquire(priority);
     return callLane.run(Boolean(priority), () => {
       const conn = connectionFor(provider);
@@ -533,6 +564,15 @@ function createRpcPool(options = {}) {
 
   const lastWsError = new Map();
   let pollTimer = null;
+  let watch = { clients: 0, visible: true, mint: null };
+
+  function setWatch(next) {
+    watch = {
+      clients: next && next.clients != null ? Number(next.clients) || 0 : watch.clients,
+      visible: next && next.visible != null ? Boolean(next.visible) : watch.visible,
+      mint: next && Object.prototype.hasOwnProperty.call(next, 'mint') ? (next.mint || null) : watch.mint
+    };
+  }
 
   function watchSocket(provider, conn) {
     if (watched.has(provider.name)) return;
@@ -540,7 +580,12 @@ function createRpcPool(options = {}) {
     if (!ws || typeof ws.on !== 'function') return;
     watched.add(provider.name);
     ws.on('error', (err) => {
-      lastWsError.set(provider.name, err && err.message ? err.message : String(err || ''));
+      const message = err && err.message ? err.message : String(err || '');
+      lastWsError.set(provider.name, message);
+      if (/403/.test(message)) {
+        silenceSocket(conn);
+        noteWsFailure(provider.name, message);
+      }
     });
     ws.on('close', () => noteWsFailure(provider.name, lastWsError.get(provider.name) || ''));
   }
@@ -567,8 +612,9 @@ function createRpcPool(options = {}) {
       silenceSocket(connections.get(name));
       return;
     }
+    const rejected = /403/.test(text);
     provider.wsFailures = (provider.wsFailures || 0) + 1;
-    if (provider.wsFailures < WS_FAILS_BEFORE_COOLDOWN) return;
+    if (!rejected && provider.wsFailures < WS_FAILS_BEFORE_COOLDOWN) return;
     const cooldown = options.wsCooldownMs == null ? WS_COOLDOWN_MS : options.wsCooldownMs;
     provider.wsCooldownUntil = now() + cooldown;
     silenceSocket(connections.get(name));
@@ -641,14 +687,26 @@ function createRpcPool(options = {}) {
     pollTimer = null;
   }
 
+  function trackedCurve() {
+    if (!watch.mint) return '';
+    try {
+      const { bondingCurvePda } = require('./curveFeed');
+      return bondingCurvePda(watch.mint, config.PUMP_PROGRAM_ID).toBase58();
+    } catch (err) {
+      return '';
+    }
+  }
+
   async function pollSubscriptions() {
     if (pickWs()) {
       stopPoll();
       retargetSubscriptions();
       return;
     }
-    const accounts = subscriptions.filter(sub => sub.method === 'onAccountChange' && sub.mode === 'poll');
-    if (!accounts.length || !pick()) return;
+    if (!(watch.clients > 0) || watch.visible === false) return;
+    const curve = trackedCurve();
+    const accounts = subscriptions.filter(sub => sub.method === 'onAccountChange' && sub.mode === 'poll' && accountKey(sub.args[0]) === curve);
+    if (!curve || !accounts.length || !pick()) return;
     try {
       const infos = await call('getMultipleAccountsInfo', [accounts.map(sub => sub.args[0]), 'processed']);
       accounts.forEach((sub, index) => {
@@ -825,6 +883,7 @@ function createRpcPool(options = {}) {
     probe,
     reprobe,
     pollSubscriptions,
+    setWatch,
     providers
   };
   if (process.env.RPC_DEBUG === '1') {
@@ -869,7 +928,9 @@ function describeRpcAccount(status, flags = {}) {
       name: row.name,
       configured: row.configured !== false,
       healthy: row.healthy !== false,
-      cooldownMs: row.cooldownMs || 0
+      cooldownMs: row.cooldownMs || 0,
+      callsToday: row.callsToday || 0,
+      dailyBudget: row.dailyBudget == null ? null : row.dailyBudget
     }))
   };
 }

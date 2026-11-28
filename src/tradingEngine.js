@@ -714,7 +714,8 @@ class TradingEngine {
 
   requestChainSnapshot(mint, now = Date.now()) {
     if (!mint || !walletManager.simulationMode || typeof this.onChainSnapshot !== 'function') return null;
-    const fresh = this.snapshotMint === mint && this.snapshotPromise && (now - (this.snapshotAt || 0)) < (this.snapshotTtlMs || 5000);
+    const ttl = walletManager.simulationMode ? 30000 : (this.snapshotTtlMs || 5000);
+    const fresh = this.snapshotMint === mint && this.snapshotPromise && (now - (this.snapshotAt || 0)) < ttl;
     if (fresh) return this.snapshotPromise;
     this.snapshotMint = mint;
     this.snapshotAt = now;

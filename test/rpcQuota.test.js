@@ -161,11 +161,12 @@ test('an Alchemy websocket drop does not switch the sidebar to Public while getS
   await assert.rejects(() => api.connection.getProgramAccounts('pump'), /method not allowed/);
   assert.equal(api.status().active, 'Alchemy');
   alchemyWs.emit('error', new Error('Unexpected server response: 403'));
-  alchemyWs.emit('close');
   assert.equal(api.status().active, 'Alchemy');
   assert.equal(api.status().providers.find(row => row.name === 'Alchemy').healthy, true);
-  assert.equal(opened.includes('Public'), false);
-  assert.equal(lines.some(line => line.includes('RPC failover')), false);
+  assert.equal(lines.filter(line => line.includes('websocket rejected')).length, 1);
+  assert.equal(lines.some(line => line.includes('RPC failover: Alchemy -> Public')), false);
+  alchemyWs.emit('error', new Error('Unexpected server response: 403'));
+  assert.equal(lines.filter(line => line.includes('websocket rejected')).length, 1);
 });
 
 test('an Alchemy websocket 403 keeps HTTP on Alchemy and polls when no socket is left', async () => {
@@ -187,9 +188,10 @@ test('an Alchemy websocket 403 keeps HTTP on Alchemy and polls when no socket is
       return {
         _rpcWebSocket: ws,
         async getSlot() { return provider.name === 'Alchemy' ? 9 : 1; },
-        async getMultipleAccountsInfo() {
+        async getMultipleAccountsInfo(keys) {
           polls += 1;
-          return [{ lamports: 5, data: Buffer.alloc(0) }];
+          asked.push((keys || []).map(key => key.toBase58 ? key.toBase58() : String(key)));
+          return (keys || []).map(() => ({ lamports: 5, data: Buffer.alloc(0) }));
         },
         onAccountChange() {
           opened.push(provider.name);
@@ -199,8 +201,16 @@ test('an Alchemy websocket 403 keeps HTTP on Alchemy and polls when no socket is
       };
     }
   });
+  const { Keypair } = require('@solana/web3.js');
+  const { bondingCurvePda } = require('../src/curveFeed');
+  const { PUMP_PROGRAM_ID } = require('../src/config');
+  const mint = Keypair.generate().publicKey;
+  const curve = bondingCurvePda(mint, PUMP_PROGRAM_ID);
   const seen = [];
-  api.connection.onAccountChange('curve', (info) => seen.push(info && info.lamports), 'processed');
+  const asked = [];
+  api.setWatch({ clients: 1, visible: true, mint: mint.toBase58() });
+  api.connection.onAccountChange(curve, (info) => seen.push(info && info.lamports), 'processed');
+  api.connection.onAccountChange(mint, () => {}, 'processed');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(api.status().active, 'Alchemy');
   assert.equal(opened[0], 'Alchemy');
@@ -225,7 +235,40 @@ test('an Alchemy websocket 403 keeps HTTP on Alchemy and polls when no socket is
   assert.equal(api.status().ws.mode, 'poll');
   await api.pollSubscriptions();
   assert.equal(polls, 1);
+  assert.deepEqual(asked[0], [curve.toBase58()]);
   assert.deepEqual(seen, [5]);
   await api.pollSubscriptions();
+  assert.equal(polls, 2);
   assert.equal(seen.length, 1);
+  api.setWatch({ visible: false });
+  await api.pollSubscriptions();
+  assert.equal(polls, 2);
+});
+
+test('a daily call budget deprioritizes that provider and reports the count', async () => {
+  const at = Date.UTC(2026, 10, 28, 3, 0, 0);
+  let clock = at;
+  const lines = [];
+  const api = createRpcPool({
+    now: () => clock,
+    sleep: async () => {},
+    log: (line) => lines.push(line),
+    providers: [
+      { name: 'Alchemy', httpUrl: 'https://alchemy.example/unused', wsUrl: 'wss://alchemy.example/unused', configured: true, rps: Infinity, dailyBudget: 2 },
+      { name: 'Public', httpUrl: 'https://public.example/unused', wsUrl: '', configured: true, rps: Infinity }
+    ],
+    connect: (provider) => ({
+      async getSlot() { return provider.name === 'Alchemy' ? 1 : 2; }
+    })
+  });
+  assert.equal(await api.connection.getSlot('processed'), 1);
+  assert.equal(await api.connection.getSlot('processed'), 1);
+  assert.equal(api.status().active, 'Public');
+  assert.equal(lines[0], 'RPC failover: Alchemy -> Public (daily budget reached)');
+  const row = api.status().providers.find(item => item.name === 'Alchemy');
+  assert.equal(row.callsToday, 2);
+  assert.equal(row.dailyBudget, 2);
+  assert.equal(row.healthy, false);
+  const shown = require('../src/rpc').describeRpcAccount(api.status(), { alchemyConfigured: true });
+  assert.equal(shown.providers.find(item => item.name === 'Alchemy').callsToday, 2);
 });

@@ -728,6 +728,14 @@ function createSafetyChecks(options = {}) {
 
   async function creatorBalancePct(creator, mint, supplyRaw) {
     if (!connection || !creator || !supplyRaw) return null;
+    if (typeof connection.getMultipleAccountsInfo === 'function') {
+      try {
+        const { readMintTokenBalances } = require('./tokenAccounts');
+        const balances = await readMintTokenBalances(connection, [creator], mint);
+        const row = balances.get(creator);
+        if (row) return Number(BigInt(row.raw) * 10000n / BigInt(supplyRaw)) / 100;
+      } catch (err) { /* the owner scan below still answers */ }
+    }
     try {
       const accounts = await connection.getTokenAccountsByOwner(new PublicKey(creator), { mint: new PublicKey(mint) }, 'confirmed');
       let raw = 0n;

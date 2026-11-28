@@ -197,7 +197,10 @@ async function syncLiveFeed() {
   curveFeed.setMint(tradingEngine.activeToken);
   curveFeed.start();
 }
-tradingEngine.onMintChange = () => syncLiveFeed();
+tradingEngine.onMintChange = () => {
+  publishRpcWatch();
+  syncLiveFeed();
+};
 
 function sendError(res, err) {
   const status = err.statusCode || (err instanceof ValidationError ? 400 : 500);
@@ -231,7 +234,33 @@ server.on('upgrade', (request, socket, head) => {
   });
 });
 
+const deskViewers = new Set();
+
+function publishRpcWatch() {
+  const visible = [...deskViewers].some(viewer => viewer.visible);
+  rpc.setWatch({
+    clients: deskViewers.size,
+    visible: deskViewers.size > 0 && visible,
+    mint: tradingEngine.activeToken || null
+  });
+}
+
 wss.on('connection', ws => {
+  const viewer = { visible: true };
+  deskViewers.add(viewer);
+  publishRpcWatch();
+  ws.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (!msg || msg.type !== 'VISIBILITY') return;
+      viewer.visible = msg.hidden !== true;
+      publishRpcWatch();
+    } catch (err) { /* ignore a bad client frame */ }
+  });
+  ws.on('close', () => {
+    deskViewers.delete(viewer);
+    publishRpcWatch();
+  });
   ws.send(JSON.stringify({
     type: 'CONNECTED',
     payload: {
@@ -241,14 +270,19 @@ wss.on('connection', ws => {
   }));
 });
 
+let lastSlotReadAt = 0;
 setInterval(async () => {
   try {
     try { await rpc.reprobe(); } catch (err) { /* the next heartbeat tries again */ }
     let slot = null;
-    try {
-      slot = await slotConnection().getSlot('processed');
-    } catch (err) {
-      slot = null;
+    const slotGap = walletManager.simulationMode ? 30000 : 10000;
+    if (Date.now() - lastSlotReadAt >= slotGap) {
+      lastSlotReadAt = Date.now();
+      try {
+        slot = await slotConnection().getSlot('processed');
+      } catch (err) {
+        slot = null;
+      }
     }
     const current = rpc.status();
     broadcast({
