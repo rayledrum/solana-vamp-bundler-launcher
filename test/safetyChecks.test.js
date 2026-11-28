@@ -77,7 +77,7 @@ test('failed sources stay unknown and holder math skips the pool', () => {
   }).status, 'red');
 });
 
-test('own launches skip outside calls, cache repeats, and auto-blacklist is configurable', async () => {
+test('own launches still run checks, cache repeats, and auto-blacklist is configurable', async () => {
   const dir = tempDir();
   const mint = Keypair.generate().publicKey.toBase58();
   const creator = Keypair.generate().publicKey.toBase58();
@@ -105,8 +105,10 @@ test('own launches skip outside calls, cache repeats, and auto-blacklist is conf
   });
   api.noteOwnLaunch(mint);
   const own = await api.report(mint);
+  assert.equal(own.ownLaunch, true);
   assert.equal(own.label, 'Own launch');
-  assert.equal(calls, 0);
+  assert.ok(own.checks.length > 0);
+  assert.ok(calls > 0);
 
   const tracked = Keypair.generate().publicKey.toBase58();
   const first = await api.report(tracked);
