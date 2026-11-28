@@ -258,7 +258,8 @@ setInterval(async () => {
         simulation: walletManager.simulationMode,
         rpc: describeRpcAccount(current, {
           heliusConfigured: config.HELIUS_CONFIGURED,
-          quicknodeConfigured: config.QUICKNODE_CONFIGURED
+          quicknodeConfigured: config.QUICKNODE_CONFIGURED,
+          alchemyConfigured: config.ALCHEMY_CONFIGURED
         })
       }
     });
@@ -279,7 +280,8 @@ app.get('/api/rpc/status', (req, res) => {
     success: true,
     ...describeRpcAccount(current, {
       heliusConfigured: config.HELIUS_CONFIGURED,
-      quicknodeConfigured: config.QUICKNODE_CONFIGURED
+      quicknodeConfigured: config.QUICKNODE_CONFIGURED,
+      alchemyConfigured: config.ALCHEMY_CONFIGURED
     })
   });
 });
@@ -302,6 +304,7 @@ app.get('/api/status', async (req, res) => {
       currentSlot: slot,
       heliusConfigured: config.HELIUS_CONFIGURED,
       quicknodeConfigured: config.QUICKNODE_CONFIGURED,
+      alchemyConfigured: config.ALCHEMY_CONFIGURED,
       rpc: rpc.status(),
       jitoEndpoints: config.JITO_ENDPOINTS,
       defaultTip: config.DEFAULT_JITO_TIP,
@@ -331,6 +334,7 @@ app.post('/api/settings/simulation', (req, res) => {
       confirm,
       heliusConfigured: config.HELIUS_CONFIGURED,
       quicknodeConfigured: config.QUICKNODE_CONFIGURED,
+      alchemyConfigured: config.ALCHEMY_CONFIGURED,
       hasWallets: Boolean(walletManager.masterWallet)
     });
     walletManager.setSimulationMode(next.simulationMode);

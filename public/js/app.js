@@ -1281,7 +1281,7 @@ function paintRpcStatus(rpc) {
 function paintSidebarRpc(rpc) {
   if (!rpc) return;
   const name = rpc.active || 'Public';
-  const colors = { Helius: '#00c48c', QuickNode: '#00d4ff', Public: '#f04c5e' };
+  const colors = { Helius: '#00c48c', QuickNode: '#00d4ff', Alchemy: '#3b82f6', Public: '#f04c5e' };
   const color = colors[name] || '#94a3b8';
   const label = document.getElementById('sidebarRpcName');
   const dot = document.getElementById('sidebarRpcDot');
