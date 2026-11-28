@@ -127,6 +127,12 @@ document.addEventListener('DOMContentLoaded', () => {
   bindTrackedCaInputs();
   updateSimulationUi(state.simulationMode);
   connectWebSocket();
+  document.addEventListener('visibilitychange', () => {
+    if (!state.ws || state.ws.readyState !== 1) return;
+    try {
+      state.ws.send(JSON.stringify({ type: 'VISIBILITY', hidden: document.hidden }));
+    } catch (err) { /* the next heartbeat is enough */ }
+  });
   loadStatus();
   refreshResearch();
   loadMasterWallet();
@@ -135,13 +141,20 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTrendingVampTokens();
   loadLiveStats();
 
-  // Periodic polling for stats & balances (every 3 seconds).
-  // Live mode pushes SOL and token balances over the app socket. This poll is only
-  // the fallback, and it is how simulation still refreshes the on-chain LIVE number.
+  // Live mode pushes balances over the socket. Simulation refreshes slowly so a
+  // free RPC plan is not spent on the desk sitting open.
+  let lastStatsRefresh = 0;
+  let lastWalletRefresh = 0;
   setInterval(() => {
+    const gap = state.simulationMode ? 30000 : 8000;
+    if (Date.now() - lastStatsRefresh < gap) return;
+    lastStatsRefresh = Date.now();
     loadLiveStats();
   }, 8000);
   setInterval(() => {
+    const gap = state.simulationMode ? 60000 : 20000;
+    if (Date.now() - lastWalletRefresh < gap) return;
+    lastWalletRefresh = Date.now();
     loadMasterWallet();
     loadSubWallets();
   }, 20000);
@@ -168,6 +181,9 @@ function connectWebSocket() {
   }
 
   state.ws.onopen = () => {
+    try {
+      state.ws.send(JSON.stringify({ type: 'VISIBILITY', hidden: document.hidden }));
+    } catch (err) { /* the socket is still opening */ }
     state.appWsOpen = true;
     renderFeedStatus();
     logTerminal('[WebSocket] Connected to real-time Helius & Jito telemetry');
@@ -1299,7 +1315,11 @@ function paintSidebarRpc(rpc) {
       ? (rpc.ws.mode === 'socket' && rpc.ws.provider ? rpc.ws.provider : 'polling')
       : (rpc.ws || 'polling');
     const account = paused ? 'live paused' : (rpc.account || name);
-    note.textContent = `${account} · WS ${socket}`;
+    const usage = (rpc.providers || []).find(row => row.name === name);
+    const used = usage && usage.callsToday != null && usage.dailyBudget
+      ? ` · ${usage.callsToday}/${usage.dailyBudget} today`
+      : (usage && usage.callsToday ? ` · ${usage.callsToday} today` : '');
+    note.textContent = `${account}${used} · WS ${socket}`;
     note.style.color = paused ? '#f04c5e' : '#78909c';
   }
 }

@@ -177,7 +177,8 @@ class WalletManager {
     const key = wallets.map(wallet => wallet.publicKey.toBase58()).join('|');
     const now = Date.now();
     const cache = this.liveBalanceCache;
-    if (!force && cache && cache.key === key && (now - cache.at) < this.liveBalanceTtlMs) {
+    const ttl = this.simulationMode ? Math.max(this.liveBalanceTtlMs, 60000) : this.liveBalanceTtlMs;
+    if (!force && cache && cache.key === key && (now - cache.at) < ttl) {
       return cache;
     }
     try {
