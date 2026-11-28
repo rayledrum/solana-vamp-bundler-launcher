@@ -2218,21 +2218,12 @@ function paintSafety(report) {
   const exitAlert = document.getElementById('exitAlert');
   if (!score || !list) return;
   safetyCreator = report && report.creator || null;
-  if (report && report.ownLaunch) {
-    score.textContent = 'Own launch';
-    score.style.color = '#86efac';
-    list.innerHTML = '';
-    if (banner) banner.style.display = 'none';
-    if (exitAlert) exitAlert.style.display = 'none';
-    const topTraders = document.getElementById('topTraders');
-    if (topTraders) topTraders.style.display = 'none';
-    return;
-  }
-  const colors = { green: '#86efac', yellow: '#fcd34d', red: '#fda4af', unknown: '#94a3b8', na: '#94a3b8', incomplete: '#fbbf24' };
+  const colors = { green: '#86efac', yellow: '#fcd34d', red: '#fda4af', unknown: '#94a3b8', na: '#94a3b8', incomplete: '#fbbf24', loading: '#94a3b8', error: '#fda4af' };
   const unknownCount = (report && report.checks || []).filter(row => row && row.status === 'unknown').length;
   const verdict = (report && report.overall) || 'unknown';
   const headline = report && report.score != null ? `${verdict} · ${report.score}` : verdict;
-  score.textContent = unknownCount ? `${headline} · ${unknownCount} unknown` : headline;
+  const ownPrefix = report && report.ownLaunch ? 'Own launch · ' : '';
+  score.textContent = ownPrefix + (unknownCount ? `${headline} · ${unknownCount} unknown` : headline);
   score.style.color = colors[verdict] || colors.unknown;
   const summary = document.getElementById('chartSafetySummary');
   if (summary) {
@@ -2240,8 +2231,11 @@ function paintSafety(report) {
     summary.style.display = 'inline-block';
     summary.textContent = `${verdict} ${report && report.score != null ? report.score : '—'} · ${reds} red · ${unknownCount} unknown`;
   }
-  list.innerHTML = '';
-  (report && report.checks || []).forEach(row => {
+  list.textContent = '';
+  const rows = (report && report.checks && report.checks.length)
+    ? report.checks
+    : [{ id: 'empty', label: 'Safety', status: report && report.error ? 'error' : 'unknown', reason: (report && report.error) || 'No checks returned' }];
+  rows.forEach(row => {
     const item = document.createElement('div');
     item.style.cssText = 'display:flex;gap:6px;align-items:flex-start;min-width:0;';
     const dot = document.createElement('span');
@@ -2381,15 +2375,31 @@ function paintFarmRide(decision) {
 let safetyPollMint = '';
 let safetyPolls = 0;
 
+function paintSafetyLoading() {
+  const score = document.getElementById('safetyScore');
+  const list = document.getElementById('safetyChecks');
+  if (score) {
+    score.textContent = 'Loading';
+    score.style.color = '#94a3b8';
+  }
+  if (!list) return;
+  list.textContent = '';
+  const item = document.createElement('div');
+  item.textContent = 'LOADING Safety: checks are still running';
+  list.appendChild(item);
+}
+
 async function loadSafety(mint) {
   if (!mint) return;
   if (safetyPollMint !== mint) {
     safetyPollMint = mint;
     safetyPolls = 0;
+    paintSafetyLoading();
   }
   try {
     const res = await apiFetch(`/api/safety/${encodeURIComponent(mint)}`);
     const data = await res.json().catch(() => ({}));
+    if (safetyPollMint !== mint) return;
     if (!res.ok) throw new Error(data.error || 'Safety check failed');
     paintSafety(data.report);
     if (data.report && data.report.pending && safetyPolls < 4 && safetyPollMint === mint) {
@@ -2415,7 +2425,8 @@ async function loadSafety(mint) {
     const box = document.getElementById('safetyAutoBlacklist');
     if (box && data.report && data.report.auto) box.checked = data.report.auto.enabled !== false;
   } catch (err) {
-    paintSafety({ overall: 'unknown', score: null, checks: [{ id: 'error', label: 'Safety', status: 'unknown', reason: err.message, at: Date.now() }] });
+    if (safetyPollMint !== mint) return;
+    paintSafety({ overall: 'unknown', score: null, error: err.message, checks: [{ id: 'error', label: 'Safety', status: 'error', reason: err.message, at: Date.now() }] });
   }
 }
 

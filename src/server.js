@@ -884,8 +884,8 @@ app.post('/api/trading/track', (req, res) => {
   try {
     const mint = requireMint(req.body && req.body.mint);
     tradingEngine.setActiveToken(mint);
-    safetyChecks.noteOwnLaunch(mint);
-    res.json({ success: true, activeToken: mint, trackedLaunch: true });
+    const trackedLaunch = safetyChecks.isOwnLaunch(mint);
+    res.json({ success: true, activeToken: mint, trackedLaunch });
   } catch (err) {
     sendError(res, err);
   }

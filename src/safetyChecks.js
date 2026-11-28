@@ -754,22 +754,6 @@ function createSafetyChecks(options = {}) {
     if (!key) throw new Error('A mint is required');
     const cached = cache.get(key);
     if (cached && Date.now() - cached.at < ttlMs) return cached.report;
-    if (isOwnLaunch(key)) {
-      const own = {
-        mint: key,
-        ownLaunch: true,
-        label: 'Own launch',
-        checkedAt: Date.now(),
-        overall: 'green',
-        score: null,
-        creator: null,
-        blacklisted: false,
-      checks: [],
-      auto: loadBlacklist().auto
-    };
-    cache.set(key, { at: Date.now(), report: own });
-      return own;
-    }
 
     let rug = null;
     let coin = null;
@@ -960,10 +944,11 @@ function createSafetyChecks(options = {}) {
     }
 
     const summary = overallFromChecks(checks);
+    const ours = isOwnLaunch(key);
     const row = {
       mint: key,
-      ownLaunch: false,
-      label: null,
+      ownLaunch: ours,
+      label: ours ? 'Own launch' : null,
       checkedAt: Date.now(),
       overall: summary.overall,
       score: summary.score,
