@@ -9,6 +9,7 @@ const { assertLiveTrading } = require('./rpc');
 const pumpfun = require('./pumpfun');
 const walletManager = require('./walletManager');
 const { ValidationError, planBundleChunks, requireLaunchAmounts } = require('./validation');
+const { createLaunchLock, signaturesOfEncoded, confirmLaunchOnChain } = require('./launchLanding');
 const {
   fetchBundleVersionedTxs,
   fetchSingleVersionedTx,
@@ -23,6 +24,11 @@ class BundlerService {
   constructor() {
     this.connection = walletManager.connection;
     this.wsBroadcaster = null;
+    this.launchLock = createLaunchLock();
+    this.sendBundle = sendBundle;
+    this.pollBundle = pollBundleUntilSettled;
+    this.now = Date.now;
+    this.sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   }
 
   setBroadcaster(fn) {
@@ -168,8 +174,23 @@ class BundlerService {
     const encoded = encodedUsers.concat(tip.encoded);
     const shared = bundleBlockhash(encoded);
     console.log(`[Bundler] Jito ${label}: ${encoded.length} txs, tip ${tip.lamports} lamports, blockhash ${shared}`);
-    const bundleId = await sendBundle(encoded);
-    const settled = await pollBundleUntilSettled(bundleId);
+    const bundleId = await this.sendBundle(encoded);
+    const settled = await this.pollBundle(bundleId);
+    if (!settled.landed) {
+      const mint = descs[0] && descs[0].body && descs[0].body.mint;
+      const onChain = await confirmLaunchOnChain({
+        connection: this.connection,
+        mint,
+        signatures: signaturesOfEncoded(encoded),
+        sleep: this.sleep,
+        now: this.now
+      });
+      if (onChain.landed) {
+        console.log(`Jito status said ${settled.status} but launch landed on-chain`);
+        settled.landed = true;
+        settled.recovered = true;
+      }
+    }
     if (!settled.landed) {
       const detail = settled.details ? ` ${JSON.stringify(settled.details)}` : '';
       const error = new Error(`Jito bundle ${bundleId} (${label}) did not land: ${settled.status}${detail}`);
@@ -275,8 +296,11 @@ class BundlerService {
     }
     const isSim = walletManager.simulationMode;
     if (!isSim) assertLiveTrading();
+    if (!isSim) this.launchLock.begin();
+    try {
     const mintKeypair = Keypair.generate();
     const mintAddress = mintKeypair.publicKey.toBase58();
+    if (!isSim) this.launchLock.setMint(mintAddress);
     const delaySec = Math.max(0, Math.min(10, parseFloat(subWalletDelaySec || '0') || 0));
     console.log(`[Bundler] Standard launch (no bundle) for ${tokenSymbol} (${mintAddress}). Priority fee: ${priorityFeeSol} SOL. Sub-wallet buys are not atomic and can be sniped.`);
     const devInfo = await walletManager.getMasterInfo();
@@ -374,6 +398,9 @@ class BundlerService {
       subWalletDelaySec: delaySec,
       note: 'Standard launch. Create and dev buy were one transaction. Sub-wallet buys were separate and can be sniped.'
     };
+    } finally {
+      if (!isSim) this.launchLock.finish();
+    }
   }
 
   async launchBundle({
@@ -400,8 +427,11 @@ class BundlerService {
 
     const isSim = walletManager.simulationMode;
     if (!isSim) assertLiveTrading();
+    if (!isSim) this.launchLock.begin();
+    try {
     const mintKeypair = Keypair.generate();
     const mintAddress = mintKeypair.publicKey.toBase58();
+    if (!isSim) this.launchLock.setMint(mintAddress);
     const delaySec = Math.max(0, Math.min(10, parseFloat(subWalletDelaySec || '0') || 0));
 
     console.log(`Jito tip: ${jitoTipSol} SOL`);
@@ -566,6 +596,9 @@ class BundlerService {
       atomic: planned.length === 1,
       subWalletErrors: []
     };
+    } finally {
+      if (!isSim) this.launchLock.finish();
+    }
   }
 
   async checkBundleStatus(bundleId) {

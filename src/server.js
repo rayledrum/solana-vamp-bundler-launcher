@@ -557,7 +557,9 @@ app.post('/api/launch/execute', withMutationLock(async (req, res) => {
       ? await bundler.launchStandard(launchArgs)
       : await bundler.launchBundle(launchArgs);
   } catch (err) {
-    broadcast({ type: 'LAUNCH_FAILED', payload: { error: err.message, mint: err.mint || null } });
+    if (err.statusCode !== 409) {
+      broadcast({ type: 'LAUNCH_FAILED', payload: { error: err.message, mint: err.mint || null } });
+    }
     throw err;
   }
 
@@ -847,7 +849,8 @@ app.post('/api/trading/track', (req, res) => {
   try {
     const mint = requireMint(req.body && req.body.mint);
     tradingEngine.setActiveToken(mint);
-    res.json({ success: true, activeToken: mint });
+    safetyChecks.noteOwnLaunch(mint);
+    res.json({ success: true, activeToken: mint, trackedLaunch: true });
   } catch (err) {
     sendError(res, err);
   }
