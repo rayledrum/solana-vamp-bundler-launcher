@@ -43,6 +43,9 @@ const state = {
   allocation: { dev: 0, sub: 0, curve: 100 },
   curveProgressPct: 0,
   hoverCandle: null,
+  chartView: (typeof ChartView !== 'undefined' ? ChartView.create() : { span: null, rightGap: 0, priceMin: null, priceMax: null }),
+  chartOverlays: { volume: true, ma: true, priceLine: true, markers: true },
+  chartFeed: (typeof ChartFeed !== 'undefined' ? ChartFeed.create() : { lastPrice: null, reserve: null, lastGoodAt: null, watchedAt: null, lastTickAt: null }),
 
   // Sub-wallet execution settings
   subWalletDelaySec: 0,
@@ -496,11 +499,14 @@ function applyChartFeedStatus(payload) {
 }
 
 function paintChartFeed() {
+  const chip = document.getElementById('chartFeedStatus');
+  const reconnecting = Boolean(state.chartToken) && typeof ChartFeed !== 'undefined' && ChartFeed.isReconnecting(state.chartFeed, Date.now());
+  if (chip) chip.style.display = reconnecting ? 'inline-block' : 'none';
   if (state.simulationMode) return;
   const ageSec = state.lastChartTickAt ? Math.round((Date.now() - state.lastChartTickAt) / 1000) : null;
-  const stale = !state.chartFeedConnected && (ageSec == null || ageSec > 10);
+  const stale = reconnecting || (!state.chartFeedConnected && (ageSec == null || ageSec > 10));
   const label = state.chartFeedLabel || 'Helius bonding curve';
-  setChartSource(stale ? `feed: ${label} · stale` : `feed: ${label} · live`);
+  setChartSource(stale ? `feed: ${label} · reconnecting` : `feed: ${label} · live`);
 }
 
 function renderFeedStatus() {
@@ -555,7 +561,9 @@ function applyReportedFill(payload, volume) {
 }
 
 function initChart() {
+  if (typeof ChartOverlays !== 'undefined') state.chartOverlays = ChartOverlays.load(window.localStorage);
   generateInitialCandles();
+  paintChartOverlays();
   renderCandlestickChart();
   renderGauge(state.curveProgressPct);
   renderSparkline();
@@ -569,19 +577,8 @@ function initChart() {
     renderDonutChart(state.allocation.dev, state.allocation.sub, state.allocation.curve);
   });
 
-  // Crosshair mouse tracking
   const canvas = document.getElementById('candlestickCanvas');
-  if (canvas) {
-    canvas.addEventListener('mousemove', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      handleChartHover(x);
-    });
-    canvas.addEventListener('mouseleave', () => {
-      state.hoverCandle = null;
-      renderCandlestickChart();
-    });
-  }
+  if (canvas) bindChartInteractions(canvas);
 }
 
 function setChartTimeframe(tf) {
@@ -605,6 +602,7 @@ function setChartTimeframe(tf) {
   if (state.chartToken && targetMs < haveMs) {
     loadCandlesForToken(state.chartToken, { clear: false });
   } else if (state.chartSamples && state.chartSamples.length) {
+    resetChartViewport();
     rebuildDisplayCandles();
     updateChartHeaders();
     renderCandlestickChart();
@@ -620,11 +618,50 @@ function activeChartSeries() {
   return state.chartToken ? chartBook.peek(state.chartToken) : null;
 }
 
-function formatChartMarketCap(price, withUsd) {
+function chartScaleContext() {
   const series = activeChartSeries();
-  const mcap = ChartScale.marketCapSol(price, ChartScale.supplyOf(series));
-  if (withUsd) return ChartScale.formatMarketCapLabel(mcap, ChartScale.solUsdOf(series));
-  return ChartScale.formatMarketCapSol(mcap);
+  return { supplyUi: ChartScale.supplyOf(series), solUsd: ChartScale.solUsdOf(series) };
+}
+
+function formatChartMarketCap(price) {
+  const scale = chartScaleContext();
+  return ChartScale.formatAxisMarketCap(price, scale.supplyUi, scale.solUsd);
+}
+
+function overlayOn(id) {
+  return !state.chartOverlays || state.chartOverlays[id] !== false;
+}
+
+function resetChartViewport() {
+  if (typeof ChartView !== 'undefined') ChartView.reset(state.chartView);
+  state.hoverCandle = null;
+}
+
+function resetChartView() {
+  resetChartViewport();
+  renderCandlestickChart();
+}
+
+function toggleChartOverlay(id) {
+  if (typeof ChartOverlays === 'undefined') return;
+  state.chartOverlays = ChartOverlays.toggle(state.chartOverlays, id);
+  ChartOverlays.save(window.localStorage, state.chartOverlays);
+  paintChartOverlays();
+  renderCandlestickChart();
+}
+
+function paintChartOverlays() {
+  document.querySelectorAll('[data-overlay]').forEach(btn => {
+    const on = overlayOn(btn.dataset.overlay);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.style.color = on ? '#00d4ff' : '#64748b';
+    btn.style.background = on ? 'rgba(0,212,255,0.14)' : 'transparent';
+    btn.style.border = on ? '1px solid rgba(0,212,255,0.4)' : '1px solid #1e293b';
+  });
+  const volWrap = document.getElementById('chartVolWrap');
+  const maWrap = document.getElementById('chartMaWrap');
+  if (volWrap) volWrap.style.display = overlayOn('volume') ? '' : 'none';
+  if (maWrap) maWrap.style.display = overlayOn('ma') ? '' : 'none';
 }
 
 function noteChartScale(mint, trade) {
@@ -667,6 +704,9 @@ let chartLoadSeq = 0;
 
 function bindActiveSeries(series) {
   applySeriesView(series);
+  if (typeof ChartFeed !== 'undefined' && series && series.samples && series.samples.length) {
+    ChartFeed.seed(state.chartFeed, series.samples[series.samples.length - 1].close, Date.now());
+  }
   state.hoverCandle = null;
   setChartSource(series && series.source ? series.source : '');
   if (series && series.symbol) setChartSymbol(series.symbol);
@@ -685,6 +725,8 @@ async function loadCandlesForToken(mint, options = {}) {
     const view = chartBook.activate(mint);
     state.chartEpoch = view.epoch;
     state.chartToken = mint;
+    resetChartViewport();
+    if (typeof ChartFeed !== 'undefined') ChartFeed.watch(state.chartFeed, Date.now());
     if (!view.series.symbol) setChartSymbol(mint.slice(0, 4).toUpperCase());
     bindActiveSeries(view.series);
     renderTradeTape(view.series.trades);
@@ -824,6 +866,7 @@ function pushChartTick(price, volume = 0.1, expectedEpoch = null, mint = null) {
     return;
   }
   if (mint === state.chartToken && expectedEpoch != null && expectedEpoch !== state.chartEpoch) return;
+  const prevLast = state.candles && state.candles.length ? state.candles[state.candles.length - 1].time : null;
   const visible = chartBook.appendSample(mint, {
     time: Date.now(),
     open: price,
@@ -836,6 +879,11 @@ function pushChartTick(price, volume = 0.1, expectedEpoch = null, mint = null) {
   state.lastPrice = price;
   applySeriesView(chartBook.peek(mint));
   rebuildDisplayCandles();
+  if (prevLast != null && state.candles.length && state.candles[state.candles.length - 1].time > prevLast && typeof ChartView !== 'undefined') {
+    const added = state.candles.filter(candle => candle.time > prevLast).length;
+    ChartView.noteBarsAppended(state.chartView, added);
+  }
+  if (typeof ChartFeed !== 'undefined') ChartFeed.seed(state.chartFeed, price, Date.now());
   updateChartHeaders();
   renderCandlestickChart();
   renderSparkline();
@@ -844,7 +892,11 @@ function pushChartTick(price, volume = 0.1, expectedEpoch = null, mint = null) {
 function updateChartHeaders() {
   const pDisplay = document.getElementById('chartPriceDisplay');
   const cDisplay = document.getElementById('chartChangeDisplay');
-  if (pDisplay) pDisplay.innerText = Number(state.lastPrice) > 0 ? formatChartMarketCap(state.lastPrice, true) : '—';
+  const quote = document.getElementById('chartQuoteDisplay');
+  const scale = chartScaleContext();
+  if (quote) quote.textContent = scale.solUsd ? ' MC' : ' MC SOL';
+  if (pDisplay) pDisplay.innerText = Number(state.lastPrice) > 0 ? formatChartMarketCap(state.lastPrice) : '—';
+  paintChartOverlays();
 
   if (state.candles.length > 1) {
     const first = state.candles[0].open;
@@ -863,18 +915,160 @@ function updateChartHeaders() {
   if (volEl) volEl.innerText = `${vol.toFixed(1)} SOL`;
 }
 
-function handleChartHover(mouseX) {
-  const canvas = document.getElementById('candlestickCanvas');
-  if (!canvas || state.candles.length === 0) return;
-  const width = canvas.width / (window.devicePixelRatio || 1);
-  const chartWidth = width - 60; // right padding for price scale
-  const candleSlot = chartWidth / state.candles.length;
-  const idx = Math.floor(mouseX / candleSlot);
-  if (idx >= 0 && idx < state.candles.length) {
-    state.hoverCandle = state.candles[idx];
-  } else {
-    state.hoverCandle = null;
+const CHART_AXIS_W = 92;
+const chartPointers = new Map();
+let chartDrag = null;
+let chartPinch = null;
+
+function chartPlotBox(rect) {
+  const timeAxisH = 16;
+  const volHeight = overlayOn('volume') ? 32 : 0;
+  const priceTop = 15;
+  return {
+    chartRight: Math.max(40, rect.width - CHART_AXIS_W),
+    priceTop,
+    priceHeight: Math.max(20, rect.height - priceTop - volHeight - timeAxisH),
+    volHeight,
+    timeTop: rect.height - timeAxisH
+  };
+}
+
+function visibleSourceCandles() {
+  const all = state.candles || [];
+  if (typeof ChartView === 'undefined') return { candles: all };
+  const win = ChartView.windowOf(state.chartView, all.length);
+  const start = Math.max(0, Math.floor(win.start));
+  const end = Math.max(start, Math.min(all.length, Math.ceil(win.end)));
+  return { candles: all.slice(start, end) };
+}
+
+function fittedDisplayRange(display) {
+  let minP = Infinity;
+  let maxP = -Infinity;
+  (display || []).forEach(candle => {
+    [candle.low, candle.high, candle.open, candle.close].forEach(value => {
+      if (!Number.isFinite(value)) return;
+      if (value < minP) minP = value;
+      if (value > maxP) maxP = value;
+    });
+  });
+  if (!Number.isFinite(minP) || !Number.isFinite(maxP)) {
+    minP = 0;
+    maxP = 1;
   }
+  const pad = (maxP - minP) || Math.abs(maxP) || 1;
+  return { min: minP - pad * 0.08, max: maxP + pad * 0.08 };
+}
+
+function currentDisplayRange() {
+  const scale = chartScaleContext();
+  const display = visibleSourceCandles().candles.map(candle => ChartScale.toDisplayCandle(candle, scale.supplyUi, scale.solUsd));
+  const fitted = fittedDisplayRange(display);
+  if (typeof ChartView === 'undefined') return fitted;
+  return ChartView.priceRange(state.chartView, fitted.min, fitted.max);
+}
+
+function bindChartInteractions(canvas) {
+  canvas.addEventListener('wheel', (event) => {
+    if (!state.candles.length || typeof ChartView === 'undefined') return;
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const box = chartPlotBox(rect);
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const factor = event.deltaY < 0 ? 1.18 : 0.85;
+    if (x >= box.chartRight) {
+      const range = currentDisplayRange();
+      const ratio = 1 - ((y - box.priceTop) / Math.max(1, box.priceHeight));
+      ChartView.scalePrice(state.chartView, range.min, range.max, factor, Math.max(0, Math.min(1, ratio)));
+    } else {
+      ChartView.zoomTime(state.chartView, state.candles.length, factor, x / Math.max(1, box.chartRight));
+    }
+    renderCandlestickChart();
+  }, { passive: false });
+  canvas.addEventListener('pointerdown', (event) => {
+    if (canvas.setPointerCapture) canvas.setPointerCapture(event.pointerId);
+    chartPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    chartPinch = null;
+    if (chartPointers.size === 1) {
+      const rect = canvas.getBoundingClientRect();
+      const box = chartPlotBox(rect);
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const mode = x >= box.chartRight ? 'price' : (y >= box.timeTop ? 'time' : 'pan');
+      chartDrag = { mode, x: event.clientX, y: event.clientY, box };
+    }
+  });
+  canvas.addEventListener('pointermove', (event) => {
+    const rect = canvas.getBoundingClientRect();
+    if (!chartPointers.has(event.pointerId)) {
+      handleChartHover(event.clientX - rect.left, rect);
+      return;
+    }
+    chartPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (chartPointers.size >= 2) {
+      const points = [...chartPointers.values()];
+      const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      const midX = (points[0].x + points[1].x) / 2;
+      if (chartPinch && chartPinch.dist > 0 && dist > 0 && typeof ChartView !== 'undefined') {
+        const box = chartPlotBox(rect);
+        ChartView.zoomTime(state.chartView, state.candles.length, dist / chartPinch.dist, (midX - rect.left) / Math.max(1, box.chartRight));
+        renderCandlestickChart();
+      }
+      chartPinch = { dist, midX };
+      return;
+    }
+    if (!chartDrag || typeof ChartView === 'undefined' || !state.candles.length) return;
+    const dx = event.clientX - chartDrag.x;
+    const dy = event.clientY - chartDrag.y;
+    if (Math.abs(dx) + Math.abs(dy) < 1) return;
+    if (chartDrag.mode === 'pan') {
+      const slot = chartDrag.box.chartRight / Math.max(1, visibleSourceCandles().candles.length);
+      ChartView.panTime(state.chartView, state.candles.length, -dx / Math.max(1, slot));
+      if (dy) {
+        const range = currentDisplayRange();
+        ChartView.panPrice(state.chartView, range.min, range.max, dy / Math.max(1, chartDrag.box.priceHeight));
+      }
+    } else if (chartDrag.mode === 'price') {
+      const range = currentDisplayRange();
+      ChartView.scalePrice(state.chartView, range.min, range.max, Math.exp(-dy * 0.01), 0.5);
+    } else {
+      ChartView.zoomTime(state.chartView, state.candles.length, Math.exp(-dx * 0.01), 0.5);
+    }
+    chartDrag.x = event.clientX;
+    chartDrag.y = event.clientY;
+    renderCandlestickChart();
+  });
+  const endPointer = (event) => {
+    chartPointers.delete(event.pointerId);
+    if (chartPointers.size < 2) chartPinch = null;
+    if (chartPointers.size === 0) chartDrag = null;
+  };
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('pointerleave', () => {
+    if (chartPointers.size === 0) {
+      state.hoverCandle = null;
+      renderCandlestickChart();
+    }
+  });
+}
+
+function handleChartHover(mouseX, rect) {
+  const canvas = document.getElementById('candlestickCanvas');
+  if (!canvas || !state.candles.length) return;
+  const box = chartPlotBox(rect || canvas.getBoundingClientRect());
+  const visible = visibleSourceCandles().candles;
+  if (!visible.length || mouseX < 0 || mouseX > box.chartRight) {
+    if (!state.hoverCandle) return;
+    state.hoverCandle = null;
+    renderCandlestickChart();
+    return;
+  }
+  const idx = Math.floor(mouseX / (box.chartRight / visible.length));
+  const next = idx >= 0 && idx < visible.length ? visible[idx] : null;
+  if (next === state.hoverCandle) return;
+  state.hoverCandle = next;
   renderCandlestickChart();
 }
 
@@ -891,144 +1085,129 @@ function renderCandlestickChart() {
 
   const w = rect.width;
   const h = rect.height;
-  const chartRight = w - 92;
-  const volHeight = 35;
-  const priceHeight = h - volHeight - 20;
-
-  // Background
+  const box = chartPlotBox(rect);
+  const chartRight = box.chartRight;
+  const priceHeight = box.priceHeight;
+  const priceTop = box.priceTop;
   ctx.fillStyle = '#090d16';
   ctx.fillRect(0, 0, w, h);
-
-  if (state.candles.length === 0) return;
-
-  // Find min/max price and max volume
-  let minP = Infinity;
-  let maxP = -Infinity;
-  let maxV = 0.001;
-
-  state.candles.forEach(c => {
-    if (c.low < minP) minP = c.low;
-    if (c.high > maxP) maxP = c.high;
-    if (c.volume > maxV) maxV = c.volume;
-  });
-
-  const pRange = (maxP - minP) || 0.000001;
-  minP -= pRange * 0.08;
-  maxP += pRange * 0.08;
-  const effectiveRange = maxP - minP;
-
-  // Horizontal Grid Lines & Price Labels
+  const source = visibleSourceCandles().candles;
+  if (!source.length) return;
+  const scale = chartScaleContext();
+  const unit = scale.solUsd ? 'usd' : 'sol';
+  const display = source.map(candle => ChartScale.toDisplayCandle(candle, scale.supplyUi, scale.solUsd));
+  const fitted = fittedDisplayRange(display);
+  const ranged = typeof ChartView === 'undefined' ? fitted : ChartView.priceRange(state.chartView, fitted.min, fitted.max);
+  const minP = ranged.min;
+  const maxP = ranged.max;
+  const effectiveRange = (maxP - minP) || 1;
+  const yOf = (value) => priceTop + ((maxP - value) / effectiveRange) * priceHeight;
+  const formatTick = (value) => unit === 'usd' ? ChartScale.formatCompactUsd(value) : ChartScale.formatMarketCapSol(value);
   ctx.strokeStyle = '#141c2c';
   ctx.lineWidth = 1;
   ctx.fillStyle = '#64748b';
   ctx.font = '10px JetBrains Mono, monospace';
-
+  ctx.fillText(unit === 'usd' ? 'MC' : 'MC SOL', chartRight + 6, 11);
   const gridSteps = 4;
   for (let i = 0; i <= gridSteps; i++) {
-    const y = 15 + (priceHeight / gridSteps) * i;
+    const y = priceTop + (priceHeight / gridSteps) * i;
     const pVal = maxP - (effectiveRange / gridSteps) * i;
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(chartRight, y);
     ctx.stroke();
-    ctx.fillText(formatChartMarketCap(pVal, false), chartRight + 6, y + 3);
+    ctx.fillStyle = '#64748b';
+    ctx.fillText(formatTick(pVal), chartRight + 6, y + 3);
   }
-
-  const slotW = chartRight / state.candles.length;
-  const candleW = Math.max(3, slotW * 0.65);
-
-  // Draw Candlesticks & Volume Bars
+  const slotW = chartRight / display.length;
+  const candleW = Math.max(2, Math.min(slotW * 0.65, 18));
+  const showVolume = overlayOn('volume');
+  const showMa = overlayOn('ma');
+  let maxV = 0.001;
+  if (showVolume) display.forEach(candle => { if ((Number(candle.volume) || 0) > maxV) maxV = Number(candle.volume) || 0; });
   const maPoints = [];
   let maSum = 0;
+  let maCount = 0;
   const maPeriod = 5;
-
-  state.candles.forEach((c, i) => {
+  let lastMa = null;
+  display.forEach((c, i) => {
     const cx = i * slotW + (slotW / 2);
-    const isUp = c.close >= c.open;
+    const open = Number.isFinite(c.open) ? c.open : c.close;
+    const close = Number.isFinite(c.close) ? c.close : open;
+    const high = Number.isFinite(c.high) ? c.high : Math.max(open, close);
+    const low = Number.isFinite(c.low) ? c.low : Math.min(open, close);
+    const isUp = close >= open;
     const candleColor = isUp ? '#10b981' : '#ef4444';
-
-    // Volume bar
-    const vH = (c.volume / maxV) * volHeight;
-    const vy = h - vH - 5;
-    ctx.fillStyle = isUp ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)';
-    ctx.fillRect(cx - (candleW / 2), vy, candleW, vH);
-
-    // Candle Wick
-    const yh = 15 + ((maxP - c.high) / effectiveRange) * priceHeight;
-    const yl = 15 + ((maxP - c.low) / effectiveRange) * priceHeight;
+    if (showVolume) {
+      const vH = ((Number(c.volume) || 0) / maxV) * box.volHeight;
+      ctx.fillStyle = isUp ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)';
+      ctx.fillRect(cx - (candleW / 2), box.timeTop - vH, candleW, Math.max(0, vH));
+    }
     ctx.strokeStyle = candleColor;
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.moveTo(cx, yh);
-    ctx.lineTo(cx, yl);
+    ctx.moveTo(cx, yOf(high));
+    ctx.lineTo(cx, yOf(low));
     ctx.stroke();
-
-    // Candle Body
-    const yo = 15 + ((maxP - c.open) / effectiveRange) * priceHeight;
-    const yc = 15 + ((maxP - c.close) / effectiveRange) * priceHeight;
-    const topY = Math.min(yo, yc);
-    const bodyH = Math.max(2, Math.abs(yc - yo));
-
+    const topY = Math.min(yOf(open), yOf(close));
     ctx.fillStyle = candleColor;
-    ctx.fillRect(cx - (candleW / 2), topY, candleW, bodyH);
-
-    // Moving average accumulation
-    maSum += c.close;
-    if (i >= maPeriod) maSum -= state.candles[i - maPeriod].close;
-    const curMa = maSum / Math.min(i + 1, maPeriod);
-    const maY = 15 + ((maxP - curMa) / effectiveRange) * priceHeight;
-    maPoints.push({ x: cx, y: maY });
+    ctx.fillRect(cx - (candleW / 2), topY, candleW, Math.max(1, Math.abs(yOf(close) - yOf(open))));
+    if (showMa && Number.isFinite(close)) {
+      maSum += close;
+      maCount += 1;
+      if (maCount > maPeriod) {
+        const prev = display[i - maPeriod] && display[i - maPeriod].close;
+        if (Number.isFinite(prev)) {
+          maSum -= prev;
+          maCount -= 1;
+        }
+      }
+      lastMa = maSum / Math.max(1, maCount);
+      maPoints.push({ x: cx, y: yOf(lastMa) });
+    }
   });
-
-  // Draw 5-period MA curve in glowing gold
-  if (maPoints.length > 1) {
+  if (showMa && maPoints.length > 1) {
     ctx.strokeStyle = '#f59e0b';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(maPoints[0].x, maPoints[0].y);
-    for (let k = 1; k < maPoints.length; k++) {
-      ctx.lineTo(maPoints[k].x, maPoints[k].y);
-    }
+    for (let k = 1; k < maPoints.length; k++) ctx.lineTo(maPoints[k].x, maPoints[k].y);
     ctx.stroke();
   }
-
-  // Draw Current Price Dashed Line & Badge
-  const curY = 15 + ((maxP - state.lastPrice) / effectiveRange) * priceHeight;
-  ctx.strokeStyle = 'rgba(6, 182, 212, 0.7)';
-  ctx.setLineDash([3, 3]);
-  ctx.beginPath();
-  ctx.moveTo(0, curY);
-  ctx.lineTo(chartRight, curY);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Price badge on right axis
-  ctx.fillStyle = '#06b6d4';
-  ctx.fillRect(chartRight + 2, curY - 8, 86, 16);
-  ctx.fillStyle = '#0a0d14';
-  ctx.font = 'bold 9px JetBrains Mono';
-  ctx.fillText(formatChartMarketCap(state.lastPrice, false), chartRight + 4, curY + 4);
-
-  drawTradeMarkers(ctx, {
-    candles: state.candles,
-    slotW,
-    maxP,
-    effectiveRange,
-    priceHeight
-  });
-
-  // Hover Tooltip / Crosshair
+  const maEl = document.getElementById('chartMaDisplay');
+  if (maEl && showMa && lastMa != null) maEl.textContent = formatTick(lastMa);
+  if (overlayOn('priceLine') && Number(state.lastPrice) > 0) {
+    const last = ChartScale.marketCapDisplay(state.lastPrice, scale.supplyUi, scale.solUsd);
+    if (last) {
+      const curY = yOf(last.value);
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.7)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(0, curY);
+      ctx.lineTo(chartRight, curY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#06b6d4';
+      ctx.fillRect(chartRight + 2, curY - 8, 86, 16);
+      ctx.fillStyle = '#0a0d14';
+      ctx.font = 'bold 9px JetBrains Mono';
+      ctx.fillText(formatTick(last.value), chartRight + 4, curY + 4);
+    }
+  }
+  if (overlayOn('markers')) {
+    drawTradeMarkers(ctx, { candles: display, slotW, maxP, effectiveRange, priceHeight, priceTop });
+  }
   if (state.hoverCandle) {
-    const hc = state.hoverCandle;
+    const text = ChartScale.formatOhlcDisplay(state.hoverCandle, scale.supplyUi, scale.solUsd);
+    ctx.font = '9px JetBrains Mono';
+    const boxW = Math.min(chartRight - 16, Math.max(80, ctx.measureText(text).width + 16));
     ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 1;
-    ctx.fillRect(10, 8, 320, 24);
-    ctx.strokeRect(10, 8, 320, 24);
-
+    ctx.fillRect(10, 16, boxW, 24);
+    ctx.strokeRect(10, 16, boxW, 24);
     ctx.fillStyle = '#e2e8f0';
-    ctx.font = '9px JetBrains Mono';
-    ctx.fillText(ChartScale.formatOhlc(hc, ChartScale.supplyOf(activeChartSeries())), 14, 23);
+    ctx.fillText(text, 14, 31);
   }
 }
 
@@ -3838,11 +4017,21 @@ function renderTradeTape(trades) {
 function applyPublicTradePrice(trade, mint) {
   if (!mint) return;
   const tradePrice = ChartBook.publicTradePrice(trade);
-  if (!(tradePrice > 0)) return;
+  const reserve = typeof ChartFeed !== 'undefined' ? ChartFeed.reservesPrice(trade) : null;
+  const decision = typeof ChartFeed !== 'undefined'
+    ? ChartFeed.consider(state.chartFeed, {
+      price: tradePrice,
+      reservePrice: reserve,
+      at: Number(trade && trade.timestamp) || Date.now(),
+      now: Date.now()
+    })
+    : { plot: tradePrice > 0, price: tradePrice };
+  paintChartFeed();
+  if (!decision.plot) return;
   noteChartScale(mint, trade);
   const epoch = mint === state.chartToken ? state.chartEpoch : null;
-  pushChartTick(tradePrice, trade.priceOnly ? 0 : (Number(trade.solAmount) || 0), epoch, mint);
-  if (trade.priceOnly) state.lastChartTickAt = Date.now();
+  pushChartTick(decision.price, trade.priceOnly ? 0 : (Number(trade.solAmount) || 0), epoch, mint);
+  state.lastChartTickAt = Date.now();
 }
 
 function tradeIsOwn(trade) {
@@ -3886,7 +4075,9 @@ function drawTradeMarkers(ctx, view) {
     const candle = view.candles[slot];
     const cx = slot * view.slotW + (view.slotW / 2);
     const anchor = marker.txType === 'sell' ? candle.high : candle.low;
-    const y = 15 + ((view.maxP - anchor) / view.effectiveRange) * view.priceHeight;
+    if (!Number.isFinite(anchor)) return;
+    const top = view.priceTop || 15;
+    const y = top + ((view.maxP - anchor) / view.effectiveRange) * view.priceHeight;
     const shift = n * (marker.own ? 14 : 8);
     const tip = marker.txType === 'sell' ? y - 8 - shift : y + 8 + shift;
     const size = marker.own ? 7 : 4;

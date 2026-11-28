@@ -476,6 +476,19 @@ input[type='checkbox'] {
 .chart-tf-btn:hover { color: var(--text-heading); background: rgba(255,255,255,0.05); }
 .chart-tf-btn.active { color: var(--cyan); background: rgba(0,212,255,0.1); }
 
+.chart-overlay-chip {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  color: #64748b;
+  background: transparent;
+  border: 1px solid #1e293b;
+}
+
 /* ---- Sim banner ---- */
 .sim-banner {
   background: rgba(0, 212, 255, 0.05);
